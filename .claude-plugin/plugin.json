@@ -1,0 +1,8 @@
+{
+  "name": "recruiting-copilot",
+  "description": "AI 招聘副驾：初始化招聘工作区、逼问式梳理岗位真实要求、每日 Boss直聘+猎聘双通道寻源初筛打招呼、台账与日报闭环。",
+  "version": "0.2.1",
+  "author": {
+    "name": "Viy Zhu"
+  }
+}
