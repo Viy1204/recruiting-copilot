@@ -73,12 +73,15 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ├── 05-onboarding/
 ├── _shared/templates/        ← 复制 jd-internal.md / interview-record.md /
 │                                candidate-pool.md / dedup-ledger.csv 四个模板
-└── runtime/reports/          ← 每日原始素材与本地日报
+└── runtime/
+    ├── reports/              ← 本地日报与 review 汇总
+    └── resumes/              ← 邮件简历附件与导入去重索引
 ```
 
 要点：
 - `AGENTS.md` / `CONTEXT.md` 原样复制模板，**不要现场即兴改写结构**——两份文件的分区是后续工作流的接口。
 - `skills/` 是唯一内容源；不要向工具目录重复复制 skill，避免后续版本不一致。
+- 新建工作区时同时创建 `runtime/reports/` 和 `runtime/resumes/`；修复模式只补缺失目录，不动已有附件或索引。
 
 复制完成后，定位本 `SKILL.md` 同目录下的 `scripts/register-workspace-skills.sh`，执行：
 
