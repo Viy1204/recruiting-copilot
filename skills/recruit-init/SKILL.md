@@ -37,8 +37,10 @@ sh skills/recruit-init/scripts/install-dependencies.sh
    本脚本会先构建并打包 fork，再安装持久化的包文件。
 3. `liepin --version` —— 猎聘 CLI。没有 → 重跑同一安装脚本，不另外维护第二条安装路径。
 4. 本机装有 Chrome 或 Edge（两个 CLI 都靠它驱动真实浏览器）。
-5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档；
-   没有 → 明确告知用户"日报将输出本地 Markdown 到 runtime/reports/，功能不受影响"。**不要求用户必须装。**
+5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档、
+   约面试可直接建日历日程，也可从飞书邮箱收取简历；没有 → 明确告知用户
+   "日报将输出本地 Markdown 到 runtime/reports/，约面试提供手动建会清单，邮箱简历需本地提供；
+   寻源、本地简历 review 和台账功能不受影响"。**不要求用户必须装。**
 
 在 macOS 上，如果 npm 全局命令目录原本不在 `PATH`，脚本会用可重复执行的配置块
 更新当前 shell 的配置文件（zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）：
