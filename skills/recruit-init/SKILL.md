@@ -41,7 +41,8 @@ sh skills/recruit-init/scripts/install-dependencies.sh
    没有 → 明确告知用户"日报将输出本地 Markdown 到 runtime/reports/，功能不受影响"。**不要求用户必须装。**
 
 在 macOS 上，如果 npm 全局命令目录原本不在 `PATH`，脚本会用可重复执行的配置块
-更新 `~/.zprofile`：安装过程立即使用新路径，用户之后新开的终端也会自动生效。
+更新当前 shell 的配置文件（zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）：
+安装过程立即使用新路径，用户之后新开的终端也会自动生效。
 
 装好 CLI 后提醒用户各跑一次 `boss login` 和 `liepin login`（扫码登录，登录态持久化）。
 如果用户此刻登录不了（比如手机不在身边），记入收尾提醒，继续建仓。
