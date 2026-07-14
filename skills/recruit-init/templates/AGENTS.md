@@ -19,6 +19,7 @@
 | 不确定该走哪个流程 / 用户问"这套工具怎么用" | `skills/ask-viy/SKILL.md` |
 | 每日招聘：查未读 / 主动寻源 / 初筛 / 打招呼 / 补台账 / 出日报 | `skills/recruit-daily/SKILL.md` |
 | 深度盘点某岗市场人才：供给/薪资对标/目标公司有谁/好不好招 | `skills/market-talent-mapping/SKILL.md` |
+| 平台外收到的简历（猎头/内推/直投）要评估、或回查某人评级 | `skills/resume-review/SKILL.md` |
 | 新开一个岗位 / 重新梳理某岗位的真实要求 | `skills/recruit-grill/SKILL.md` |
 | 重建 / 修复工作区结构 | `skills/recruit-init/SKILL.md` |
 | boss 直聘 CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |

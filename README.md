@@ -56,6 +56,7 @@ claude plugin install recruiting-copilot
 - `/recruit-grill <岗位>` —— 梳理某个岗位的要求
 - `/recruit-daily` —— 处理今天的招聘（日常也可直接说"处理今天的招聘"）
 - `/recruit-mapping <岗位>` —— 深度盘点某岗的市场人才
+- `/resume-review` —— 评估猎头/内推/直投送来的简历
 - `/ask-viy` —— 不知道该用哪个？问它
 
 ## 工作区长什么样

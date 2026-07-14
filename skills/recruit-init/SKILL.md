@@ -37,7 +37,8 @@ disable-model-invocation: true
 ├── AGENTS.md                 ← 从本 skill 的 templates/AGENTS.md 复制
 ├── CONTEXT.md                ← 从 templates/CONTEXT.md 复制
 ├── skills/                   ← 把模板仓库 skills/ 下的 recruit-grill、recruit-daily、
-│                                market-talent-mapping、ask-viy 四个目录整体拷入（含 references/），工作区从此自足
+│                                market-talent-mapping、resume-review、ask-viy 五个目录
+│                                整体拷入（含 references/），工作区从此自足
 ├── 01-jd/
 │   ├── _internal/            ← 对内笔记（不外发）
 │   └── _dist/                ← 生成物（PDF/HTML 等）
