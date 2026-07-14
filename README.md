@@ -42,7 +42,8 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
 用你的 AI 工具打开这个目录，说：**"帮我初始化招聘工作区"**。
-AI 会检查依赖、在你指定的位置建好工作区、然后逐个岗位跟你梳理招聘要求。
+AI 会检查依赖、在你指定的位置建好工作区、注册各工具能识别的项目级 skill，
+然后逐个岗位跟你梳理招聘要求。
 
 > 补充：支持 `~/.agents/skills` 约定的工具，也可以用 `npx skills add Viy1204/recruiting-copilot`
 > 把这套 skill 装成全局。不装也没关系——工作区里已经带了一份。
@@ -74,7 +75,10 @@ claude plugin install recruiting-copilot
 你的工作区/
 ├── CONTEXT.md            ← 唯一事实源：初筛硬规则、在招岗位与优先级、术语表、决策记录
 ├── AGENTS.md             ← 告诉 AI 工具在这里怎么干活（路由 + 红线）
-├── skills/               ← 工作流文档（随工作区走，不依赖任何插件系统）
+├── skills/               ← 工作流文档的唯一内容源（随工作区走）
+├── .agents/skills/       ← Codex / Agent Skills 项目级自动发现入口
+├── .claude/skills/       ← Claude Code 项目级自动发现入口
+├── .qoder/skills/        ← Qoder 项目级自动发现入口
 ├── 01-jd/                ← 对外 JD + _internal/ 对内寻源笔记（不外发）
 ├── 02-sourcing/          ← dedup-ledger.csv 候选人台账（唯一事实源）+ shortlist
 ├── 03-interview/         ← 面试档案（一人一文件）
@@ -82,6 +86,11 @@ claude plugin install recruiting-copilot
 ├── _shared/templates/    ← 新岗位/新面试的模板
 └── runtime/reports/      ← 每日原始素材与本地日报（可删可重建）
 ```
+
+三个隐藏目录里只有指向 `skills/` 的链接，不会复制出三套内容。其他工具即使没有自己的
+skill 注册目录，也能从根目录 `AGENTS.md` 路由到同一套流程。ZCode 可直接读取
+`AGENTS.md`；若希望技能出现在 ZCode 面板中，可在 Settings → Skills 中从 Codex 或
+Claude Code 来源导入到当前 Project。
 
 ## 设计原则（为什么长这样）
 

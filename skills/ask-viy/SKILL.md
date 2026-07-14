@@ -1,7 +1,6 @@
 ---
 name: ask-viy
 description: 这套招聘工具的总目录。不知道下一步该干什么、该用哪个流程、或想了解某个功能怎么用时，问它。
-disable-model-invocation: true
 ---
 
 # Ask Viy —— 这套工具怎么用
