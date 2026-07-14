@@ -77,4 +77,7 @@ description: >
 ## 什么时候不用本流程
 
 - 新开岗位 / 改标准 → `skills/recruit-grill/SKILL.md`。
-- 约面试、发 offer、谈薪 → 对外不可逆，全部等用户明确指令，逐案处理。
+- 平台外收到的简历（猎头/内推/直投）→ `skills/resume-review/SKILL.md`。
+- 某岗深度市场盘点 → `skills/market-talent-mapping/SKILL.md`。
+- 约面试 / 改期 → `skills/interview-schedule/SKILL.md`（建日程前必经用户确认）。
+- 发 offer、谈薪 → 完全等用户明确指令，逐案处理。

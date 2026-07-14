@@ -16,15 +16,21 @@
 ## 本仓库结构
 
 ```
-skills/recruit-init/     初始化流程 + 工作区脚手架模板（templates/）
-skills/recruit-grill/    逐岗逼问式梳理岗位真实要求（+ 问题清单）
-skills/recruit-daily/    每日招聘流水线（+ 双通道命令参考、台账日报格式）
-.claude-plugin/          Claude Code 插件清单（其他工具忽略即可）
-commands/                Claude Code slash 命令薄壳（其他工具忽略即可）
+skills/recruit-init/           初始化流程 + 工作区脚手架模板（templates/）
+skills/recruit-grill/          逐岗逼问式梳理岗位真实要求（+ 问题清单）
+skills/recruit-daily/          每日招聘流水线（+ 双通道命令参考、台账日报格式）
+skills/market-talent-mapping/  某岗市场人才深度盘点（+ 渠道与统计参考、报告模板）
+skills/resume-review/          平台外简历评估（猎头/内推/直投，单份或批量）
+skills/interview-schedule/     面试预约：飞书日程+视频会议+拉面试官+档案同步
+skills/ask-viy/                总目录：不知道用哪个流程时问它
+docs/DESIGN.md                 设计思路与理念（为什么长这样）
+.claude-plugin/                Claude Code 插件清单（其他工具忽略即可）
+commands/                      Claude Code slash 命令薄壳（其他工具忽略即可）
 ```
 
 ## 红线（对所有 agent 生效）
 
 - 本仓库是**模板**：不要把用户的岗位数据、候选人信息写进本仓库，全部写进用户自己的工作区。
-- 对外不可逆动作（在招聘平台打招呼、点"不合适"、约面试、发 offer）的安全规则见
-  `skills/recruit-daily/SKILL.md`——默认先经用户确认。
+- 对外不可逆动作（在招聘平台打招呼、点"不合适"、通知候选人、发 offer）默认先经用户确认。
+  打招呼的安全规则见 `skills/recruit-daily/SKILL.md`，约面试的确认规则见
+  `skills/interview-schedule/SKILL.md`。

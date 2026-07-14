@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "recruiting-copilot",
-  "description": "AI 招聘副驾：岗位梳理 + 每日双通道寻源初筛 + 台账日报闭环。",
+  "description": "AI 招聘副驾：岗位梳理 + 每日双通道寻源初筛 + 市场盘点 + 简历评估 + 约面试 + 台账日报闭环。",
   "owner": {
     "name": "Viy Zhu"
   },
