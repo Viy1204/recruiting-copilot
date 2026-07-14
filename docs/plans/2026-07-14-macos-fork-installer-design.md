@@ -9,7 +9,7 @@ Make first-time recruiting-copilot setup work on macOS without manual PATH repai
 Add `skills/recruit-init/scripts/install-dependencies.sh` as the public setup seam. It must:
 
 - require Node.js 20 or newer and npm;
-- install Boss CLI from `git+https://github.com/Viy1204/boss-cli.git#main` by default;
+- build Boss CLI from `git+https://github.com/Viy1204/boss-cli.git#main` by default;
 - allow `BOSS_CLI_SOURCE` to override that source;
 - install `@viyzhu/liepin-cli` from npm;
 - locate the npm global executable directory from `npm config get prefix`;
@@ -36,6 +36,10 @@ Shell tests exercise only public behavior:
 5. Check-only mode does not invoke npm installation.
 
 Tests use temporary HOME directories and fake `node`, `npm`, and `uname` executables; they never change the developer's actual shell profile or global packages.
+
+## Durable fork packaging
+
+Real-machine validation found that npm 11 can install a global Git dependency as a symbolic link into npm's temporary clone directory. A later npm operation may reuse that directory and remove the `boss` executable. The installer therefore shallow-clones the selected fork ref, runs `npm ci` and the TypeScript build, creates a package archive with `npm pack`, and installs that archive globally. It only removes the previous Boss package after the new archive has built successfully. This keeps upgrades recoverable and makes the final global package independent of npm's temporary cache.
 
 ## Boss CLI fork publication
 
