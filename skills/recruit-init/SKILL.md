@@ -26,7 +26,8 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 `BOSS_CLI_SOURCE`。
 
 如果当前 agent 没有全局安装权限，先给同一脚本加 `--check-only`
-获取诊断结果，将需要用户执行的命令记入收尾提醒，继续建工作区，**不阻塞**。
+获取诊断结果。**无论是权限、Node/npm/git 缺失、网络、构建还是包安装失败，
+都不阻塞建工作区**：记下原始错误和待用户处理项，继续 Step 2，不要在同一失败路径上反复重试。
 
 安装后依次确认：
 
@@ -34,7 +35,7 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 2. `boss help` —— Boss 直聘 CLI。没有 → 重跑安装脚本。不要直接用
    `npm install -g git+...`：部分 npm 版本会把它留成指向临时缓存的符号链接。
    本脚本会先构建并打包 fork，再安装持久化的包文件。
-3. `liepin --version` —— 猎聘 CLI。没有 → `npm install -g @viyzhu/liepin-cli`。
+3. `liepin --version` —— 猎聘 CLI。没有 → 重跑同一安装脚本，不另外维护第二条安装路径。
 4. 本机装有 Chrome 或 Edge（两个 CLI 都靠它驱动真实浏览器）。
 5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档；
    没有 → 明确告知用户"日报将输出本地 Markdown 到 runtime/reports/，功能不受影响"。**不要求用户必须装。**

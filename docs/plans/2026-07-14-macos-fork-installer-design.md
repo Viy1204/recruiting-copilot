@@ -39,7 +39,7 @@ Tests use temporary HOME directories and fake `node`, `npm`, and `uname` executa
 
 ## Durable fork packaging
 
-Real-machine validation found that npm 11 can install a global Git dependency as a symbolic link into npm's temporary clone directory. A later npm operation may reuse that directory and remove the `boss` executable. The installer therefore shallow-clones the selected fork ref, runs `npm ci` and the TypeScript build, creates a package archive with `npm pack`, and installs that archive globally. It only removes the previous Boss package after the new archive has built successfully. This keeps upgrades recoverable and makes the final global package independent of npm's temporary cache.
+Real-machine validation found that npm 11 can install a global Git dependency as a symbolic link into npm's temporary clone directory. A later npm operation may reuse that directory and remove the `boss` executable. The installer therefore shallow-clones the selected fork ref, runs `npm ci` and the TypeScript build, creates a package archive with `npm pack`, and installs that archive globally. It does not preemptively uninstall the previous Boss package; npm receives the completed archive as an in-place upgrade. This keeps the previous executable available through build failures and makes the final global package independent of npm's temporary cache.
 
 ## Boss CLI fork publication
 

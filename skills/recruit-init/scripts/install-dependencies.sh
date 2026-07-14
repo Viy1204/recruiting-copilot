@@ -145,8 +145,6 @@ case "$BOSS_CLI_SOURCE" in
     ;;
 esac
 
-printf 'Removing any existing Boss CLI package...\n'
-npm uninstall -g @joohw/boss-cli
 printf 'Installing Boss CLI from maintained fork...\n'
 npm install -g "$boss_install_source"
 printf 'Installing Liepin CLI...\n'

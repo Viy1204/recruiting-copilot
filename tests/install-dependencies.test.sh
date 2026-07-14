@@ -174,19 +174,20 @@ test_boss_source_defaults_to_fork_and_can_be_overridden() {
     'overridden Boss CLI source'
 }
 
-test_existing_boss_package_is_removed_before_fork_install() {
+test_packed_fork_upgrade_does_not_preemptively_remove_existing_boss() {
   sandbox=$(mktemp -d)
   trap 'rm -rf "$sandbox"' EXIT HUP INT TERM
   make_fake_tools "$sandbox"
 
   run_installer "$sandbox" >/dev/null
 
-  first_operation=$(grep -E '^(uninstall|install) -g ' "$sandbox/npm.log" | sed -n '1p')
-  second_operation=$(grep -E '^(uninstall|install) -g ' "$sandbox/npm.log" | sed -n '2p')
-  assert_equals 'uninstall -g @joohw/boss-cli' "$first_operation" 'existing Boss package removal order'
-  case "$second_operation" in
+  if grep '^uninstall -g @joohw/boss-cli$' "$sandbox/npm.log" >/dev/null; then
+    fail 'installer preemptively removed the existing Boss package'
+  fi
+  first_global_install=$(grep '^install -g ' "$sandbox/npm.log" | sed -n '1p')
+  case "$first_global_install" in
     'install -g '*'/joohw-boss-cli-0.6.5.tgz') ;;
-    *) fail "packed fork install order after removal (got $second_operation)" ;;
+    *) fail "packed fork upgrade source (got $first_global_install)" ;;
   esac
 }
 
@@ -205,6 +206,6 @@ test_first_macos_run_adds_profile_block
 test_second_run_keeps_one_profile_block
 test_existing_path_leaves_profile_unchanged
 test_boss_source_defaults_to_fork_and_can_be_overridden
-test_existing_boss_package_is_removed_before_fork_install
+test_packed_fork_upgrade_does_not_preemptively_remove_existing_boss
 test_check_only_does_not_install_or_edit_profile
 printf 'PASS: install-dependencies\n'

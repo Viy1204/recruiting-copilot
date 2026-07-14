@@ -18,13 +18,11 @@
 ## 前置条件（所有工具通用）
 
 1. [Node.js](https://nodejs.org) ≥ 20，本机装有 Chrome 或 Edge
-2. 运行依赖安装脚本（驱动真实浏览器，用你自己的账号）：
-   ```bash
-   sh skills/recruit-init/scripts/install-dependencies.sh
-   ```
-   脚本默认安装 [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版，
+2. 在下方“安装与使用”步骤中运行依赖安装脚本。脚本默认安装
+   [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版，
    因为它包含当前 Boss 前端的兼容与安全基线更新。macOS 上如果 npm 全局命令
-   不在 `PATH`，脚本会自动、可重复地更新 `~/.zprofile`。
+   不在 `PATH`，脚本会自动、可重复地更新当前 shell 的配置文件
+   （zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）。
 3. 各扫码登录一次（登录态持久化）：
    ```bash
    boss login
