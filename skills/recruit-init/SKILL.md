@@ -14,14 +14,35 @@ disable-model-invocation: true
 
 ## Step 1 前置依赖检查
 
-依次检查，缺什么引导装什么，装不上也**不阻塞建仓**（记入收尾提醒）：
+先定位本 `SKILL.md` 所在的目录，然后运行它自带的安装脚本。在本模板仓库根目录中的命令是：
+
+```bash
+sh skills/recruit-init/scripts/install-dependencies.sh
+```
+
+脚本会检查 Node.js，安装 Boss / 猎聘 CLI，并在 macOS 等环境中自动修复 npm
+全局命令的 `PATH`。默认安装已适配当前 Boss 前端的维护版：
+`git+https://github.com/Viy1204/boss-cli.git#main`。如需替换来源，可在运行前设置
+`BOSS_CLI_SOURCE`。
+
+如果当前 agent 没有全局安装权限，先给同一脚本加 `--check-only`
+获取诊断结果。**无论是权限、Node/npm/git 缺失、网络、构建还是包安装失败，
+都不阻塞建工作区**：记下原始错误和待用户处理项，继续 Step 2，不要在同一失败路径上反复重试。
+
+安装后依次确认：
 
 1. `node --version` —— 需要 Node ≥ 20。没有 → 引导去 https://nodejs.org 装 LTS。
-2. `boss --version` —— Boss 直聘 CLI。没有 → `npm install -g @joohw/boss-cli`。
-3. `liepin --version` —— 猎聘 CLI。没有 → `npm install -g @viyzhu/liepin-cli`。
+2. `boss help` —— Boss 直聘 CLI。没有 → 重跑安装脚本。不要直接用
+   `npm install -g git+...`：部分 npm 版本会把它留成指向临时缓存的符号链接。
+   本脚本会先构建并打包 fork，再安装持久化的包文件。
+3. `liepin --version` —— 猎聘 CLI。没有 → 重跑同一安装脚本，不另外维护第二条安装路径。
 4. 本机装有 Chrome 或 Edge（两个 CLI 都靠它驱动真实浏览器）。
 5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档；
    没有 → 明确告知用户"日报将输出本地 Markdown 到 runtime/reports/，功能不受影响"。**不要求用户必须装。**
+
+在 macOS 上，如果 npm 全局命令目录原本不在 `PATH`，脚本会用可重复执行的配置块
+更新当前 shell 的配置文件（zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）：
+安装过程立即使用新路径，用户之后新开的终端也会自动生效。
 
 装好 CLI 后提醒用户各跑一次 `boss login` 和 `liepin login`（扫码登录，登录态持久化）。
 如果用户此刻登录不了（比如手机不在身边），记入收尾提醒，继续建仓。

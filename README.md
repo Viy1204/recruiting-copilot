@@ -18,10 +18,11 @@
 ## 前置条件（所有工具通用）
 
 1. [Node.js](https://nodejs.org) ≥ 20，本机装有 Chrome 或 Edge
-2. 安装两个招聘平台 CLI（驱动真实浏览器，用你自己的账号）：
-   ```bash
-   npm install -g @joohw/boss-cli @viyzhu/liepin-cli
-   ```
+2. 在下方“安装与使用”步骤中运行依赖安装脚本。脚本默认安装
+   [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版，
+   因为它包含当前 Boss 前端的兼容与安全基线更新。macOS 上如果 npm 全局命令
+   不在 `PATH`，脚本会自动、可重复地更新当前 shell 的配置文件
+   （zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）。
 3. 各扫码登录一次（登录态持久化）：
    ```bash
    boss login
@@ -37,6 +38,7 @@
 ```bash
 git clone <本仓库地址>
 cd recruiting-copilot
+sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
 用你的 AI 工具打开这个目录，说：**"帮我初始化招聘工作区"**。
