@@ -3,9 +3,9 @@ name: recruit-init
 description: >
   初始化招聘工作区：检查 boss-cli / liepin-cli / lark-cli 前置依赖，创建标准目录骨架
   （CONTEXT.md 事实源 + AGENTS.md 协作约定 + 01-jd~05-onboarding 漏斗目录 + 台账），
-  把工作流文档拷进工作区，然后逐个岗位启动 /recruit-grill 梳理真实岗位要求。
+  把工作流文档拷进工作区，为 Codex / Claude Code / Qoder 注册项目级 skill，
+  然后逐个岗位启动 /recruit-grill 梳理真实岗位要求。
   当用户说"初始化招聘工作区"、"帮我搭招聘环境"、"第一次用这套招聘工具"时使用。
-disable-model-invocation: true
 ---
 
 # recruit-init —— 初始化招聘工作区
@@ -57,10 +57,11 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 <workspace>/
 ├── AGENTS.md                 ← 从本 skill 的 templates/AGENTS.md 复制
 ├── CONTEXT.md                ← 从 templates/CONTEXT.md 复制
-├── skills/                   ← 把模板仓库 skills/ 下除 recruit-init 外的目录全部拷入
-│                                （recruit-grill / recruit-daily / market-talent-mapping /
-│                                resume-review / interview-schedule / ask-viy，含 references/），
-│                                工作区从此自足
+├── skills/                   ← 把模板仓库 skills/ 全部拷入（含 recruit-init 与 references/），
+│                                这是所有工具共用的唯一 skill 内容源，工作区从此自足
+├── .agents/skills/           ← 指向 skills/ 的项目级链接（Codex / Agent Skills 约定）
+├── .claude/skills/           ← 指向 skills/ 的项目级链接（Claude Code）
+├── .qoder/skills/            ← 指向 skills/ 的项目级链接（Qoder）
 ├── 01-jd/
 │   ├── _internal/            ← 对内笔记（不外发）
 │   └── _dist/                ← 生成物（PDF/HTML 等）
@@ -77,7 +78,25 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 
 要点：
 - `AGENTS.md` / `CONTEXT.md` 原样复制模板，**不要现场即兴改写结构**——两份文件的分区是后续工作流的接口。
-- 如果用户的工具是 Claude Code，可以额外把 `skills/` 同步一份到 `<workspace>/.claude/skills/`（获得自动触发）；其他工具靠 `AGENTS.md` 路由即可，不用做。
+- `skills/` 是唯一内容源；不要向工具目录重复复制 skill，避免后续版本不一致。
+
+复制完成后，定位本 `SKILL.md` 同目录下的 `scripts/register-workspace-skills.sh`，执行：
+
+```bash
+sh skills/recruit-init/scripts/register-workspace-skills.sh <workspace>
+```
+
+脚本为 `.agents/skills/`、`.claude/skills/`、`.qoder/skills/` 创建指向同一份
+`skills/` 的相对符号链接。它可重复执行：正确链接保持不变；遇到已有文件、目录或指向其他位置的链接时
+只报告并保留，**绝不覆盖**。
+
+兼容边界：
+- Codex 自动扫描 `.agents/skills/`；Qoder 自动扫描 `.qoder/skills/`；Claude Code 使用 `.claude/skills/`。
+- ZCode 直接读取工作区根目录 `AGENTS.md`；如果用户还想在 ZCode 的 Skills 面板看到这些流程，提示其在
+  Settings → Skills 中从 Codex 或 Claude Code 来源导入，选择 Symlink 与当前 Project。
+- WorkBuddy、MiniMax Code 或其他未提供稳定项目级 skill 目录的工具，统一依靠根目录 `AGENTS.md`
+  路由到 `skills/`。不要猜测或创建未经该工具官方文档确认的隐藏目录。
+- 新增或修改 skill 后，如当前工具没有立刻显示，刷新技能列表或新开任务；必要时重启工具。
 
 ## Step 3 逐岗梳理
 
@@ -92,6 +111,6 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 台账是"所有候选人的总名单，防止重复联系"，不要说"事实源""幂等"这类词。
 
 汇报三件事：
-1. 建了什么（目录树 + 两个核心文件的作用一句话）；
+1. 建了什么（目录树 + 两个核心文件的作用一句话 + 已注册的工具入口）；
 2. 还欠什么（未装的 CLI、未登录的账号、未梳理的岗位）；
 3. 怎么用：**以后每天打开这个工作区，说"处理今天的招聘"即可**（工作流见 `skills/recruit-daily/SKILL.md`）。
