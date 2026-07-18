@@ -1,5 +1,5 @@
 ---
-description: 评估平台外收到的简历（猎头/内推/直投，单份或批量）
+description: 收取或评估简历（本地文件，或飞书邮箱的猎聘/BOSS 简历邮件）
 ---
 
-读取并严格执行 `${CLAUDE_PLUGIN_ROOT}/skills/resume-review/SKILL.md` 的流程，评估 $ARGUMENTS 指定的简历文件（未指定则问用户简历在哪）。标准从工作区 CONTEXT.md 现读；只评估落档，不对外做任何动作。
+读取并严格执行 `${CLAUDE_PLUGIN_ROOT}/skills/resume-review/SKILL.md` 的流程。如 $ARGUMENTS 指定本地简历，直接评估；如要求查飞书邮箱，按其时间范围收取猎聘/BOSS 附件后评估；未指定任何输入则询问要评估本地文件还是收取邮箱简历。标准从工作区 CONTEXT.md 现读；只收取、评估和落档，不对外做任何动作。

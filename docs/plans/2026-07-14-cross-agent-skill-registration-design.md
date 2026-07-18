@@ -17,5 +17,10 @@ Do not invent adapters for tools without a documented, stable project-level skil
 Those tools use `AGENTS.md` to route into the canonical `skills/` tree. ZCode can additionally
 import the Codex or Claude source into the current project through its Skills UI.
 
+Keep shared `SKILL.md` frontmatter portable across the registered tools. Remove the Claude-only
+`disable-model-invocation` field from shared skills; invocation policy must not make the canonical
+skill invalid for Codex/Agent Skills parsers.
+
 Validation covers a clean workspace, a second idempotent run, preservation of conflicting paths,
-and resolution of every generated link to a folder containing `SKILL.md`.
+rejection of adapter-root symlinks that could escape the workspace, and resolution of every
+generated link to a folder containing `SKILL.md`.

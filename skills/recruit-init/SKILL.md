@@ -37,8 +37,10 @@ sh skills/recruit-init/scripts/install-dependencies.sh
    本脚本会先构建并打包 fork，再安装持久化的包文件。
 3. `liepin --version` —— 猎聘 CLI。没有 → 重跑同一安装脚本，不另外维护第二条安装路径。
 4. 本机装有 Chrome 或 Edge（两个 CLI 都靠它驱动真实浏览器）。
-5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档；
-   没有 → 明确告知用户"日报将输出本地 Markdown 到 runtime/reports/，功能不受影响"。**不要求用户必须装。**
+5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档、
+   约面试可直接建日历日程，也可从飞书邮箱收取简历；没有 → 明确告知用户
+   "日报将输出本地 Markdown 到 runtime/reports/，约面试提供手动建会清单，邮箱简历需本地提供；
+   寻源、本地简历 review 和台账功能不受影响"。**不要求用户必须装。**
 
 在 macOS 上，如果 npm 全局命令目录原本不在 `PATH`，脚本会用可重复执行的配置块
 更新当前 shell 的配置文件（zsh 为 `~/.zprofile`，bash 为 `~/.bash_profile`）：
@@ -73,12 +75,15 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ├── 05-onboarding/
 ├── _shared/templates/        ← 复制 jd-internal.md / interview-record.md /
 │                                candidate-pool.md / dedup-ledger.csv 四个模板
-└── runtime/reports/          ← 每日原始素材与本地日报
+└── runtime/
+    ├── reports/              ← 本地日报与 review 汇总
+    └── resumes/              ← 邮件简历附件与导入去重索引
 ```
 
 要点：
 - `AGENTS.md` / `CONTEXT.md` 原样复制模板，**不要现场即兴改写结构**——两份文件的分区是后续工作流的接口。
 - `skills/` 是唯一内容源；不要向工具目录重复复制 skill，避免后续版本不一致。
+- 新建工作区时同时创建 `runtime/reports/` 和 `runtime/resumes/`；修复模式只补缺失目录，不动已有附件或索引。
 
 复制完成后，定位本 `SKILL.md` 同目录下的 `scripts/register-workspace-skills.sh`，执行：
 
