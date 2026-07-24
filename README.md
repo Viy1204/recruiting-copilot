@@ -103,3 +103,7 @@ Claude Code 来源导入到当前 Project。
 - **邮箱只是输入渠道**：只读收取，不标已读、不移动/删除、不回复/转发；风险邮件和不可信附件不自动下载。
 
 想了解这些取舍背后的原因，读 [设计思路与理念](docs/DESIGN.md)。
+
+## 绝活日资料包
+
+[绝活日分享资料包](https://bytedance.larkoffice.com/docx/JAbcdCacEoxAbNxEqTjcbBotnUh)
