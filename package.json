@@ -1,7 +1,7 @@
 {
   "name": "recruiting-copilot",
-  "version": "0.5.0",
-  "description": "AI 招聘副驾 —— DeepSeek Harness profile bundle：注册招聘工作流 skills（岗位梳理、双通道寻源初筛、约面试、简历评估、台账与日报），并在 Web UI 右侧提供 boss/liepin 浏览器实时镜像面板。",
+  "version": "0.6.0",
+  "description": "AI 招聘副驾 —— DeepSeek Harness profile bundle：注册招聘工作流 skills（岗位梳理、双通道寻源初筛、约面试、简历评估、台账与日报），并在 Web UI 右侧提供一只可直接操作的 boss/liepin 浏览器面板。",
   "keywords": [
     "recruiting",
     "deepseek-harness",
@@ -12,6 +12,9 @@
     "cdp"
   ],
   "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\""
+  },
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
