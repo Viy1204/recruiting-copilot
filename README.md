@@ -83,6 +83,12 @@ skill 目录里（无需把仓库克隆成工作区）：
 `ask-viy`、`recruit-init`、`recruit-grill`、`recruit-daily`、`resume-review`、
 `interview-schedule`、`market-talent-mapping`。
 
+**附带功能——Web UI 右侧实时浏览器面板**：跑 boss-cli 命令时，DSH Web 界面
+右侧会出现「招聘浏览器」面板，实时显示 boss 浏览器的操作画面（CDP 镜像，
+约 1fps）。前提是 boss-cli 的 Chrome 在跑（任意 boss 命令会自动拉起）；没开会
+显示「浏览器未运行」。liepin-cli 暂因无固定调试端口不支持镜像（详见
+[`dsh/README.md`](dsh/README.md)）。
+
 更新 / 卸载：
 
 ```bash
@@ -92,7 +98,8 @@ dsh plugin --profile web remove recruiting-copilot   # 卸载
 
 > 原理与本地验证见 [`dsh/README.md`](dsh/README.md)：仓库根 `package.json`
 > 声明 `dsh.bundle`，装好后作为 profile 的 patch 层，启用宿主 skill-filesystem
-> 并把本仓库 `skills/` 注册为全局自定义 skill 根。
+> 并把本仓库 `skills/` 注册为全局自定义 skill 根；同包还带 host 插件（CDP 抓帧）
+> 与客户端模块（右侧面板）。
 
 ## 工作区长什么样
 

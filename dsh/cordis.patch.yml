@@ -10,6 +10,9 @@
 #    row —— register into its global layer"，我们正是这个用法）。
 # 2. 把本包内的 skills/ 目录注册为 customSkillDirs，使 7 个招聘 skill 出现在
 #    该 profile 下所有 agent 的全局 skill 层。
+# 3. 挂载本包自身（host 插件 + 客户端面板）：host 侧通过 CDP 把 boss-cli /
+#    liepin-cli 的浏览器镜像成 JPEG 帧并暴露 /plugins/recruiting-view/* 路由；
+#    客户端侧把右侧实时浏览器面板注册进 shell.overlay 插槽。
 #
 # 说明：bundle 安装进 profile 目录后位于 node_modules/recruiting-copilot，
 # 因此用 ctx.baseUrl（= profile 目录）解析出本包 skills/ 的绝对路径；
@@ -21,3 +24,21 @@
   config:
     customSkillDirs:
       - !!js decodeURIComponent(new URL('node_modules/recruiting-copilot/skills', ctx.baseUrl).pathname).replace(/^\/+([A-Za-z]:)/, '$1')
+
+# 本包作为 cordis 插件 + 客户端模块挂载。headless 等无 webServer 的 profile
+# 下 host 插件自动降级（只注册 skill），客户端面板仅 web profile 有意义。
+- insert:
+    - id: recruiting-copilot
+      name: 'recruiting-copilot'
+      config:
+        # boss-cli 固定 CDP 调试端口（BOSS_BROWSER_REMOTE_DEBUGGING_PORT 可覆盖）。
+        # liepin-cli 暂用 puppeteer.launch() 无固定端口，等其支持后再加一项：
+        #   - name: liepin
+        #     port: 53471
+        #     match: liepin\.com
+        sources:
+          - name: boss
+            port: 53470
+            match: zhipin\.com
+        frameIntervalMs: 1000
+        jpegQuality: 60
