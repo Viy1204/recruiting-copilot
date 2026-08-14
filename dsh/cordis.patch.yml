@@ -1,0 +1,23 @@
+# recruiting-copilot —— DeepSeek Harness profile bundle patch
+#
+# 安装方式：dsh plugin --profile <name> add <本仓库 git URL>
+# （例如 web 界面：dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git）
+#
+# 作用：
+# 1. 启用宿主的 skill-filesystem 行（web/headless 等内置 profile 默认把它
+#    disabled，因为 preset 各自负责 per-agent 的 skill 发现；注释里写明
+#    "deployment-level providers —— repository plugins, a host skill-filesystem
+#    row —— register into its global layer"，我们正是这个用法）。
+# 2. 把本包内的 skills/ 目录注册为 customSkillDirs，使 7 个招聘 skill 出现在
+#    该 profile 下所有 agent 的全局 skill 层。
+#
+# 说明：bundle 安装进 profile 目录后位于 node_modules/recruiting-copilot，
+# 因此用 ctx.baseUrl（= profile 目录）解析出本包 skills/ 的绝对路径；
+# 表达式已兼容 Windows（盘符）与 POSIX。id 目标行由 dsh-base 插入，name 作
+# 防御性校验。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  disabled: false
+  config:
+    customSkillDirs:
+      - !!js decodeURIComponent(new URL('node_modules/recruiting-copilot/skills', ctx.baseUrl).pathname).replace(/^\/+([A-Za-z]:)/, '$1')

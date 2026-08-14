@@ -67,6 +67,33 @@ claude plugin install recruiting-copilot
 - `/interview-schedule` —— 约面试：日历+视频会议+拉面试官，档案台账同步
 - `/ask-viy` —— 不知道该用哪个？问它
 
+### 方式三：DeepSeek Harness 插件（任意工作区都能用这套招聘 skill）
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）用户，
+在任意目录执行：
+
+```bash
+dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git
+```
+
+（`web` 是 Web 界面 profile；`headless` 等其他 profile 同理，把 `web` 换成名字即可。）
+
+安装后**重启 DSH 会话**，本仓库 `skills/` 下的 7 个 skill 会出现在任意工作区的
+skill 目录里（无需把仓库克隆成工作区）：
+`ask-viy`、`recruit-init`、`recruit-grill`、`recruit-daily`、`resume-review`、
+`interview-schedule`、`market-talent-mapping`。
+
+更新 / 卸载：
+
+```bash
+dsh plugin --profile web update recruiting-copilot   # 拉到最新提交
+dsh plugin --profile web remove recruiting-copilot   # 卸载
+```
+
+> 原理与本地验证见 [`dsh/README.md`](dsh/README.md)：仓库根 `package.json`
+> 声明 `dsh.bundle`，装好后作为 profile 的 patch 层，启用宿主 skill-filesystem
+> 并把本仓库 `skills/` 注册为全局自定义 skill 根。
+
 ## 工作区长什么样
 
 初始化后你会得到一个自足的招聘工作区（换任何 AI 工具打开都能接着干活）：

@@ -1,0 +1,20 @@
+{
+  "name": "recruiting-copilot",
+  "version": "0.4.2",
+  "description": "AI 招聘副驾 —— DeepSeek Harness profile bundle：把招聘工作流 skills（岗位梳理、双通道寻源初筛、约面试、简历评估、台账与日报）注册进 DSH 的 skill 目录。",
+  "keywords": [
+    "recruiting",
+    "deepseek-harness",
+    "dsh",
+    "skills"
+  ],
+  "files": [
+    "dsh",
+    "skills"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    }
+  }
+}
