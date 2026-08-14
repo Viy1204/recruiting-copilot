@@ -17,7 +17,7 @@
 
 ## 前置条件（所有工具通用）
 
-1. [Node.js](https://nodejs.org) ≥ 20，本机装有 Chrome 或 Edge
+1. [Node.js](https://nodejs.org) ≥ 20，本机装有 Chrome
 2. 在下方“安装与使用”步骤中运行依赖安装脚本。脚本默认安装
    [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版，
    因为它包含当前 Boss 前端的兼容与安全基线更新。macOS 上如果 npm 全局命令
