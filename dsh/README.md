@@ -9,11 +9,14 @@
 - `cordis.patch.yml` 是 profile 的 patch 层：启用宿主 `skill-filesystem` 行，
   把本包 `skills/` 目录挂为全局自定义 skill 根（rank 300，custom 源），并挂载
   本包自身（host 插件 + 客户端面板）。
-- `lib/index.js` 是 host 插件：通过 CDP 把 boss-cli 的浏览器实时镜像成 JPEG 帧，
-  暴露 `/plugins/recruiting-view/*` 路由（无第三方依赖，只用 Node 内置
-  fetch/WebSocket）。
+- `lib/index.js` 是 host 插件：通过 CDP 把 boss-cli 的浏览器变成一只可远程操作的
+  浏览器——`Page.startScreencast` 推帧 + `Input.*` 收事件，暴露
+  `/plugins/recruiting-view/*` 路由（无第三方依赖，只用 Node 内置
+  fetch/WebSocket/child_process）。
 - `client.js` 是浏览器端模块：注册进 `shell.overlay` 插槽，在 Web UI 右侧渲染
-  实时浏览器面板（轮询帧流、可折叠/调宽、可选源与标签）。
+  可操作的浏览器面板，**dock 列形态**（打开时给 `#root` 加 `margin-right` 让出
+  宽度，聊天不被遮挡，视觉与 DSH 内置列一致）：MJPEG 画面、鼠标/滚轮/键盘/IME
+  回传、地址栏与标签页、贴合视口、整屏/折叠/调宽（宽度记忆到 localStorage）。
 
 ## 安装 / 更新 / 卸载
 
@@ -32,21 +35,40 @@ dsh plugin --profile web remove recruiting-copilot
 
 1. `skills/` 下 7 个 skill（ask-viy、recruit-init、recruit-grill、recruit-daily、
    resume-review、interview-schedule、market-talent-mapping）在任意工作区可用。
-2. Web UI 右侧出现「招聘浏览器」面板：运行 boss-cli 命令时实时显示其操作界面。
+2. Web UI 右侧出现「招聘浏览器」面板：一只可以直接用的浏览器。
 
 ## 招聘浏览器面板
 
 - **原理**：boss-cli 固定占用 CDP 调试端口 `53470`（见 boss-cli 的
-  `REMOTE_DEBUGGING_PORT`），浏览器跨命令常驻；本插件的 host 半区并行挂到同一
-  只浏览器上，每秒抓一帧 JPEG，经 `/plugins/recruiting-view/frame.jpg` 供面板轮询。
-- **依赖**：boss-cli 的 Chrome 在跑（或由任意 boss 命令拉起）。浏览器没开时
-  面板显示「浏览器未运行」，不报错。
+  `REMOTE_DEBUGGING_PORT`），浏览器跨命令常驻；host 半区并行挂到同一只浏览器上，
+  `Page.startScreencast` 推 JPEG 帧（有变化才推），经
+  `/plugins/recruiting-view/stream.mjpg` 以 MJPEG 长连接喂给面板的 `<img>`；
+  面板把鼠标/滚轮/键盘/IME 事件回传 `/input`，host 转成 `Input.*` 派发。
+- **看得清的关键是「贴合」**：host 用 `Emulation.setDeviceMetricsOverride` 把页面
+  视口固定为 **958×1149**（用户确认 BOSS 页面在这个尺寸下渲染最完整），与面板大小
+  解耦——面板随意拖宽只影响显示缩放，不影响页面渲染尺寸。关掉贴合则显示浏览器真实
+  窗口画面（会被缩小）。
+  取消贴合必须**先用 0 宽高把覆盖接管到当前会话、再 `clearDeviceMetricsOverride`**，
+  只发 clear 清不掉别的（已断开）会话留下的覆盖——插件 dispose 时也走这条路径，
+  免得关掉 DSH 后真实浏览器卡在面板尺寸。
+- **浏览器没起时**：面板里点「在这里启动浏览器」，host 用与 boss-cli 相同的
+  user-data-dir（`~/.boss-cli/.cache/browser-data`）和调试端口拉起 Chrome，登录态
+  通用；之后跑 boss 命令会 `probe` 到这只已存在的实例直接复用，不会另开一只。
+- **窗口被遮挡/最小化**：screencast 会静默，看门狗自动回落到
+  `Page.captureScreenshot` 轮询（面板底部状态栏会显示「轮询」）。
+- **坐标**：面板传归一化坐标（0..1），host 乘当前视口尺寸，因此面板缩放/letterbox
+  都不影响命中；实测面板点 (x,y) 与页面 (x,y) 逐像素对齐。
+- **键盘**：面板里有个透明 textarea 承接按键，点画面即聚焦；中文走
+  `compositionend` → `Input.insertText`，粘贴同理。功能键发 `rawKeyDown`，
+  可打印字符发带 `text` 的 `keyDown`。
 - **liepin**：liepin-cli 目前用 `puppeteer.launch()` 且无固定调试端口，暂不能
-  镜像；等 liepin-cli 支持固定端口后，在 profile 的 `cordis.patch.yml` 里给
+  接管；等 liepin-cli 支持固定端口后，在 profile 的 `cordis.patch.yml` 里给
   `recruiting-copilot` 的 `config.sources` 加一项
   `{ name: "liepin", port: <端口>, match: "liepin\\.com" }` 即可，无需改本仓库。
-- **路由**：`state.json`（状态+标签列表）、`frame.jpg`（最新帧）、
-  `set-target`（切换抓取标签）。
+- **路由**：`state.json`（状态+标签+视口）、`stream.mjpg`（实时画面）、
+  `frame.jpg`（单帧兜底）、`input`（POST 事件批）、`control`（POST：launch /
+  navigate / reload / back / forward / new-tab / close-tab / set-target /
+  activate / fit / unfit）。
 
 ## 原理速览
 
@@ -61,19 +83,26 @@ dsh plugin --profile web remove recruiting-copilot
 - host 插件不声明必选 `inject`（headless 无 webServer 也能挂载），路由注册放在
   `ctx.inject({ webServer: {} }, ...)` 子纤维里，等服务可用再注册。
 - 客户端模块契约：`window.__ModuleLoader__.load({ id, factory })`，`factory`
-  里 `require("react")` 等共享模块，`apply(ctx)` 里 `ctx.slots.register` 进
-  `shell.overlay`（list 插槽，需 `id`）。
+  里 `require("react")` 等共享模块，`apply(ctx)` 里注册进 `shell.overlay`
+  （list 插槽，需 `id`）。**`slots` 是 cordis 服务，必须 `ctx.inject(["slots"], …)`
+  才能访问**——直接读 `ctx.slots` 会以
+  `cannot get property "slots" without inject` 整个模块加载失败。
 
 ## 本地验证（改动后必做）
 
 ```bash
 cd 本仓库
-npm pack            # 产物应包含 dsh/、skills/、lib/、client.js
+node --test "tests/*.test.mjs"  # 单测：坐标换算、输入参数、贴合/还原调用序列
 node --check client.js && node --check lib/index.js
+npm pack                         # 产物应包含 dsh/、skills/、lib/、client.js
+
+# 真机联调（不起 DSH，直接把 host 插件挂裸 http 上）：
+node tests/harness-live.mjs 3081
+curl http://127.0.0.1:3081/plugins/recruiting-view/state.json
+node tests/input-e2e.mjs 3081    # 端到端验证鼠标/滚轮/键盘真的进了页面
+
 # 隔离验证（不碰在跑的 GUI）：
 DSH_HOME=$(mktemp -d) dsh plugin --profile web add link:$(pwd)
-DSH_HOME=同上 dsh --profile web --port 3081   # 起隔离实例
-curl http://127.0.0.1:3081/plugins/recruiting-copilot/client.js
-curl http://127.0.0.1:3081/plugins/recruiting-view/state.json
-curl -o f.jpg http://127.0.0.1:3081/plugins/recruiting-view/frame.jpg
+DSH_HOME=同上 dsh --profile web --port 3082   # 起隔离实例
+curl http://127.0.0.1:3082/plugins/recruiting-copilot/client.js
 ```
