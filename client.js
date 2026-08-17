@@ -23,9 +23,26 @@ window.__ModuleLoader__.load({
 		const BASE = "/plugins/recruiting-view";
 		const MIN_W = 360;
 		const WIDTH_KEY = "rcp.panel.width";
-		// 页面视口固定尺寸：BOSS 页面在这个尺寸下渲染最完整（用户确认 958×1149 刚好），
+		// 页面视口固定尺寸按源分开：两个平台的列宽不一样，一个数字伺候不了两家。
 		// 面板自身可随意拖宽，画面按比例缩放，黑边由 normalize() 兜底。
-		const FIXED_VIEWPORT = { width: 958, height: 1149 };
+		// BOSS 的 958×1149 是用户确认过渲染最完整的尺寸。
+		// 实拍量出来的：猎聘在 958 下会出横向滚动条，且「立即沟通」按钮被挤出可视区
+		// ——那个按钮正是手动打招呼要点的；1280 能露出按钮但日期列被截断；1440 下
+		// 候选人的完整工作历和起止年月都读得全。
+		const FIXED_VIEWPORT = {
+			boss: { width: 958, height: 1149 },
+			liepin: { width: 1440, height: 1149 }
+		};
+		const DEFAULT_VIEWPORT = FIXED_VIEWPORT.boss;
+
+		// 空态提示按源分开说。猎聘那条尤其重要：旧版 liepin-cli 用 puppeteer.launch()
+		// 分配随机端口，面板永远探不到，点「启动浏览器」也不会有任何变化——不写清楚
+		// 用户只会以为是浏览器没开。
+		const EMPTY_HINT = {
+			boss: "用 boss-cli 同一用户数据目录和调试端口，登录态通用",
+			liepin: "需要 liepin-cli 支持固定调试端口 53471（旧版本用随机端口，面板接管不了，" +
+				"先跑 npm update -g @viyzhu/liepin-cli）；版本已够就点上面的按钮启动"
+		};
 
 		// ── 样式（注入一次）──────────────────────────────────────────────
 		const css = [
@@ -167,6 +184,22 @@ window.__ModuleLoader__.load({
 
 			const bodyRef = react.useRef(null);
 			const imgRef = react.useRef(null);
+			// MJPEG 是 multipart 长连接：<img> 从 DOM 摘掉时 Chrome **不保证**中断请求，
+			// 连接会连着却不再读取。host 那边 res.write() 迟早写不动、置 backedUp 后永远
+			// 等不到 drain，于是成了僵尸——既占着 Chrome 的同源连接槽（HTTP/1.1 约 6 条），
+			// 又占着本镜像的订阅者（害 host 一直轮询截图）。切几次源就把槽位占满，新 stream
+			// 抢不到连接，表现为「切换卡顿，然后两个源都没画面」。
+			// React 会先用 null 调一次 callback ref，正好是掐断上一个元素的时机。
+			const setImgEl = react.useCallback((el) => {
+				const prev = imgRef.current;
+				if (prev !== null && prev !== el) {
+					try {
+						prev.src = "";
+						prev.removeAttribute("src");
+					} catch { /* 元素已被移除 */ }
+				}
+				imgRef.current = el;
+			}, []);
 			const imeRef = react.useRef(null);
 			const dragging = react.useRef(false);
 			const sourceRef = react.useRef(activeSource);
@@ -240,19 +273,20 @@ window.__ModuleLoader__.load({
 				if (!addrDirty) setAddr(active?.targetUrl ?? "");
 			}, [active?.targetUrl, addrDirty]);
 
-			// 贴合：页面视口固定为 FIXED_VIEWPORT（与面板大小解耦——面板拖宽只影响
-			// 显示缩放，不影响页面渲染尺寸，保证 BOSS 页面永远截得全）。
+			// 贴合：页面视口按源固定（与面板大小解耦——面板拖宽只影响显示缩放，不影响
+			// 页面渲染尺寸，保证页面永远截得全）。切源必须重发，两家尺寸不同。
 			react.useEffect(() => {
 				if (!fit) {
 					control("unfit");
 					return undefined;
 				}
+				const vp = FIXED_VIEWPORT[sourceName] ?? DEFAULT_VIEWPORT;
 				control("fit", {
-					width: FIXED_VIEWPORT.width,
-					height: FIXED_VIEWPORT.height,
+					width: vp.width,
+					height: vp.height,
 					deviceScaleFactor: Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)
 				});
-			}, [fit, collapsed, mode, control]);
+			}, [fit, collapsed, mode, control, sourceName]);
 
 			// 断线后重连：重挂 MJPEG（img 的 src 不变时不会自动重连）
 			react.useEffect(() => {
@@ -455,7 +489,7 @@ window.__ModuleLoader__.load({
 				connected
 					? h("img", {
 						key: `${sourceName}-${streamKey}`,
-						ref: imgRef,
+						ref: setImgEl,
 						src: `${BASE}/stream.mjpg?source=${encodeURIComponent(sourceName)}&k=${streamKey}`,
 						alt: "browser",
 						draggable: false
@@ -467,7 +501,7 @@ window.__ModuleLoader__.load({
 							className: "rcp-cta",
 							onClick: () => control("launch").then(() => setTimeout(() => setStreamKey((k) => k + 1), 1500))
 						}, launching ? "启动中…" : "在这里启动浏览器"),
-						h("span", { style: { opacity: .7 } }, "用 boss-cli 同一用户数据目录和调试端口，登录态通用"),
+						h("span", { style: { opacity: .7 } }, EMPTY_HINT[sourceName] ?? EMPTY_HINT.boss),
 						active?.error ? h("span", { style: { color: "var(--dsw-alias-state-error-primary,#f2574b)" } }, String(active.error)) : null
 					),
 				h("textarea", {

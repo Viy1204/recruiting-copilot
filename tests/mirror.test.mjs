@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserMirror, normalizeSources } from "../lib/index.js";
+import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless, streamMjpeg } from "../lib/index.js";
 
 /** 造一只不连 CDP 的 mirror，记录所有下发的命令。 */
 function stubMirror(viewport = { width: 1000, height: 800 }) {
@@ -131,6 +131,77 @@ test("退订后不再收到帧", () => {
   assert.equal(got.length, 0);
 });
 
+test("贴合不把 window.screen 一起盖掉（不传 screenWidth/screenHeight）", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.requestFit(958, 1149, 1.5);
+  await mirror._applyFit();
+  const fit = calls.find((c) => c.method === "Emulation.setDeviceMetricsOverride");
+  assert.deepEqual(fit.params, { width: 958, height: 1149, deviceScaleFactor: 1.5, mobile: false });
+  assert.equal(mirror.state.viewport.width, 958);
+  assert.equal(mirror.state.viewport.height, 1149);
+});
+
+test("无头下截图兜底不退到 fromSurface:false（那是 headful-only，会拿到废图）", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.state.headless = true;
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    return Promise.resolve({ result: {} }); // 模拟 fromSurface:true 抓不到
+  };
+  await mirror._pollFrame();
+  const shots = calls.filter((c) => c.method === "Page.captureScreenshot");
+  assert.equal(shots.length, 1);
+  assert.equal(shots[0].params.fromSurface, true);
+  assert.equal(mirror.frame, null);
+});
+
+test("有头下截图兜底才退到 fromSurface:false", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.state.headless = false;
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    if (method === "Page.captureScreenshot" && params.fromSurface === false) {
+      return Promise.resolve({ result: { data: Buffer.from("frame").toString("base64") } });
+    }
+    return Promise.resolve({ result: {} });
+  };
+  await mirror._pollFrame();
+  assert.deepEqual(
+    calls.filter((c) => c.method === "Page.captureScreenshot").map((c) => c.params.fromSurface),
+    [true, false]
+  );
+  assert.equal(mirror.frame.toString(), "frame");
+  assert.equal(mirror.state.frameMode, "poll");
+});
+
+test("readHeadless 按 /json/version 的 UA 判模式", () => {
+  const headless = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36";
+  const headful = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+  assert.equal(readHeadless({ "User-Agent": headless }), true);
+  assert.equal(readHeadless({ "User-Agent": headful }), false);
+  assert.equal(readHeadless({}), null);
+  assert.equal(readHeadless(null), null);
+});
+
+test("隐藏模式默认开启，只有显式 false 才退回有头", () => {
+  const saved = process.env.RECRUIT_BROWSER_HIDDEN;
+  try {
+    delete process.env.RECRUIT_BROWSER_HIDDEN;
+    assert.equal(hiddenModeEnabled(), true);
+    process.env.RECRUIT_BROWSER_HIDDEN = "true";
+    assert.equal(hiddenModeEnabled(), true);
+    process.env.RECRUIT_BROWSER_HIDDEN = "false";
+    assert.equal(hiddenModeEnabled(), false);
+    process.env.RECRUIT_BROWSER_HIDDEN = "FALSE";
+    assert.equal(hiddenModeEnabled(), false);
+    process.env.RECRUIT_BROWSER_HIDDEN = "0";
+    assert.equal(hiddenModeEnabled(), true, "只认 false，不做 truthy 猜测");
+  } finally {
+    if (saved === undefined) delete process.env.RECRUIT_BROWSER_HIDDEN;
+    else process.env.RECRUIT_BROWSER_HIDDEN = saved;
+  }
+});
+
 test("normalizeSources：patch 只写差异，userDataDir/homeUrl 从内置默认补", () => {
   const list = normalizeSources([{ name: "boss", port: 53470, match: "zhipin\\.com" }]);
   assert.equal(list[0].name, "boss");
@@ -146,12 +217,136 @@ test("normalizeSources：显式配置覆盖内置默认", () => {
   assert.equal(list[0].homeUrl, "about:blank");
 });
 
-test("normalizeSources：无配置用内置默认；未知源原样保留", () => {
+test("normalizeSources：无配置时内置 boss 与 liepin 两个源", () => {
   const defs = normalizeSources(undefined);
-  assert.equal(defs.length, 1);
-  assert.equal(defs[0].name, "boss");
+  assert.deepEqual(defs.map((s) => s.name), ["boss", "liepin"]);
+  assert.deepEqual(defs.map((s) => s.port), [53470, 53471]);
   assert.ok(defs[0].userDataDir.includes(".boss-cli"));
-  const custom = normalizeSources([{ name: "liepin", port: 53471 }]);
+  assert.ok(defs[1].userDataDir.includes(".liepin-cli"));
+  assert.ok(defs[1].homeUrl.includes("lpt.liepin.com"));
+});
+
+test("normalizeSources：liepin 只写端口时，userDataDir/homeUrl 从内置默认补", () => {
+  const list = normalizeSources([{ name: "liepin", port: 53471, match: "liepin\\.com" }]);
+  assert.equal(list.length, 1);
+  assert.ok(list[0].userDataDir.includes(".liepin-cli"));
+  assert.equal(list[0].homeUrl, "https://lpt.liepin.com/recommend");
+});
+
+test("normalizeSources：未知源原样保留，不硬塞默认值", () => {
+  const custom = normalizeSources([{ name: "zhaopin", port: 53472 }]);
+  assert.equal(custom[0].name, "zhaopin");
   assert.equal(custom[0].userDataDir, undefined);
   assert.equal(custom[0].homeUrl, undefined);
+});
+
+/** 假的 req/res：write 永远返回 false（模拟对面不读），drain 永不触发。 */
+function stubHttp() {
+  const handlers = { req: {}, res: {} };
+  const written = [];
+  const state = { ended: false };
+  const req = { on: (ev, fn) => { handlers.req[ev] = fn; } };
+  const res = {
+    writeHead() {},
+    write(chunk) { written.push(chunk); return false; },
+    end() { state.ended = true; },
+    on: (ev, fn) => { handlers.res[ev] = fn; },
+    get writableEnded() { return state.ended; }
+  };
+  return { req, res, written, state, handlers };
+}
+
+test("客户端不读时，僵尸 stream 超时被断开（否则占满同源连接槽）", () => {
+  const { mirror } = stubMirror();
+  const { req, res, state, written } = stubHttp();
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  try {
+    streamMjpeg(mirror, req, res);
+
+    mirror._publish(Buffer.from("frame-1"));
+    const afterFirst = written.length;
+    assert.ok(afterFirst > 0, "第一帧应该写出去（此时还没 backedUp）");
+
+    // 已经 backedUp：还在阈值内的帧只丢掉，不断连接
+    clock += 3000;
+    mirror._publish(Buffer.from("frame-2"));
+    assert.equal(written.length, afterFirst, "backedUp 期间不再写入");
+    assert.equal(state.ended, false, "阈值内不该断开");
+
+    // 超过阈值：断掉，并退订（否则看门狗会一直以为有人在看，持续轮询截图）
+    clock += 9000;
+    mirror._publish(Buffer.from("frame-3"));
+    assert.equal(state.ended, true, "写不动超过阈值应断开连接");
+    assert.equal(mirror._subscribers.size, 0, "断开后必须退订");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("对面正常读取时，stream 不会被误断", () => {
+  const { mirror } = stubMirror();
+  const { req, res, state, written, handlers } = stubHttp();
+  streamMjpeg(mirror, req, res);
+
+  for (let i = 0; i < 5; i++) {
+    mirror._publish(Buffer.from(`frame-${i}`));
+    handlers.res.drain?.();   // 客户端读完了，内核缓冲腾空
+  }
+  assert.equal(state.ended, false);
+  assert.equal(mirror._subscribers.size, 1);
+  assert.ok(written.length >= 5 * 3, "每帧写 head + body + CRLF");
+});
+
+test("req close 时退订，不留订阅者", () => {
+  const { mirror } = stubMirror();
+  const { req, res, handlers } = stubHttp();
+  streamMjpeg(mirror, req, res);
+  assert.equal(mirror._subscribers.size, 1);
+  handlers.req.close();
+  assert.equal(mirror._subscribers.size, 0);
+  void res;
+});
+
+test("同一个源的新 stream 挤掉旧的（切源留下的僵尸不许占着连接槽）", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  assert.equal(mirror._subscribers.size, 1);
+
+  // 切走再切回来 = 同一个源上来了第二路
+  const b = stubHttp();
+  streamMjpeg(mirror, b.req, b.res);
+  assert.equal(a.state.ended, true, "旧的那路必须被断开");
+  assert.equal(b.state.ended, false, "新的那路要留着");
+  assert.equal(mirror._subscribers.size, 1, "订阅者不许累积");
+
+  // 反复切十次也不该堆积
+  for (let i = 0; i < 10; i++) streamMjpeg(mirror, stubHttp().req, stubHttp().res);
+  assert.equal(mirror._subscribers.size, 1);
+});
+
+test("旧 stream 自己先断开时，不会把后来者的通道误清掉", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  const b = stubHttp();
+  streamMjpeg(mirror, b.req, b.res);   // a 已被挤掉
+  a.handlers.req.close();              // a 的 close 事件姗姗来迟
+
+  const c = stubHttp();
+  streamMjpeg(mirror, c.req, c.res);
+  assert.equal(b.state.ended, true, "b 该被 c 挤掉");
+  assert.equal(c.state.ended, false, "c 不该受 a 的迟到 close 影响");
+  assert.equal(mirror._subscribers.size, 1);
+});
+
+test("dispose 时把在跑的 stream 一并收掉", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  mirror.dispose();
+  assert.equal(a.state.ended, true);
+  assert.equal(mirror._subscribers.size, 0);
 });

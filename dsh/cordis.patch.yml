@@ -31,14 +31,16 @@
     - id: recruiting-copilot
       name: 'recruiting-copilot'
       config:
-        # boss-cli 固定 CDP 调试端口（BOSS_BROWSER_REMOTE_DEBUGGING_PORT 可覆盖）。
-        # liepin-cli 暂用 puppeteer.launch() 无固定端口，等其支持后再加一项：
-        #   - name: liepin
-        #     port: 53471
-        #     match: liepin\.com
+        # 两个 CLI 各占一个固定 CDP 调试端口，浏览器跨命令常驻，所以面板能一直连着。
+        # 端口可分别用 BOSS_BROWSER_REMOTE_DEBUGGING_PORT /
+        # LIEPIN_BROWSER_REMOTE_DEBUGGING_PORT 覆盖；改了这里也要跟着改。
+        # 其余字段（homeUrl / userDataDir）从 lib/index.js 的 DEFAULT_SOURCES 补。
         sources:
           - name: boss
             port: 53470
             match: zhipin\.com
+          - name: liepin
+            port: 53471
+            match: liepin\.com
         frameIntervalMs: 1000
         jpegQuality: 60

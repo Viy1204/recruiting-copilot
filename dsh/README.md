@@ -37,6 +37,29 @@ dsh plugin --profile web remove recruiting-copilot
    resume-review、interview-schedule、market-talent-mapping）在任意工作区可用。
 2. Web UI 右侧出现「招聘浏览器」面板：一只可以直接用的浏览器。
 
+## 浏览器默认无头
+
+面板拉起的浏览器**默认无头**（`RECRUIT_BROWSER_HIDDEN` 不等于 `false` 即无头）。
+
+实测原因：想过用「离屏有头」（`--window-position=-32000,-32000`）来隐藏窗口，但在 Windows 上
+**创建可见窗口必然激活它**，照样抢键盘焦点，加 `--no-startup-window` 也只是把激活推迟到建 tab 那一刻。
+而无头下面板依赖的每条 CDP 能力（screencast 推帧、`Emulation` 贴合、`Input.*` 派发、
+`captureScreenshot`）与有头**零退化**，截图字节数逐字节相同。
+
+**要看浏览器在做什么就用这个面板** —— 这正是它存在的理由。真要有头窗口（例如需要在真窗口里人工操作）：
+
+```bash
+RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-cli
+```
+
+已有实例在跑时改变量不生效（端口上已有实例会被复用），得先 `boss shutdown` / `liepin quit` 关掉那只。
+判断在跑的那只是什么模式：`state.json` 里每个源的 `headless` 字段，或直接读
+`http://127.0.0.1:<port>/json/version` 的 `User-Agent` 是否含 `HeadlessChrome`。
+
+无头下额外带 `--screen-info={0,0 1920x1080 workAreaBottom=40}`：无头虚拟屏默认 800x600 是已知的
+强自动化指纹，`--window-size` **抬不动它**，只有 `--screen-info` 能（Chrome 142+，仅无头有效）。
+四个 workArea 参数必须分开写（`workAreaTop/Bottom/Left/Right`），写成 `workArea=` 会让 Chrome 直接起不来。
+
 ## 招聘浏览器面板
 
 - **原理**：boss-cli 固定占用 CDP 调试端口 `53470`（见 boss-cli 的
@@ -44,27 +67,39 @@ dsh plugin --profile web remove recruiting-copilot
   `Page.startScreencast` 推 JPEG 帧（有变化才推），经
   `/plugins/recruiting-view/stream.mjpg` 以 MJPEG 长连接喂给面板的 `<img>`；
   面板把鼠标/滚轮/键盘/IME 事件回传 `/input`，host 转成 `Input.*` 派发。
-- **看得清的关键是「贴合」**：host 用 `Emulation.setDeviceMetricsOverride` 把页面
-  视口固定为 **958×1149**（用户确认 BOSS 页面在这个尺寸下渲染最完整），与面板大小
-  解耦——面板随意拖宽只影响显示缩放，不影响页面渲染尺寸。关掉贴合则显示浏览器真实
+- **看得清的关键是「贴合」**：host 用 `Emulation.setDeviceMetricsOverride` 把页面视口固定成
+  一个**按源写死**的尺寸（`client.js` 的 `FIXED_VIEWPORT`：BOSS `958×1149`，猎聘 `1440×1149`），
+  与面板大小解耦——面板随意拖宽只影响显示缩放，不影响页面渲染尺寸。关掉贴合则显示浏览器真实
   窗口画面（会被缩小）。
+  两家尺寸不同是量出来的：猎聘在 958 下会出横向滚动条，且候选人卡片右侧的「立即沟通」按钮被
+  挤出可视区——那是手动打招呼的唯一入口。**切源时必须重发贴合**（`sourceName` 要进 `useEffect`
+  的依赖数组），否则从 BOSS 切到猎聘还用着 958。
   取消贴合必须**先用 0 宽高把覆盖接管到当前会话、再 `clearDeviceMetricsOverride`**，
   只发 clear 清不掉别的（已断开）会话留下的覆盖——插件 dispose 时也走这条路径，
   免得关掉 DSH 后真实浏览器卡在面板尺寸。
+  **贴合时不传 `screenWidth`/`screenHeight`**：传了会把 `window.screen` 一起盖成视口尺寸
+  （958×1149 这种竖屏、且 `availHeight === height` 没有任务栏），本身就是自动化指纹。
+  实测不传时 `innerWidth`/`innerHeight` 依然精确等于目标值，面板效果一字不差，而真实
+  screen（无头下由 `--screen-info` 给定）能透出来。
 - **浏览器没起时**：面板里点「在这里启动浏览器」，host 用与 boss-cli 相同的
   user-data-dir（`~/.boss-cli/.cache/browser-data`）和调试端口拉起 Chrome，登录态
   通用；之后跑 boss 命令会 `probe` 到这只已存在的实例直接复用，不会另开一只。
-- **窗口被遮挡/最小化**：screencast 会静默，看门狗自动回落到
-  `Page.captureScreenshot` 轮询（面板底部状态栏会显示「轮询」）。
+- **screencast 静默时**：看门狗自动回落到 `Page.captureScreenshot` 轮询（面板底部状态栏会
+  显示「轮询」）。**无头下只用 `fromSurface:true`** —— `fromSurface:false` 是文档化的
+  headful-only（"works only in headful mode"），无头下会返回一张空/降级图；若不加区分地
+  退到它，`fromSurface:true` 失败的那一刻会把废图当成有效帧发布，面板显示假画面，
+  比没有兜底更糟。
 - **坐标**：面板传归一化坐标（0..1），host 乘当前视口尺寸，因此面板缩放/letterbox
   都不影响命中；实测面板点 (x,y) 与页面 (x,y) 逐像素对齐。
 - **键盘**：面板里有个透明 textarea 承接按键，点画面即聚焦；中文走
   `compositionend` → `Input.insertText`，粘贴同理。功能键发 `rawKeyDown`，
   可打印字符发带 `text` 的 `keyDown`。
-- **liepin**：liepin-cli 目前用 `puppeteer.launch()` 且无固定调试端口，暂不能
-  接管；等 liepin-cli 支持固定端口后，在 profile 的 `cordis.patch.yml` 里给
-  `recruiting-copilot` 的 `config.sources` 加一项
-  `{ name: "liepin", port: <端口>, match: "liepin\\.com" }` 即可，无需改本仓库。
+- **两个源**：boss 占 `53470`，liepin 占 `53471`（`liepin-cli` 的
+  `LIEPIN_BROWSER_REMOTE_DEBUGGING_PORT`）。面板顶部在 `sources.length > 1` 时自动
+  出现源切换按钮。两个 CLI 的浏览器都**跨命令常驻**（命令结束只断 CDP），所以面板
+  能一直连着；要真正关掉用 `boss shutdown` / `liepin quit`。
+  猎聘源探不到端口时，空态文案会明确指向「liepin-cli 版本过旧（旧版用随机端口）」——
+  否则用户只会以为是浏览器没开，点了启动按钮也没有任何反应。
 - **路由**：`state.json`（状态+标签+视口）、`stream.mjpg`（实时画面）、
   `frame.jpg`（单帧兜底）、`input`（POST 事件批）、`control`（POST：launch /
   navigate / reload / back / forward / new-tab / close-tab / set-target /

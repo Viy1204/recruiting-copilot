@@ -17,7 +17,7 @@
 3. **Boss `greet` 只认推荐/深搜页**：常规搜索页 greet 报错"当前不在推荐列表页"。全国搜命中的人要联系，只能用户在浏览器手动点「立即沟通」（见 SKILL「联系候选人」）。
 4. **猎聘/Boss 快速连续调用返回空**：搜索间要 `sleep 3~4s`，否则页面未加载完返回空数组。
 5. **猎聘全国搜索相关度松**：通用关键词会引来跨行业噪声。按 `current_title` 关联度正则过滤；**猎聘不支持按公司精确定向**（"公司名 + 岗位词"是松散全文匹配，会返回不相干的人）。
-6. **别用别的程序同时连 boss 的浏览器调试端口**：会拧死会话（`Network.enable timed out`）。
+6. **并发连同一个调试端口没问题，但别从第二个会话 enable 重量级 CDP 域**：DSH 面板就一直并发挂着（只用 `Page.enable` + screencast + `Input.*`）。发 `Runtime.enable` 会被 BOSS 反爬当调试器挂载信号、**杀掉整个浏览器**；发 `Network.enable` 会拧死会话（`Network.enable timed out`）。读页面用 `Runtime.evaluate`，它不需要 enable。
 7. **Python 读中文源码**：Windows 默认 GBK 会把中文搞坏 → `PYTHONUTF8=1 python -X utf8 script.py`。
 
 ## 每候选人数据 schema
