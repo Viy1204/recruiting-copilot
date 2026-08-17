@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserMirror, normalizeSources } from "../lib/index.js";
+import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless } from "../lib/index.js";
 
 /** 造一只不连 CDP 的 mirror，记录所有下发的命令。 */
 function stubMirror(viewport = { width: 1000, height: 800 }) {
@@ -129,6 +129,77 @@ test("退订后不再收到帧", () => {
   off();
   mirror._onEvent({ method: "Page.screencastFrame", params: { data: Buffer.from("x").toString("base64"), sessionId: 1, metadata: {} } });
   assert.equal(got.length, 0);
+});
+
+test("贴合不把 window.screen 一起盖掉（不传 screenWidth/screenHeight）", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.requestFit(958, 1149, 1.5);
+  await mirror._applyFit();
+  const fit = calls.find((c) => c.method === "Emulation.setDeviceMetricsOverride");
+  assert.deepEqual(fit.params, { width: 958, height: 1149, deviceScaleFactor: 1.5, mobile: false });
+  assert.equal(mirror.state.viewport.width, 958);
+  assert.equal(mirror.state.viewport.height, 1149);
+});
+
+test("无头下截图兜底不退到 fromSurface:false（那是 headful-only，会拿到废图）", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.state.headless = true;
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    return Promise.resolve({ result: {} }); // 模拟 fromSurface:true 抓不到
+  };
+  await mirror._pollFrame();
+  const shots = calls.filter((c) => c.method === "Page.captureScreenshot");
+  assert.equal(shots.length, 1);
+  assert.equal(shots[0].params.fromSurface, true);
+  assert.equal(mirror.frame, null);
+});
+
+test("有头下截图兜底才退到 fromSurface:false", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.state.headless = false;
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    if (method === "Page.captureScreenshot" && params.fromSurface === false) {
+      return Promise.resolve({ result: { data: Buffer.from("frame").toString("base64") } });
+    }
+    return Promise.resolve({ result: {} });
+  };
+  await mirror._pollFrame();
+  assert.deepEqual(
+    calls.filter((c) => c.method === "Page.captureScreenshot").map((c) => c.params.fromSurface),
+    [true, false]
+  );
+  assert.equal(mirror.frame.toString(), "frame");
+  assert.equal(mirror.state.frameMode, "poll");
+});
+
+test("readHeadless 按 /json/version 的 UA 判模式", () => {
+  const headless = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36";
+  const headful = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+  assert.equal(readHeadless({ "User-Agent": headless }), true);
+  assert.equal(readHeadless({ "User-Agent": headful }), false);
+  assert.equal(readHeadless({}), null);
+  assert.equal(readHeadless(null), null);
+});
+
+test("隐藏模式默认开启，只有显式 false 才退回有头", () => {
+  const saved = process.env.RECRUIT_BROWSER_HIDDEN;
+  try {
+    delete process.env.RECRUIT_BROWSER_HIDDEN;
+    assert.equal(hiddenModeEnabled(), true);
+    process.env.RECRUIT_BROWSER_HIDDEN = "true";
+    assert.equal(hiddenModeEnabled(), true);
+    process.env.RECRUIT_BROWSER_HIDDEN = "false";
+    assert.equal(hiddenModeEnabled(), false);
+    process.env.RECRUIT_BROWSER_HIDDEN = "FALSE";
+    assert.equal(hiddenModeEnabled(), false);
+    process.env.RECRUIT_BROWSER_HIDDEN = "0";
+    assert.equal(hiddenModeEnabled(), true, "只认 false，不做 truthy 猜测");
+  } finally {
+    if (saved === undefined) delete process.env.RECRUIT_BROWSER_HIDDEN;
+    else process.env.RECRUIT_BROWSER_HIDDEN = saved;
+  }
 });
 
 test("normalizeSources：patch 只写差异，userDataDir/homeUrl 从内置默认补", () => {

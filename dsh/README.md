@@ -37,6 +37,29 @@ dsh plugin --profile web remove recruiting-copilot
    resume-review、interview-schedule、market-talent-mapping）在任意工作区可用。
 2. Web UI 右侧出现「招聘浏览器」面板：一只可以直接用的浏览器。
 
+## 浏览器默认无头
+
+面板拉起的浏览器**默认无头**（`RECRUIT_BROWSER_HIDDEN` 不等于 `false` 即无头）。
+
+实测原因：想过用「离屏有头」（`--window-position=-32000,-32000`）来隐藏窗口，但在 Windows 上
+**创建可见窗口必然激活它**，照样抢键盘焦点，加 `--no-startup-window` 也只是把激活推迟到建 tab 那一刻。
+而无头下面板依赖的每条 CDP 能力（screencast 推帧、`Emulation` 贴合、`Input.*` 派发、
+`captureScreenshot`）与有头**零退化**，截图字节数逐字节相同。
+
+**要看浏览器在做什么就用这个面板** —— 这正是它存在的理由。真要有头窗口（例如需要在真窗口里人工操作）：
+
+```bash
+RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-cli
+```
+
+已有实例在跑时改变量不生效（端口上已有实例会被复用），得先结束那只浏览器。
+判断在跑的那只是什么模式：`state.json` 里每个源的 `headless` 字段，或直接读
+`http://127.0.0.1:<port>/json/version` 的 `User-Agent` 是否含 `HeadlessChrome`。
+
+无头下额外带 `--screen-info={0,0 1920x1080 workAreaBottom=40}`：无头虚拟屏默认 800x600 是已知的
+强自动化指纹，`--window-size` **抬不动它**，只有 `--screen-info` 能（Chrome 142+，仅无头有效）。
+四个 workArea 参数必须分开写（`workAreaTop/Bottom/Left/Right`），写成 `workArea=` 会让 Chrome 直接起不来。
+
 ## 招聘浏览器面板
 
 - **原理**：boss-cli 固定占用 CDP 调试端口 `53470`（见 boss-cli 的
@@ -51,11 +74,18 @@ dsh plugin --profile web remove recruiting-copilot
   取消贴合必须**先用 0 宽高把覆盖接管到当前会话、再 `clearDeviceMetricsOverride`**，
   只发 clear 清不掉别的（已断开）会话留下的覆盖——插件 dispose 时也走这条路径，
   免得关掉 DSH 后真实浏览器卡在面板尺寸。
+  **贴合时不传 `screenWidth`/`screenHeight`**：传了会把 `window.screen` 一起盖成视口尺寸
+  （958×1149 这种竖屏、且 `availHeight === height` 没有任务栏），本身就是自动化指纹。
+  实测不传时 `innerWidth`/`innerHeight` 依然精确等于目标值，面板效果一字不差，而真实
+  screen（无头下由 `--screen-info` 给定）能透出来。
 - **浏览器没起时**：面板里点「在这里启动浏览器」，host 用与 boss-cli 相同的
   user-data-dir（`~/.boss-cli/.cache/browser-data`）和调试端口拉起 Chrome，登录态
   通用；之后跑 boss 命令会 `probe` 到这只已存在的实例直接复用，不会另开一只。
-- **窗口被遮挡/最小化**：screencast 会静默，看门狗自动回落到
-  `Page.captureScreenshot` 轮询（面板底部状态栏会显示「轮询」）。
+- **screencast 静默时**：看门狗自动回落到 `Page.captureScreenshot` 轮询（面板底部状态栏会
+  显示「轮询」）。**无头下只用 `fromSurface:true`** —— `fromSurface:false` 是文档化的
+  headful-only（"works only in headful mode"），无头下会返回一张空/降级图；若不加区分地
+  退到它，`fromSurface:true` 失败的那一刻会把废图当成有效帧发布，面板显示假画面，
+  比没有兜底更糟。
 - **坐标**：面板传归一化坐标（0..1），host 乘当前视口尺寸，因此面板缩放/letterbox
   都不影响命中；实测面板点 (x,y) 与页面 (x,y) 逐像素对齐。
 - **键盘**：面板里有个透明 textarea 承接按键，点画面即聚焦；中文走
