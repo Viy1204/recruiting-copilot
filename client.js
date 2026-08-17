@@ -23,9 +23,17 @@ window.__ModuleLoader__.load({
 		const BASE = "/plugins/recruiting-view";
 		const MIN_W = 360;
 		const WIDTH_KEY = "rcp.panel.width";
-		// 页面视口固定尺寸：BOSS 页面在这个尺寸下渲染最完整（用户确认 958×1149 刚好），
+		// 页面视口固定尺寸按源分开：两个平台的列宽不一样，一个数字伺候不了两家。
 		// 面板自身可随意拖宽，画面按比例缩放，黑边由 normalize() 兜底。
-		const FIXED_VIEWPORT = { width: 958, height: 1149 };
+		// BOSS 的 958×1149 是用户确认过渲染最完整的尺寸。
+		// 实拍量出来的：猎聘在 958 下会出横向滚动条，且「立即沟通」按钮被挤出可视区
+		// ——那个按钮正是手动打招呼要点的；1280 能露出按钮但日期列被截断；1440 下
+		// 候选人的完整工作历和起止年月都读得全。
+		const FIXED_VIEWPORT = {
+			boss: { width: 958, height: 1149 },
+			liepin: { width: 1440, height: 1149 }
+		};
+		const DEFAULT_VIEWPORT = FIXED_VIEWPORT.boss;
 
 		// 空态提示按源分开说。猎聘那条尤其重要：旧版 liepin-cli 用 puppeteer.launch()
 		// 分配随机端口，面板永远探不到，点「启动浏览器」也不会有任何变化——不写清楚
@@ -249,19 +257,20 @@ window.__ModuleLoader__.load({
 				if (!addrDirty) setAddr(active?.targetUrl ?? "");
 			}, [active?.targetUrl, addrDirty]);
 
-			// 贴合：页面视口固定为 FIXED_VIEWPORT（与面板大小解耦——面板拖宽只影响
-			// 显示缩放，不影响页面渲染尺寸，保证 BOSS 页面永远截得全）。
+			// 贴合：页面视口按源固定（与面板大小解耦——面板拖宽只影响显示缩放，不影响
+			// 页面渲染尺寸，保证页面永远截得全）。切源必须重发，两家尺寸不同。
 			react.useEffect(() => {
 				if (!fit) {
 					control("unfit");
 					return undefined;
 				}
+				const vp = FIXED_VIEWPORT[sourceName] ?? DEFAULT_VIEWPORT;
 				control("fit", {
-					width: FIXED_VIEWPORT.width,
-					height: FIXED_VIEWPORT.height,
+					width: vp.width,
+					height: vp.height,
 					deviceScaleFactor: Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)
 				});
-			}, [fit, collapsed, mode, control]);
+			}, [fit, collapsed, mode, control, sourceName]);
 
 			// 断线后重连：重挂 MJPEG（img 的 src 不变时不会自动重连）
 			react.useEffect(() => {
