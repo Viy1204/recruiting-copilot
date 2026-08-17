@@ -217,12 +217,25 @@ test("normalizeSources：显式配置覆盖内置默认", () => {
   assert.equal(list[0].homeUrl, "about:blank");
 });
 
-test("normalizeSources：无配置用内置默认；未知源原样保留", () => {
+test("normalizeSources：无配置时内置 boss 与 liepin 两个源", () => {
   const defs = normalizeSources(undefined);
-  assert.equal(defs.length, 1);
-  assert.equal(defs[0].name, "boss");
+  assert.deepEqual(defs.map((s) => s.name), ["boss", "liepin"]);
+  assert.deepEqual(defs.map((s) => s.port), [53470, 53471]);
   assert.ok(defs[0].userDataDir.includes(".boss-cli"));
-  const custom = normalizeSources([{ name: "liepin", port: 53471 }]);
+  assert.ok(defs[1].userDataDir.includes(".liepin-cli"));
+  assert.ok(defs[1].homeUrl.includes("lpt.liepin.com"));
+});
+
+test("normalizeSources：liepin 只写端口时，userDataDir/homeUrl 从内置默认补", () => {
+  const list = normalizeSources([{ name: "liepin", port: 53471, match: "liepin\\.com" }]);
+  assert.equal(list.length, 1);
+  assert.ok(list[0].userDataDir.includes(".liepin-cli"));
+  assert.equal(list[0].homeUrl, "https://lpt.liepin.com/recommend");
+});
+
+test("normalizeSources：未知源原样保留，不硬塞默认值", () => {
+  const custom = normalizeSources([{ name: "zhaopin", port: 53472 }]);
+  assert.equal(custom[0].name, "zhaopin");
   assert.equal(custom[0].userDataDir, undefined);
   assert.equal(custom[0].homeUrl, undefined);
 });

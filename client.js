@@ -27,6 +27,15 @@ window.__ModuleLoader__.load({
 		// 面板自身可随意拖宽，画面按比例缩放，黑边由 normalize() 兜底。
 		const FIXED_VIEWPORT = { width: 958, height: 1149 };
 
+		// 空态提示按源分开说。猎聘那条尤其重要：旧版 liepin-cli 用 puppeteer.launch()
+		// 分配随机端口，面板永远探不到，点「启动浏览器」也不会有任何变化——不写清楚
+		// 用户只会以为是浏览器没开。
+		const EMPTY_HINT = {
+			boss: "用 boss-cli 同一用户数据目录和调试端口，登录态通用",
+			liepin: "需要 liepin-cli 支持固定调试端口 53471（旧版本用随机端口，面板接管不了，" +
+				"先跑 npm update -g @viyzhu/liepin-cli）；版本已够就点上面的按钮启动"
+		};
+
 		// ── 样式（注入一次）──────────────────────────────────────────────
 		const css = [
 			// dock 推挤：面板打开时应用让出宽度（--rcp-dock-width 由组件写入）
@@ -467,7 +476,7 @@ window.__ModuleLoader__.load({
 							className: "rcp-cta",
 							onClick: () => control("launch").then(() => setTimeout(() => setStreamKey((k) => k + 1), 1500))
 						}, launching ? "启动中…" : "在这里启动浏览器"),
-						h("span", { style: { opacity: .7 } }, "用 boss-cli 同一用户数据目录和调试端口，登录态通用"),
+						h("span", { style: { opacity: .7 } }, EMPTY_HINT[sourceName] ?? EMPTY_HINT.boss),
 						active?.error ? h("span", { style: { color: "var(--dsw-alias-state-error-primary,#f2574b)" } }, String(active.error)) : null
 					),
 				h("textarea", {

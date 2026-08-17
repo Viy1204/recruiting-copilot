@@ -91,10 +91,12 @@ RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-
 - **键盘**：面板里有个透明 textarea 承接按键，点画面即聚焦；中文走
   `compositionend` → `Input.insertText`，粘贴同理。功能键发 `rawKeyDown`，
   可打印字符发带 `text` 的 `keyDown`。
-- **liepin**：liepin-cli 目前用 `puppeteer.launch()` 且无固定调试端口，暂不能
-  接管；等 liepin-cli 支持固定端口后，在 profile 的 `cordis.patch.yml` 里给
-  `recruiting-copilot` 的 `config.sources` 加一项
-  `{ name: "liepin", port: <端口>, match: "liepin\\.com" }` 即可，无需改本仓库。
+- **两个源**：boss 占 `53470`，liepin 占 `53471`（`liepin-cli` 的
+  `LIEPIN_BROWSER_REMOTE_DEBUGGING_PORT`）。面板顶部在 `sources.length > 1` 时自动
+  出现源切换按钮。两个 CLI 的浏览器都**跨命令常驻**（命令结束只断 CDP），所以面板
+  能一直连着；要真正关掉用 `boss` / `liepin quit`。
+  猎聘源探不到端口时，空态文案会明确指向「liepin-cli 版本过旧（旧版用随机端口）」——
+  否则用户只会以为是浏览器没开，点了启动按钮也没有任何反应。
 - **路由**：`state.json`（状态+标签+视口）、`stream.mjpg`（实时画面）、
   `frame.jpg`（单帧兜底）、`input`（POST 事件批）、`control`（POST：launch /
   navigate / reload / back / forward / new-tab / close-tab / set-target /
