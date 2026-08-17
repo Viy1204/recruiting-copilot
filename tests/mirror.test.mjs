@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless } from "../lib/index.js";
+import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless, streamMjpeg } from "../lib/index.js";
 
 /** 造一只不连 CDP 的 mirror，记录所有下发的命令。 */
 function stubMirror(viewport = { width: 1000, height: 800 }) {
@@ -238,4 +238,115 @@ test("normalizeSources：未知源原样保留，不硬塞默认值", () => {
   assert.equal(custom[0].name, "zhaopin");
   assert.equal(custom[0].userDataDir, undefined);
   assert.equal(custom[0].homeUrl, undefined);
+});
+
+/** 假的 req/res：write 永远返回 false（模拟对面不读），drain 永不触发。 */
+function stubHttp() {
+  const handlers = { req: {}, res: {} };
+  const written = [];
+  const state = { ended: false };
+  const req = { on: (ev, fn) => { handlers.req[ev] = fn; } };
+  const res = {
+    writeHead() {},
+    write(chunk) { written.push(chunk); return false; },
+    end() { state.ended = true; },
+    on: (ev, fn) => { handlers.res[ev] = fn; },
+    get writableEnded() { return state.ended; }
+  };
+  return { req, res, written, state, handlers };
+}
+
+test("客户端不读时，僵尸 stream 超时被断开（否则占满同源连接槽）", () => {
+  const { mirror } = stubMirror();
+  const { req, res, state, written } = stubHttp();
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  try {
+    streamMjpeg(mirror, req, res);
+
+    mirror._publish(Buffer.from("frame-1"));
+    const afterFirst = written.length;
+    assert.ok(afterFirst > 0, "第一帧应该写出去（此时还没 backedUp）");
+
+    // 已经 backedUp：还在阈值内的帧只丢掉，不断连接
+    clock += 3000;
+    mirror._publish(Buffer.from("frame-2"));
+    assert.equal(written.length, afterFirst, "backedUp 期间不再写入");
+    assert.equal(state.ended, false, "阈值内不该断开");
+
+    // 超过阈值：断掉，并退订（否则看门狗会一直以为有人在看，持续轮询截图）
+    clock += 9000;
+    mirror._publish(Buffer.from("frame-3"));
+    assert.equal(state.ended, true, "写不动超过阈值应断开连接");
+    assert.equal(mirror._subscribers.size, 0, "断开后必须退订");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("对面正常读取时，stream 不会被误断", () => {
+  const { mirror } = stubMirror();
+  const { req, res, state, written, handlers } = stubHttp();
+  streamMjpeg(mirror, req, res);
+
+  for (let i = 0; i < 5; i++) {
+    mirror._publish(Buffer.from(`frame-${i}`));
+    handlers.res.drain?.();   // 客户端读完了，内核缓冲腾空
+  }
+  assert.equal(state.ended, false);
+  assert.equal(mirror._subscribers.size, 1);
+  assert.ok(written.length >= 5 * 3, "每帧写 head + body + CRLF");
+});
+
+test("req close 时退订，不留订阅者", () => {
+  const { mirror } = stubMirror();
+  const { req, res, handlers } = stubHttp();
+  streamMjpeg(mirror, req, res);
+  assert.equal(mirror._subscribers.size, 1);
+  handlers.req.close();
+  assert.equal(mirror._subscribers.size, 0);
+  void res;
+});
+
+test("同一个源的新 stream 挤掉旧的（切源留下的僵尸不许占着连接槽）", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  assert.equal(mirror._subscribers.size, 1);
+
+  // 切走再切回来 = 同一个源上来了第二路
+  const b = stubHttp();
+  streamMjpeg(mirror, b.req, b.res);
+  assert.equal(a.state.ended, true, "旧的那路必须被断开");
+  assert.equal(b.state.ended, false, "新的那路要留着");
+  assert.equal(mirror._subscribers.size, 1, "订阅者不许累积");
+
+  // 反复切十次也不该堆积
+  for (let i = 0; i < 10; i++) streamMjpeg(mirror, stubHttp().req, stubHttp().res);
+  assert.equal(mirror._subscribers.size, 1);
+});
+
+test("旧 stream 自己先断开时，不会把后来者的通道误清掉", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  const b = stubHttp();
+  streamMjpeg(mirror, b.req, b.res);   // a 已被挤掉
+  a.handlers.req.close();              // a 的 close 事件姗姗来迟
+
+  const c = stubHttp();
+  streamMjpeg(mirror, c.req, c.res);
+  assert.equal(b.state.ended, true, "b 该被 c 挤掉");
+  assert.equal(c.state.ended, false, "c 不该受 a 的迟到 close 影响");
+  assert.equal(mirror._subscribers.size, 1);
+});
+
+test("dispose 时把在跑的 stream 一并收掉", () => {
+  const { mirror } = stubMirror();
+  const a = stubHttp();
+  streamMjpeg(mirror, a.req, a.res);
+  mirror.dispose();
+  assert.equal(a.state.ended, true);
+  assert.equal(mirror._subscribers.size, 0);
 });

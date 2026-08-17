@@ -184,6 +184,22 @@ window.__ModuleLoader__.load({
 
 			const bodyRef = react.useRef(null);
 			const imgRef = react.useRef(null);
+			// MJPEG 是 multipart 长连接：<img> 从 DOM 摘掉时 Chrome **不保证**中断请求，
+			// 连接会连着却不再读取。host 那边 res.write() 迟早写不动、置 backedUp 后永远
+			// 等不到 drain，于是成了僵尸——既占着 Chrome 的同源连接槽（HTTP/1.1 约 6 条），
+			// 又占着本镜像的订阅者（害 host 一直轮询截图）。切几次源就把槽位占满，新 stream
+			// 抢不到连接，表现为「切换卡顿，然后两个源都没画面」。
+			// React 会先用 null 调一次 callback ref，正好是掐断上一个元素的时机。
+			const setImgEl = react.useCallback((el) => {
+				const prev = imgRef.current;
+				if (prev !== null && prev !== el) {
+					try {
+						prev.src = "";
+						prev.removeAttribute("src");
+					} catch { /* 元素已被移除 */ }
+				}
+				imgRef.current = el;
+			}, []);
 			const imeRef = react.useRef(null);
 			const dragging = react.useRef(false);
 			const sourceRef = react.useRef(activeSource);
@@ -473,7 +489,7 @@ window.__ModuleLoader__.load({
 				connected
 					? h("img", {
 						key: `${sourceName}-${streamKey}`,
-						ref: imgRef,
+						ref: setImgEl,
 						src: `${BASE}/stream.mjpg?source=${encodeURIComponent(sourceName)}&k=${streamKey}`,
 						alt: "browser",
 						draggable: false
