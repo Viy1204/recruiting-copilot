@@ -52,7 +52,7 @@ dsh plugin --profile web remove recruiting-copilot
 RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-cli
 ```
 
-已有实例在跑时改变量不生效（端口上已有实例会被复用），得先结束那只浏览器。
+已有实例在跑时改变量不生效（端口上已有实例会被复用），得先 `boss shutdown` / `liepin quit` 关掉那只。
 判断在跑的那只是什么模式：`state.json` 里每个源的 `headless` 字段，或直接读
 `http://127.0.0.1:<port>/json/version` 的 `User-Agent` 是否含 `HeadlessChrome`。
 
@@ -67,10 +67,13 @@ RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-
   `Page.startScreencast` 推 JPEG 帧（有变化才推），经
   `/plugins/recruiting-view/stream.mjpg` 以 MJPEG 长连接喂给面板的 `<img>`；
   面板把鼠标/滚轮/键盘/IME 事件回传 `/input`，host 转成 `Input.*` 派发。
-- **看得清的关键是「贴合」**：host 用 `Emulation.setDeviceMetricsOverride` 把页面
-  视口固定为 **958×1149**（用户确认 BOSS 页面在这个尺寸下渲染最完整），与面板大小
-  解耦——面板随意拖宽只影响显示缩放，不影响页面渲染尺寸。关掉贴合则显示浏览器真实
+- **看得清的关键是「贴合」**：host 用 `Emulation.setDeviceMetricsOverride` 把页面视口固定成
+  一个**按源写死**的尺寸（`client.js` 的 `FIXED_VIEWPORT`：BOSS `958×1149`，猎聘 `1440×1149`），
+  与面板大小解耦——面板随意拖宽只影响显示缩放，不影响页面渲染尺寸。关掉贴合则显示浏览器真实
   窗口画面（会被缩小）。
+  两家尺寸不同是量出来的：猎聘在 958 下会出横向滚动条，且候选人卡片右侧的「立即沟通」按钮被
+  挤出可视区——那是手动打招呼的唯一入口。**切源时必须重发贴合**（`sourceName` 要进 `useEffect`
+  的依赖数组），否则从 BOSS 切到猎聘还用着 958。
   取消贴合必须**先用 0 宽高把覆盖接管到当前会话、再 `clearDeviceMetricsOverride`**，
   只发 clear 清不掉别的（已断开）会话留下的覆盖——插件 dispose 时也走这条路径，
   免得关掉 DSH 后真实浏览器卡在面板尺寸。
@@ -94,7 +97,7 @@ RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-
 - **两个源**：boss 占 `53470`，liepin 占 `53471`（`liepin-cli` 的
   `LIEPIN_BROWSER_REMOTE_DEBUGGING_PORT`）。面板顶部在 `sources.length > 1` 时自动
   出现源切换按钮。两个 CLI 的浏览器都**跨命令常驻**（命令结束只断 CDP），所以面板
-  能一直连着；要真正关掉用 `boss` / `liepin quit`。
+  能一直连着；要真正关掉用 `boss shutdown` / `liepin quit`。
   猎聘源探不到端口时，空态文案会明确指向「liepin-cli 版本过旧（旧版用随机端口）」——
   否则用户只会以为是浏览器没开，点了启动按钮也没有任何反应。
 - **路由**：`state.json`（状态+标签+视口）、`stream.mjpg`（实时画面）、
