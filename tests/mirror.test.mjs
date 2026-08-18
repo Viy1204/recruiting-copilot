@@ -624,6 +624,80 @@ test("CLI 占用锁：pid 还活着才算数，僵尸锁自动清掉", () => {
   }
 });
 
+test("导航到风控页就熔断，并说清停了什么", () => {
+  const { mirror } = stubMirror();
+  assert.equal(mirror.state.risk, null);
+  mirror._onEvent({
+    method: "Page.frameNavigated",
+    params: { frame: { url: "https://www.zhipin.com/web/common/403.html?ka=x" } }
+  });
+  assert.equal(mirror.state.risk.url, "https://www.zhipin.com/web/common/403.html?ka=x");
+  assert.match(mirror.state.error, /风控\/验证页/);
+});
+
+test("验证页/安全页的各种形态都算风控页，about:blank 不算", () => {
+  const hit = [
+    "https://www.zhipin.com/web/user/safe/verify",
+    "https://www.zhipin.com/web/passport/zp/verify.html",
+    "https://www.zhipin.com/web/passport/cm/security-check.html",
+    "https://www.zhipin.com/web/common/nonsupport.html"
+  ];
+  for (const url of hit) {
+    const { mirror } = stubMirror();
+    mirror._checkRiskUrl(url);
+    assert.notEqual(mirror.state.risk, null, url);
+  }
+  // about:blank 是新标签正常初始态，算进来会把面板自己锁死。
+  const { mirror: m2 } = stubMirror();
+  m2._checkRiskUrl("about:blank");
+  m2._checkRiskUrl("https://www.zhipin.com/web/geek/chat");
+  assert.equal(m2.state.risk, null);
+});
+
+test("熔断期间不重发贴合（反复 resize 本身就是风控信号）", async () => {
+  const { mirror, calls } = stubMirror();
+  mirror.requestFit(958, 1149, 1);
+  mirror._checkRiskUrl("https://www.zhipin.com/web/common/403.html");
+  calls.length = 0;
+  await mirror._applyFit();
+  assert.equal(calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride").length, 0);
+});
+
+test("熔断期间看门狗不自愈重启浏览器", async () => {
+  const { mirror } = stubMirror();
+  mirror.setWatch(true);
+  mirror._everConnected = true;
+  mirror._probe = () => Promise.resolve(null); // 浏览器不在跑
+  let launched = 0;
+  mirror.launch = () => { launched += 1; return Promise.resolve({ ok: true }); };
+
+  mirror._checkRiskUrl("https://www.zhipin.com/web/common/403.html");
+  await mirror.tick();
+  assert.equal(launched, 0, "被限期间每次拉起都是一次新访问，只会把恢复时间越推越远");
+
+  // 人工解除后才恢复自愈
+  mirror.clearRisk();
+  await mirror.tick();
+  assert.equal(launched, 1);
+});
+
+test("熔断只认第一次，后续导航不覆盖首次记录", () => {
+  const { mirror } = stubMirror();
+  mirror._checkRiskUrl("https://www.zhipin.com/web/common/403.html");
+  const first = mirror.state.risk;
+  mirror._checkRiskUrl("https://www.zhipin.com/web/passport/zp/verify.html");
+  assert.equal(mirror.state.risk, first);
+});
+
+test("clearRisk 幂等，重复解除不报错", () => {
+  const { mirror } = stubMirror();
+  assert.deepEqual(mirror.clearRisk(), { ok: true, already: true });
+  mirror._checkRiskUrl("https://www.zhipin.com/web/common/403.html");
+  assert.deepEqual(mirror.clearRisk(), { ok: true });
+  assert.equal(mirror.state.risk, null);
+  assert.equal(mirror.state.error, null);
+});
+
 test("有 CLI 命令在跑时拒绝切换模式，并说清是哪条、跑了多久", async () => {
   const { mirror } = stubMirror();
   mirror.name = "__test_busy2__";

@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
 		const BASE = "/plugins/recruiting-view";
 		const MIN_W = 360;
 		const WIDTH_KEY = "rcp.panel.width";
+		const COLLAPSED_KEY = "rcp.panel.collapsed";
 		// 页面视口固定尺寸按源分开：两个平台的列宽不一样，一个数字伺候不了两家。
 		// 面板自身可随意拖宽，画面按比例缩放，黑边由 normalize() 兜底。
 		// BOSS 的 958×1149 是用户确认过渲染最完整的尺寸。
@@ -73,6 +74,8 @@ window.__ModuleLoader__.load({
 			".rcp-x:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}",
 			".rcp-busy{color:var(--dsw-alias-state-warning-primary,#e0a458)}",
 			".rcp-notice{padding:6px 10px;font-size:12px;line-height:1.5;color:#f0d8a8;background:#3a2f1c;border-bottom:1px solid #4d3f26;cursor:pointer}",
+			".rcp-risk{padding:8px 10px;font-size:12px;line-height:1.6;color:#ffd9d9;background:#4a1f1f;border-bottom:1px solid #6b2b2b;display:flex;flex-direction:column;gap:6px;align-items:flex-start}",
+			".rcp-risk-hint{opacity:.85}",
 			".rcp-body{flex:1;min-height:0;position:relative;background:var(--dsw-alias-bg-layer-3,#0b0b0d);overflow:hidden;outline:0}",
 			".rcp-body img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none}",
 			".rcp-body[data-live='true']{cursor:default}",
@@ -162,6 +165,15 @@ window.__ModuleLoader__.load({
 
 		const BUTTONS = ["left", "middle", "right", "back", "forward"];
 
+		/** 默认折叠：只有明确存过 "0" 才展开，读不到就当折叠（安全侧默认）。 */
+		function readStoredCollapsed() {
+			try {
+				return localStorage.getItem(COLLAPSED_KEY) !== "0";
+			} catch {
+				return true;
+			}
+		}
+
 		function readStoredWidth() {
 			try {
 				const saved = Number.parseInt(localStorage.getItem(WIDTH_KEY), 10);
@@ -173,16 +185,27 @@ window.__ModuleLoader__.load({
 		// ── 面板组件 ────────────────────────────────────────────────────
 		function BrowserPanel() {
 			const [state, setState] = react.useState(null);
-			/** 模式切换进行中（关掉重开要几秒，按钮期间禁用并显示进度）。 */
-			const [switching, setSwitching] = react.useState(false);
-			/** 一次性提示（切换被拒绝等），点掉即消失。 */
+			/** 一次性提示（控制动作被拒绝等），点掉即消失。 */
 			const [notice, setNotice] = react.useState(null);
 			const [activeSource, setActiveSource] = react.useState("boss");
-			const [collapsed, setCollapsed] = react.useState(false);
+			/**
+			 * 默认折叠，且记在 localStorage 里。
+			 *
+			 * 展开会立刻发 `watch on`（看门狗浏览器掉线就自动重新拉起）并订阅 screencast，
+			 * 也就是说「面板可见」等于「持续对招聘站产生活动」。账号被风控限制期间这是有害的：
+			 * 2026-08-18 实测 `boss shutdown` 之后 16 秒就被自愈拉回来，限制被一路延长。
+			 * 所以默认必须是折叠，而且要持久化——不然重开 DSH 会话就悄悄回到展开态。
+			 */
+			const [collapsed, setCollapsed] = react.useState(readStoredCollapsed);
 			const [mode, setMode] = react.useState("side");
 			const [width, setWidth] = react.useState(readStoredWidth);
 			const [fit, setFit] = react.useState(true);
-			const [interactive, setInteractive] = react.useState(true);
+			/**
+			 * 默认只读。面板送出的鼠标/键盘是 CDP 合成事件，而且**完全不在 boss-cli 那套
+			 * 保护之下**（那五层挂在 CLI 进程自己的 CDP session 上，进程一退出就全失效）。
+			 * 要动手时用工具栏的 🔒/🖱 显式打开，别让它成为默认路径。
+			 */
+			const [interactive, setInteractive] = react.useState(false);
 			const [focused, setFocused] = react.useState(false);
 			const [addr, setAddr] = react.useState("");
 			const [addrDirty, setAddrDirty] = react.useState(false);
@@ -257,6 +280,13 @@ window.__ModuleLoader__.load({
 					localStorage.setItem(WIDTH_KEY, String(width));
 				} catch { /* 忽略 */ }
 			}, [width]);
+
+			// 记住折叠状态：展开等于持续对招聘站产生活动，不能让重开会话把它悄悄打开
+			react.useEffect(() => {
+				try {
+					localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
+				} catch { /* 忽略 */ }
+			}, [collapsed]);
 
 			// 盯梢：面板未折叠时告诉 host「浏览器崩了自动重新拉起」
 			react.useEffect(() => {
@@ -453,24 +483,13 @@ window.__ModuleLoader__.load({
 				btn("＋", "新标签页", () => control("new-tab"), { disabled: !connected }),
 				btn(interactive ? "🖱" : "🔒", interactive ? "可操作（点画面直接操作浏览器）" : "只读（点击不再传给浏览器）", () => setInteractive((v) => !v), { "data-on": String(interactive) }),
 				btn("贴合", "贴合：页面视口固定 958×1149（截得全）；关掉则显示浏览器真实窗口画面", () => setFit((v) => !v), { "data-on": String(fit) }),
-				// 有头/无头切换：Chrome 起来后不能热切，必然是关掉重开，所以有 CLI 命令
-				// 在操作同一只浏览器时直接禁用（host 侧也会再拒一次，见 setMode）。
-				btn(
-					switching ? "…" : active?.headless === false ? "🖥" : "🕶",
-					active?.busy
-						? `「${active.busy.command}」正在操作这只浏览器，切换会打断它——等它结束再切`
-						: active?.headless === false
-							? "当前有头（真窗口，会抢焦点）。点一下切回无头"
-							: "当前无头（不抢焦点，画面只在这个面板里）。点一下开出真窗口，用于人工验证",
-					async () => {
-						if (switching) return;
-						setSwitching(true);
-						const res = await control("set-mode", { hidden: active?.headless === false });
-						setSwitching(false);
-						if (!res?.ok && res?.error) setNotice(res.error);
-					},
-					{ disabled: !connected || !!active?.busy || switching, "data-on": String(active?.headless === false) }
-				),
+				// 有头/无头切换按钮已摘掉（原 #24）。2026-08-18 真机实测：点它直接换来 24 小时
+				// 账号限制——切换必然是关掉浏览器再重开，于是同一个 profile、同一份 cookies、
+				// 同一个 IP 下 UA 在 HeadlessChrome 与 Chrome 之间突变，这是会话篡改的经典信号。
+				// host 的 setMode 实现保留着（见 lib/index.js），但不再有任何 UI 入口。
+				// 重新暴露它之前必须先解决 UA 突变：给两个模式对齐 UA
+				// （`Emulation.setUserAgentOverride` + userAgentMetadata），并把模式判据从
+				// /json/version 的 UA 换成 sidecar 文件——否则伪装会同时掀掉判据本身。
 				btn(mode === "max" ? "⇲" : "⇱", mode === "max" ? "还原为右侧面板" : "放大到整屏", () => setMode((m) => (m === "max" ? "side" : "max"))),
 				btn("—", "折叠", () => setCollapsed(true))
 			);
@@ -571,6 +590,30 @@ window.__ModuleLoader__.load({
 					})
 					: null,
 				head,
+				// 熔断提示不可点掉：它反映的是 host 真实状态，只有解除才消失。
+				active?.risk
+					? h(
+						"div",
+						{ className: "rcp-risk" },
+						h("div", null, `已因风控/验证页停手：${active.risk.url}`),
+						h(
+							"div",
+							{ className: "rcp-risk-hint" },
+							"本源的自动动作已全停（不再自动重启浏览器、不重发贴合、拒绝导航与启动）。请在浏览器里人工处理完，再解除。"
+						),
+						h(
+							"button",
+							{
+								className: "rcp-btn",
+								onClick: async () => {
+									const res = await control("clear-risk");
+									if (!res?.ok && res?.error) setNotice(res.error);
+								}
+							},
+							"我已处理完，解除"
+						)
+					)
+					: null,
 				notice
 					? h("div", { className: "rcp-notice", onClick: () => setNotice(null), title: "点掉这条提示" }, notice)
 					: null,
