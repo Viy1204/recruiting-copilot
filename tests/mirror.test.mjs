@@ -122,15 +122,18 @@ test("新会话在无贴合需求时补发一次还原，且只发一次", async
   assert.equal(calls.length, 2);
 });
 
-test("screencast 帧更新视口尺寸并广播给订阅者", () => {
-  const { mirror } = stubMirror({ width: 0, height: 0 });
+test("screencast 帧广播给订阅者，但不拿 metadata 当视口", () => {
+  // metadata.deviceWidth/Height 说的是被抓取的画面尺寸，不是页面 CSS 视口。
+  // 页面缩放不等于 100% 时两者差一个 zoom 因子，而视口是坐标换算的分母——
+  // 让 metadata 写它，点击就会整体偏移。
+  const { mirror } = stubMirror({ width: 1064, height: 1276 });
   const got = [];
   mirror.subscribe((buf) => got.push(buf));
   mirror._onEvent({
     method: "Page.screencastFrame",
     params: { data: Buffer.from("hello").toString("base64"), sessionId: 7, metadata: { deviceWidth: 640, deviceHeight: 480 } }
   });
-  assert.deepEqual(mirror.state.viewport, { width: 640, height: 480 });
+  assert.deepEqual(mirror.state.viewport, { width: 1064, height: 1276 });
   assert.equal(mirror.state.frameMode, "screencast");
   assert.equal(got.length, 1);
   assert.equal(got[0].toString(), "hello");
@@ -151,8 +154,43 @@ test("贴合不把 window.screen 一起盖掉（不传 screenWidth/screenHeight�
   await mirror._applyFit();
   const fit = calls.find((c) => c.method === "Emulation.setDeviceMetricsOverride");
   assert.deepEqual(fit.params, { width: 958, height: 1149, deviceScaleFactor: 1.5, mobile: false });
-  assert.equal(mirror.state.viewport.width, 958);
-  assert.equal(mirror.state.viewport.height, 1149);
+  assert.equal(mirror.state.fitted, true);
+});
+
+test("贴合后回读真实视口，而不是假定等于覆盖尺寸", async () => {
+  // Chrome 的每源页面缩放叠在 setDeviceMetricsOverride 之上：实测 zhipin.com 存着
+  // 90% 缩放时，覆盖 958×1149 得到的 CSS 视口是 1064×1276。假定下去分母小 10%，
+  // 点击会落在光标左上方，离原点越远偏越多。
+  const { mirror, calls } = stubMirror({ width: 0, height: 0 });
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    if (method === "Runtime.evaluate") {
+      return Promise.resolve({ result: { result: { value: JSON.stringify({ w: 1064, h: 1276 }) } } });
+    }
+    return Promise.resolve({ result: {} });
+  };
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+  assert.deepEqual(mirror.state.viewport, { width: 1064, height: 1276 });
+
+  // 分母用回读值，坐标才对得上：面板最右下角应映射到 1064×1276，而不是 958×1149。
+  calls.length = 0;
+  mirror.dispatchInput([{ kind: "mouse", type: "mousePressed", nx: 1, ny: 1, button: "left", buttons: 1 }]);
+  const click = calls.find((c) => c.method === "Input.dispatchMouseEvent");
+  assert.equal(click.params.x, 1064);
+  assert.equal(click.params.y, 1276);
+});
+
+test("screencast 模式下视口依然会被回读纠正", async () => {
+  const { mirror } = stubMirror({ width: 958, height: 1149 });
+  mirror.state.frameMode = "screencast";
+  mirror._lastViewportAt = 0;
+  mirror._command = (method) =>
+    method === "Runtime.evaluate"
+      ? Promise.resolve({ result: { result: { value: JSON.stringify({ w: 1064, h: 1276 }) } } })
+      : Promise.resolve({ result: {} });
+  await mirror._refreshViewport();
+  assert.deepEqual(mirror.state.viewport, { width: 1064, height: 1276 });
 });
 
 test("无头下截图兜底不退到 fromSurface:false（那是 headful-only，会拿到废图）", async () => {
