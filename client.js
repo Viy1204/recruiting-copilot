@@ -71,6 +71,8 @@ window.__ModuleLoader__.load({
 			".rcp-page[data-active='true']{color:var(--dsw-alias-label-primary,#eee);border-color:var(--dsw-alias-border-l2,#3a3a42);background:var(--dsw-alias-bg-module-platform,#26262b)}",
 			".rcp-x{opacity:.45;padding:0 3px;border-radius:4px;cursor:pointer}",
 			".rcp-x:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}",
+			".rcp-busy{color:var(--dsw-alias-state-warning-primary,#e0a458)}",
+			".rcp-notice{padding:6px 10px;font-size:12px;line-height:1.5;color:#f0d8a8;background:#3a2f1c;border-bottom:1px solid #4d3f26;cursor:pointer}",
 			".rcp-body{flex:1;min-height:0;position:relative;background:var(--dsw-alias-bg-layer-3,#0b0b0d);overflow:hidden;outline:0}",
 			".rcp-body img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;user-select:none;-webkit-user-drag:none}",
 			".rcp-body[data-live='true']{cursor:default}",
@@ -171,6 +173,10 @@ window.__ModuleLoader__.load({
 		// ── 面板组件 ────────────────────────────────────────────────────
 		function BrowserPanel() {
 			const [state, setState] = react.useState(null);
+			/** 模式切换进行中（关掉重开要几秒，按钮期间禁用并显示进度）。 */
+			const [switching, setSwitching] = react.useState(false);
+			/** 一次性提示（切换被拒绝等），点掉即消失。 */
+			const [notice, setNotice] = react.useState(null);
 			const [activeSource, setActiveSource] = react.useState("boss");
 			const [collapsed, setCollapsed] = react.useState(false);
 			const [mode, setMode] = react.useState("side");
@@ -447,6 +453,24 @@ window.__ModuleLoader__.load({
 				btn("＋", "新标签页", () => control("new-tab"), { disabled: !connected }),
 				btn(interactive ? "🖱" : "🔒", interactive ? "可操作（点画面直接操作浏览器）" : "只读（点击不再传给浏览器）", () => setInteractive((v) => !v), { "data-on": String(interactive) }),
 				btn("贴合", "贴合：页面视口固定 958×1149（截得全）；关掉则显示浏览器真实窗口画面", () => setFit((v) => !v), { "data-on": String(fit) }),
+				// 有头/无头切换：Chrome 起来后不能热切，必然是关掉重开，所以有 CLI 命令
+				// 在操作同一只浏览器时直接禁用（host 侧也会再拒一次，见 setMode）。
+				btn(
+					switching ? "…" : active?.headless === false ? "🖥" : "🕶",
+					active?.busy
+						? `「${active.busy.command}」正在操作这只浏览器，切换会打断它——等它结束再切`
+						: active?.headless === false
+							? "当前有头（真窗口，会抢焦点）。点一下切回无头"
+							: "当前无头（不抢焦点，画面只在这个面板里）。点一下开出真窗口，用于人工验证",
+					async () => {
+						if (switching) return;
+						setSwitching(true);
+						const res = await control("set-mode", { hidden: active?.headless === false });
+						setSwitching(false);
+						if (!res?.ok && res?.error) setNotice(res.error);
+					},
+					{ disabled: !connected || !!active?.busy || switching, "data-on": String(active?.headless === false) }
+				),
 				btn(mode === "max" ? "⇲" : "⇱", mode === "max" ? "还原为右侧面板" : "放大到整屏", () => setMode((m) => (m === "max" ? "side" : "max"))),
 				btn("—", "折叠", () => setCollapsed(true))
 			);
@@ -523,6 +547,11 @@ window.__ModuleLoader__.load({
 			const foot = h("div", { className: "rcp-foot" },
 				h("span", null, connected ? `${viewport.width}×${viewport.height}` : "—"),
 				h("span", null, active?.frameMode === "screencast" ? "推流" : active?.frameMode === "poll" ? "轮询" : "空闲"),
+				h("span", { title: "浏览器当前是无头还是有头窗口" }, active?.headless === false ? "有头" : active?.headless === true ? "无头" : "—"),
+				active?.busy
+					? h("span", { className: "rcp-busy", title: `pid ${active.busy.pid}，已跑 ${Math.round(active.busy.ageMs / 1000)}s` },
+						`⏳ ${active.busy.command}`)
+					: null,
 				h("span", { className: "rcp-spacer" }),
 				h("span", { className: "rcp-x", title: "把真实浏览器窗口唤到前台", onClick: () => control("activate") }, "唤起窗口")
 			);
@@ -542,6 +571,9 @@ window.__ModuleLoader__.load({
 					})
 					: null,
 				head,
+				notice
+					? h("div", { className: "rcp-notice", onClick: () => setNotice(null), title: "点掉这条提示" }, notice)
+					: null,
 				pages.length > 0 || sources.length > 1 ? tabs : null,
 				body,
 				foot

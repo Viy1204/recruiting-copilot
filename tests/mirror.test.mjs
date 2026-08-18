@@ -6,7 +6,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless, streamMjpeg } from "../lib/index.js";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { BrowserMirror, normalizeSources, hiddenModeEnabled, readHeadless, streamMjpeg, readBusyLock, BUSY_DIR } from "../lib/index.js";
 
 /** 造一只不连 CDP 的 mirror，记录所有下发的命令。 */
 function stubMirror(viewport = { width: 1000, height: 800 }) {
@@ -401,4 +403,47 @@ test("dispose 时把在跑的 stream 一并收掉", () => {
   mirror.dispose();
   assert.equal(a.state.ended, true);
   assert.equal(mirror._subscribers.size, 0);
+});
+
+test("CLI 占用锁：pid 还活着才算数，僵尸锁自动清掉", () => {
+  const name = "__test_busy__";
+  const file = path.join(BUSY_DIR, `${name}.busy.json`);
+  mkdirSync(BUSY_DIR, { recursive: true });
+  try {
+    assert.equal(readBusyLock(name), null, "没有文件时应为空闲");
+
+    writeFileSync(file, JSON.stringify({ pid: process.pid, command: "boss search", startedAt: Date.now() - 3000 }));
+    const live = readBusyLock(name);
+    assert.equal(live.command, "boss search");
+    assert.ok(live.ageMs >= 3000);
+
+    // 几乎不可能存在的 pid：锁应被判为僵尸并删除
+    writeFileSync(file, JSON.stringify({ pid: 0x7ffffffe, command: "boss greet", startedAt: Date.now() }));
+    assert.equal(readBusyLock(name), null, "pid 已死时应视为空闲");
+    assert.equal(existsSync(file), false, "僵尸锁应被删掉");
+
+    writeFileSync(file, "{ 这不是 json");
+    assert.equal(readBusyLock(name), null, "坏文件应视为空闲");
+    assert.equal(existsSync(file), false, "坏文件应被删掉");
+  } finally {
+    try { unlinkSync(file); } catch { /* 已删 */ }
+  }
+});
+
+test("有 CLI 命令在跑时拒绝切换模式，并说清是哪条、跑了多久", async () => {
+  const { mirror } = stubMirror();
+  mirror.name = "__test_busy2__";
+  const file = path.join(BUSY_DIR, `${mirror.name}.busy.json`);
+  mkdirSync(BUSY_DIR, { recursive: true });
+  writeFileSync(file, JSON.stringify({ pid: process.pid, command: "boss search", startedAt: Date.now() - 12000 }));
+  try {
+    const res = await mirror.setMode(false);
+    assert.equal(res.ok, false);
+    assert.equal(res.busy.command, "boss search");
+    assert.match(res.error, /boss search/);
+    assert.match(res.error, /12s/);
+    assert.match(res.error, new RegExp(String(process.pid)));
+  } finally {
+    try { unlinkSync(file); } catch { /* ignore */ }
+  }
 });
