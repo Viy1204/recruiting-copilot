@@ -195,6 +195,200 @@ test("screencast 模式下视口依然会被回读纠正", async () => {
   assert.deepEqual(mirror.state.viewport, { width: 1064, height: 1276 });
 });
 
+/**
+ * 造一只带「页面会响应覆盖」行为的 mirror：发 setDeviceMetricsOverride 后回读值就变成
+ * `覆盖尺寸 / 0.9`（模拟 zhipin.com 那个 90% 页面缩放，见 #28）。
+ *
+ * - `clearOverride()` 模拟第三方把覆盖清掉：回读值跳回真实窗口尺寸。
+ * - `honorOverride(false)` 模拟重发压根不生效（对面清得比我们发得快）。
+ * - `reread()` 绕过 2s 节流，好在一个测试里连着回读多轮。
+ */
+const WINDOW_VIEWPORT = { w: 1537, h: 894 };
+function fitDriftMirror() {
+  const { mirror, calls } = stubMirror({ width: 0, height: 0 });
+  let read = { ...WINDOW_VIEWPORT };
+  let honor = true;
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    if (method === "Runtime.evaluate") {
+      return Promise.resolve({ result: { result: { value: JSON.stringify(read) } } });
+    }
+    if (method === "Emulation.setDeviceMetricsOverride" && honor && params.width > 0) {
+      read = { w: Math.round(params.width / 0.9), h: Math.round(params.height / 0.9) };
+    }
+    return Promise.resolve({ result: {} });
+  };
+  return {
+    mirror,
+    calls,
+    clearOverride: () => {
+      read = { ...WINDOW_VIEWPORT };
+    },
+    honorOverride: (on) => {
+      honor = on;
+    },
+    setViewport: (w, h) => {
+      read = { w, h };
+    },
+    reread: async () => {
+      mirror._lastViewportAt = 0;
+      await mirror._refreshViewport();
+    }
+  };
+}
+
+test("覆盖被第三方清掉后，fitted 不再说谎且下一轮会重发", async () => {
+  const { mirror, calls, clearOverride, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+  assert.equal(mirror.state.fitted, true);
+  // 基准是回读值（958/0.9），不是覆盖尺寸本身。
+  assert.deepEqual(mirror._fitBaseline, { width: 1064, height: 1277 });
+
+  // 第二个 host 清掉了覆盖：页面回到真实窗口尺寸。
+  clearOverride();
+  await reread();
+  assert.equal(mirror.state.fitted, false, "state.fitted 要跟着实际走，不能停在 true");
+
+  // 缓存已作废 → tick 里的 _applyFit 会真的再发一次覆盖。
+  calls.length = 0;
+  await mirror._applyFit();
+  const resent = calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride");
+  assert.equal(resent.length, 1);
+  assert.equal(resent[0].params.width, 958);
+  assert.equal(mirror.state.fitted, true);
+  // 计数要等下一轮验证过「覆盖真还在」才归零：重发当场归零的话，「每轮都被清」
+  // 这个正需要停手的场景会永远攒不到上限。
+  assert.equal(mirror._fitDriftCount, 1);
+  await reread();
+  assert.equal(mirror._fitDriftCount, 0);
+  assert.equal(mirror.state.fitted, true);
+});
+
+test("页面缩放让回读值合法地不等于覆盖尺寸，不算失真", async () => {
+  const { mirror, calls, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+
+  // 回读 1064×1277 ≠ 覆盖 958×1149（90% 缩放），但和基准一致 —— 不该重发。
+  calls.length = 0;
+  await reread();
+  await mirror._applyFit();
+  assert.equal(mirror.state.fitted, true);
+  assert.equal(calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride").length, 0);
+});
+
+test("滚动条那点尺寸变化不触发重发", async () => {
+  const { mirror, calls, setViewport, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+
+  calls.length = 0;
+  setViewport(1064 - 15, 1277);
+  await reread();
+  assert.equal(mirror.state.fitted, true);
+  await mirror._applyFit();
+  assert.equal(calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride").length, 0);
+});
+
+test("反复被抢就停手，不跟第三方对刷 setDeviceMetricsOverride", async () => {
+  const { mirror, calls, clearOverride, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+
+  // 对面每轮都把覆盖清掉：失真 → 重发 → 又被清……
+  for (let i = 0; i < 4; i++) {
+    clearOverride();
+    await reread();
+    await mirror._applyFit();
+  }
+  assert.equal(mirror._fitGaveUp, true);
+  assert.match(mirror.state.error, /停止重发/);
+
+  calls.length = 0;
+  clearOverride();
+  await reread();
+  await mirror._applyFit();
+  assert.equal(
+    calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride").length,
+    0,
+    "停手后不能再发覆盖——无限重发就是把页面按秒 resize，正是引发 403 的那个成因"
+  );
+});
+
+test("重发压根不生效时也算失败，不把基准立在没贴合的尺寸上", async () => {
+  const { mirror, clearOverride, honorOverride, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+
+  // 覆盖从此发不动了（对面清得比我们发得快）。
+  honorOverride(false);
+  clearOverride();
+  for (let i = 0; i < 4; i++) {
+    await reread();
+    await mirror._applyFit();
+  }
+  assert.equal(mirror.state.fitted, false);
+  assert.notDeepEqual(
+    mirror._fitBaseline,
+    { width: WINDOW_VIEWPORT.w, height: WINDOW_VIEWPORT.h },
+    "基准不能立成未贴合的窗口尺寸，否则之后每次判定都通过、fitted 又开始说谎"
+  );
+  assert.equal(mirror._fitGaveUp, true);
+});
+
+test("用户重设尺寸把停手状态放开", async () => {
+  const { mirror, calls, clearOverride, reread } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+  for (let i = 0; i < 4; i++) {
+    clearOverride();
+    await reread();
+    await mirror._applyFit();
+  }
+  assert.equal(mirror._fitGaveUp, true);
+
+  calls.length = 0;
+  mirror.requestFit(1440, 1149, 1);
+  assert.equal(mirror._fitGaveUp, false);
+  await mirror._applyFit();
+  const resent = calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride");
+  assert.equal(resent.length, 1);
+  assert.equal(resent[0].params.width, 1440);
+});
+
+test("换连接/换目标会忘掉贴合缓存（覆盖不可能还在）", async () => {
+  const { mirror } = fitDriftMirror();
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+  mirror._fitGaveUp = true;
+
+  mirror.setTarget("page-2");
+  assert.equal(mirror._appliedFit, null);
+  assert.equal(mirror._fitBaseline, null);
+  assert.equal(mirror._fitGaveUp, false, "换目标后要重新试，不该带着上一只页面的停手状态");
+});
+
+test("回读失败时不立基准，免得把 0×0 当基准无限重发", async () => {
+  const { mirror, calls } = stubMirror({ width: 0, height: 0 });
+  mirror._command = (method, params) => {
+    calls.push({ method, params });
+    if (method === "Runtime.evaluate") return Promise.resolve({ result: {} });
+    return Promise.resolve({ result: {} });
+  };
+  mirror.requestFit(958, 1149, 1);
+  await mirror._applyFit();
+  assert.equal(mirror._fitBaseline, null);
+
+  // 基准为空时不做判定，也就不会误判失真。
+  calls.length = 0;
+  mirror._lastViewportAt = 0;
+  await mirror._refreshViewport();
+  assert.equal(mirror._appliedFit !== null, true);
+  await mirror._applyFit();
+  assert.equal(calls.filter((c) => c.method === "Emulation.setDeviceMetricsOverride").length, 0);
+});
+
 test("无头下截图兜底不退到 fromSurface:false（那是 headful-only，会拿到废图）", async () => {
   const { mirror, calls } = stubMirror();
   mirror.state.headless = true;

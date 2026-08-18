@@ -81,6 +81,13 @@ RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-
   （958×1149 这种竖屏、且 `availHeight === height` 没有任务栏），本身就是自动化指纹。
   实测不传时 `innerWidth`/`innerHeight` 依然精确等于目标值，面板效果一字不差，而真实
   screen（无头下由 `--screen-info` 给定）能透出来。
+  **贴合状态不能只信本地缓存**：覆盖会被第三方清掉（并挂的第二个 host、真窗口里改缩放、
+  导航重置、崩溃重连），而 `_appliedFit` 还记着「已应用」，早退分支命中就再也不重发，
+  于是 `state.fitted` 说谎、页面静默跑在非固定视口下。判据不能是「回读值 === 覆盖尺寸」——
+  页面缩放叠在覆盖之上，两者合法地不相等（958 + 90% = 1064）。做法是**记住贴合当时回读到的
+  视口当基准**，之后只看偏离（阈值 `FIT_DRIFT_PX`，要盖过滚动条那十几像素）。
+  **重发必须有上限**（`FIT_DRIFT_LIMIT`）：真抢不过第三方时，无限重发就是把页面按秒 resize，
+  那正是把账号弹到 403 的成因；超限就停手并把原因写进 `state.error`，等用户重按贴合或换连接。
 - **浏览器没起时**：面板里点「在这里启动浏览器」，host 用与 boss-cli 相同的
   user-data-dir（`~/.boss-cli/.cache/browser-data`）和调试端口拉起 Chrome，登录态
   通用；之后跑 boss 命令会 `probe` 到这只已存在的实例直接复用，不会另开一只。
