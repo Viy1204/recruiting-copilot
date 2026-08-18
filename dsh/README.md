@@ -107,10 +107,28 @@ RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-
   能一直连着；要真正关掉用 `boss shutdown` / `liepin quit`。
   猎聘源探不到端口时，空态文案会明确指向「liepin-cli 版本过旧（旧版用随机端口）」——
   否则用户只会以为是浏览器没开，点了启动按钮也没有任何反应。
-- **路由**：`state.json`（状态+标签+视口）、`stream.mjpg`（实时画面）、
+- **路由**：`state.json`（状态+标签+视口+熔断）、`stream.mjpg`（实时画面）、
   `frame.jpg`（单帧兜底）、`input`（POST 事件批）、`control`（POST：launch /
   navigate / reload / back / forward / new-tab / close-tab / set-target /
-  activate / fit / unfit）。
+  activate / fit / unfit / set-mode / watch / clear-risk）。
+- **风控页熔断**：主 frame 落到 `403.html` / `verify` / `security-check` 等（`RISK_URL_RE`）
+  就置上 `state.risk`，此后 host 停掉全部自动动作——不再自愈重启浏览器、`_applyFit` 直接
+  返回、`control` 只放行 `RISK_ALLOWED_ACTIONS`（watch / clear-risk / set-target），
+  其余一律 409。画面照常推，用户要看得见才知道该做什么；解除只能由人点面板上的按钮
+  （`clear-risk`）。
+  **为什么 host 必须自己做这件事**：boss-cli 那套保护（拦风控 SDK、上报端点 204、注入
+  页面守卫）全挂在 CLI 进程的 CDP session 上，实测**进程一退出就全部失效**——`Fetch.enable`
+  拦截立刻撤销，`addScriptToEvaluateOnNewDocument` 的守卫也随之移除。host 从不在那套保护
+  之下，能做的就是「平台说停就真的停」。2026-08-18 实测过反面：账号被限期间 `boss shutdown`
+  之后 16 秒就被自愈拉回来，限制被一路延长。
+- **有头/无头切换按钮已摘掉**（原 #24）。实测点它换来 24 小时账号限制：切换必然关掉浏览器
+  再重开，于是同一 profile、同一份 cookies、同一 IP 下 UA 在 `HeadlessChrome` 与 `Chrome`
+  之间突变。host 的 `setMode` 实现保留但无 UI 入口；重新暴露前必须先用
+  `Emulation.setUserAgentOverride` 对齐两个模式的 UA，并把模式判据从 `/json/version`
+  换成 sidecar。
+- **面板默认折叠 + 默认只读**：展开等于持续订阅画面并开启崩溃自愈，等于持续对招聘站产生
+  活动；折叠状态存 `localStorage`（`rcp.panel.collapsed`），不然重开会话会悄悄回到展开态。
+  输入派发默认关（`interactive = false`），要动手得按工具栏 🔒 显式打开。
 
 ## 原理速览
 

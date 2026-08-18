@@ -1,7 +1,7 @@
 {
   "name": "recruiting-copilot",
   "version": "0.6.0",
-  "description": "AI 招聘副驾 —— DeepSeek Harness profile bundle：注册招聘工作流 skills（岗位梳理、双通道寻源初筛、约面试、简历评估、台账与日报），并在 Web UI 右侧提供一只可直接操作的 boss/liepin 浏览器面板。",
+  "description": "AI 招聘副驾 —— DeepSeek Harness profile bundle：注册招聘工作流 skills（岗位梳理、双通道寻源初筛、约面试、简历评估、台账与日报），并在 Web UI 右侧提供一只 boss/liepin 浏览器观察面板（默认折叠只读，日常动作走 CLI）。",
   "keywords": [
     "recruiting",
     "deepseek-harness",
