@@ -37,6 +37,20 @@ test("鼠标坐标按视口反归一化，越界被夹住", () => {
   );
 });
 
+test("按住键时带 force，未按住不带——决定页面拿到的 PointerEvent.pressure", () => {
+  const { mirror, calls } = stubMirror();
+  mirror.dispatchInput([
+    { kind: "mouse", type: "mouseMoved", nx: 0.5, ny: 0.5, buttons: 0 },
+    { kind: "mouse", type: "mousePressed", nx: 0.5, ny: 0.5, button: "left", buttons: 1, clickCount: 1 },
+    { kind: "mouse", type: "mouseMoved", nx: 0.6, ny: 0.5, buttons: 1 },
+    { kind: "mouse", type: "mouseReleased", nx: 0.6, ny: 0.5, button: "left", buttons: 0, clickCount: 1 }
+  ]);
+  assert.equal(calls[0].params.force, undefined);
+  assert.equal(calls[1].params.force, 0.5);
+  assert.equal(calls[2].params.force, 0.5);
+  assert.equal(calls[3].params.force, undefined);
+});
+
 test("滚轮增量按视口尺寸放大", () => {
   const { mirror, calls } = stubMirror();
   mirror.dispatchInput([{ kind: "mouse", type: "mouseWheel", nx: 0.5, ny: 0.5, ndx: 0.1, ndy: -0.25 }]);

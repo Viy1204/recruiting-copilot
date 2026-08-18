@@ -1,0 +1,252 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 用完即弃，不要合进 master。
+  票：https://github.com/Viy1204/recruiting-copilot/issues/22
+  用途：量「页面实际收到的鼠标事件」长什么样。同一份页面分别在
+        DSH 面板里 和 真窗口里 各拖一次，差值就是面板制造的特征。
+  纯本地，不联网，不访问任何招聘平台。
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>mouse-trace PROTOTYPE</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 ui-monospace, Consolas, monospace; background: #0f1115; color: #d7dae0; }
+  header { padding: 8px 12px; background: #171a21; border-bottom: 1px solid #262b36; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 13px; margin: 0; font-weight: 600; color: #8ab4f8; }
+  button { font: inherit; background: #2b3140; color: #d7dae0; border: 1px solid #3a4252; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  button:hover { background: #353d4e; }
+  #tag { background: #1f2937; border: 1px solid #3a4252; color: #d7dae0; border-radius: 4px; padding: 3px 8px; width: 200px; font: inherit; }
+  main { display: flex; height: calc(100vh - 45px); }
+  #pad { flex: 1; position: relative; cursor: crosshair; background: #12151b; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); color: #4b5565; pointer-events: none; text-align: center; font-size: 14px; }
+  aside { width: 380px; border-left: 1px solid #262b36; overflow: auto; padding: 10px 12px; background: #131720; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 2px 4px; vertical-align: top; }
+  td:first-child { color: #7d8796; white-space: nowrap; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .sec { margin: 12px 0 4px; color: #8ab4f8; font-weight: 600; border-bottom: 1px solid #262b36; padding-bottom: 2px; }
+  .warn { color: #f0a45f; }
+  .bad { color: #ef6f6f; }
+  .ok { color: #67c99a; }
+  pre { background: #0d1016; border: 1px solid #262b36; border-radius: 4px; padding: 6px; overflow: auto; max-height: 160px; font-size: 11px; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>mouse-trace PROTOTYPE</h1>
+  <input id="tag" placeholder="这一轮的标签，如 panel / headful">
+  <button id="reset">清空重测</button>
+  <button id="report" style="background:#2f6f4f;border-color:#3d8a63">上报这一轮</button>
+  <button id="dump">导出 JSON</button>
+  <span id="live" style="color:#7d8796"></span>
+</header>
+<main>
+  <div id="pad">
+    <canvas id="cv"></canvas>
+    <div id="hint">在这块区域里<b>按住左键横向拖一条线</b>，像拖滑块那样<br>然后看右侧统计</div>
+  </div>
+  <aside id="out"></aside>
+</main>
+<script>
+const pad = document.getElementById('pad');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const out = document.getElementById('out');
+const live = document.getElementById('live');
+
+let moves = [];      // {t,x,y,mx,my,buttons,trusted}
+let pointers = [];   // {t,x,y,pressure,type,primary,trusted}
+let downs = [];      // {t,x,y,pressure,trusted,detail}
+let ups = [];
+let clicks = [];
+let dragging = false;
+
+function fit() {
+  const r = pad.getBoundingClientRect();
+  cv.width = Math.round(r.width * devicePixelRatio);
+  cv.height = Math.round(r.height * devicePixelRatio);
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  redraw();
+}
+addEventListener('resize', fit);
+
+function rel(e) {
+  const r = pad.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+pad.addEventListener('mousemove', e => {
+  const p = rel(e);
+  moves.push({ t: e.timeStamp, x: p.x, y: p.y, mx: e.movementX, my: e.movementY, buttons: e.buttons, trusted: e.isTrusted });
+  if (dragging) redraw();
+  render();
+});
+pad.addEventListener('pointermove', e => {
+  const p = rel(e);
+  pointers.push({ t: e.timeStamp, x: p.x, y: p.y, pressure: e.pressure, type: e.pointerType, primary: e.isPrimary, trusted: e.isTrusted });
+});
+pad.addEventListener('mousedown', e => {
+  dragging = true;
+  const p = rel(e);
+  downs.push({ t: e.timeStamp, x: p.x, y: p.y, pressure: null, trusted: e.isTrusted, detail: e.detail });
+  render();
+});
+// pressure 只在 PointerEvent 上有：真实鼠标按下应为 0.5，未按为 0
+pad.addEventListener('pointerdown', e => {
+  const d = downs[downs.length - 1];
+  if (d && d.pressure === null) d.pressure = e.pressure;
+  else downs.push({ t: e.timeStamp, x: rel(e).x, y: rel(e).y, pressure: e.pressure, trusted: e.isTrusted, detail: 0 });
+});
+pad.addEventListener('mouseup', e => {
+  dragging = false;
+  const p = rel(e);
+  ups.push({ t: e.timeStamp, x: p.x, y: p.y, trusted: e.isTrusted });
+  render();
+});
+pad.addEventListener('click', e => { clicks.push({ t: e.timeStamp, detail: e.detail, trusted: e.isTrusted }); render(); });
+pad.addEventListener('contextmenu', e => e.preventDefault());
+
+function redraw() {
+  const r = pad.getBoundingClientRect();
+  ctx.clearRect(0, 0, r.width, r.height);
+  if (moves.length < 2) return;
+  // 轨迹线
+  ctx.strokeStyle = '#2f6f4f'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(moves[0].x, moves[0].y);
+  for (const m of moves) ctx.lineTo(m.x, m.y);
+  ctx.stroke();
+  // 每个采样点：颜色按与前一点的距离，越远越红
+  for (let i = 0; i < moves.length; i++) {
+    const m = moves[i];
+    const d = i ? Math.hypot(m.x - moves[i-1].x, m.y - moves[i-1].y) : 0;
+    ctx.fillStyle = d > 60 ? '#ef6f6f' : d > 20 ? '#f0a45f' : '#67c99a';
+    ctx.beginPath(); ctx.arc(m.x, m.y, d > 60 ? 3.5 : 2, 0, 6.284); ctx.fill();
+  }
+  // 按下/抬起
+  for (const d of downs) { ctx.fillStyle = '#8ab4f8'; ctx.beginPath(); ctx.arc(d.x, d.y, 5, 0, 6.284); ctx.fill(); }
+  for (const u of ups)   { ctx.strokeStyle = '#8ab4f8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(u.x, u.y, 6, 0, 6.284); ctx.stroke(); }
+}
+
+const q = (a, p) => a.length ? a.slice().sort((x,y)=>x-y)[Math.min(a.length-1, Math.floor(a.length*p))] : 0;
+const f = (n, d=1) => Number.isFinite(n) ? n.toFixed(d) : '—';
+
+function stats() {
+  const gaps = [], dts = [];
+  for (let i = 1; i < moves.length; i++) {
+    gaps.push(Math.hypot(moves[i].x - moves[i-1].x, moves[i].y - moves[i-1].y));
+    dts.push(moves[i].t - moves[i-1].t);
+  }
+  const span = moves.length > 1 ? moves[moves.length-1].t - moves[0].t : 0;
+  const path = gaps.reduce((a,b)=>a+b, 0);
+  // movementX 是否有效：CDP 派发的事件里这个值可能恒为 0
+  const mvNonZero = moves.filter(m => m.mx !== 0 || m.my !== 0).length;
+  // movementX 与实际位移是否吻合
+  let mvMatch = 0, mvCheck = 0;
+  for (let i = 1; i < moves.length; i++) {
+    const dx = moves[i].x - moves[i-1].x;
+    if (Math.abs(dx) < 0.5) continue;
+    mvCheck++;
+    if (Math.abs(moves[i].mx - dx) <= 1.5) mvMatch++;
+  }
+  // 按下前 300ms 内有多少个 move —— 「瞬移后点击」的直接判据
+  const preDown = downs.map(d => moves.filter(m => m.t <= d.t && m.t > d.t - 300).length);
+  // 按下时的 pointer pressure：真实鼠标按下应为 0.5
+  const downPressure = downs.map(d => d.pressure);
+  // 时间间隔的抖动：真人有抖动，机器常常整齐
+  const dtMean = dts.length ? dts.reduce((a,b)=>a+b,0)/dts.length : 0;
+  const dtSd = dts.length ? Math.sqrt(dts.reduce((a,b)=>a+(b-dtMean)**2,0)/dts.length) : 0;
+  return { gaps, dts, span, path, mvNonZero, mvMatch, mvCheck, preDown, downPressure, dtMean, dtSd };
+}
+
+function render() {
+  const s = stats();
+  const rate = s.span > 0 ? moves.length / (s.span/1000) : 0;
+  const gapMax = Math.max(0, ...s.gaps);
+  const cls = (v, warn, bad) => v >= bad ? 'bad' : v >= warn ? 'warn' : 'ok';
+  const row = (k, v, c='') => `<tr><td>${k}</td><td class="${c}">${v}</td></tr>`;
+  live.textContent = `${moves.length} moves`;
+  out.innerHTML = `
+  <div class="sec">采样密度</div><table>
+    ${row('mousemove 总数', moves.length, cls(-moves.length, -40, -15))}
+    ${row('pointermove 总数', pointers.length)}
+    ${row('持续时长 (ms)', f(s.span, 0))}
+    ${row('采样率 (次/秒)', f(rate), rate < 20 ? 'bad' : rate < 40 ? 'warn' : 'ok')}
+    ${row('轨迹总长 (px)', f(s.path, 0))}
+  </table>
+  <div class="sec">相邻点间距（滑块最看这个）</div><table>
+    ${row('中位数 (px)', f(q(s.gaps, .5)), cls(q(s.gaps,.5), 15, 40))}
+    ${row('p95 (px)', f(q(s.gaps, .95)), cls(q(s.gaps,.95), 30, 80))}
+    ${row('最大 (px)', f(gapMax), cls(gapMax, 40, 100))}
+    ${row('&gt;60px 的跳变数', s.gaps.filter(g=>g>60).length, s.gaps.filter(g=>g>60).length ? 'bad' : 'ok')}
+  </table>
+  <div class="sec">时间间隔</div><table>
+    ${row('中位数 (ms)', f(q(s.dts, .5)))}
+    ${row('最大 (ms)', f(Math.max(0, ...s.dts)))}
+    ${row('标准差 (ms)', f(s.dtSd), s.dtSd < 1.5 ? 'warn' : 'ok')}
+  </table>
+  <div class="sec">按下前的移动（瞬移点击判据）</div><table>
+    ${s.preDown.length
+      ? s.preDown.map((n,i)=>row(`第 ${i+1} 次按下前 300ms`, `${n} 个 move`, n < 3 ? 'bad' : n < 10 ? 'warn' : 'ok')).join('')
+      : row('还没按下过', '—')}
+  </table>
+  <div class="sec">事件保真度</div><table>
+    ${row('isTrusted 全为 true', moves.every(m=>m.trusted) ? '是' : '否', moves.every(m=>m.trusted) ? 'ok' : 'bad')}
+    ${row('movementX/Y 非零占比', moves.length ? `${f(100*s.mvNonZero/moves.length, 0)}%` : '—', s.mvNonZero === 0 && moves.length ? 'bad' : 'ok')}
+    ${row('movementX 与实际位移吻合', s.mvCheck ? `${f(100*s.mvMatch/s.mvCheck, 0)}% (${s.mvMatch}/${s.mvCheck})` : '—', s.mvCheck && s.mvMatch/s.mvCheck < 0.8 ? 'bad' : 'ok')}
+    ${row('按下时 pointer pressure', s.downPressure.length ? s.downPressure.map(p=>f(p,2)).join(', ') : '—', s.downPressure.some(p=>p===0) ? 'bad' : 'ok')}
+    ${row('pointerType', pointers.length ? [...new Set(pointers.map(p=>p.type))].join(',') : '—')}
+  </table>
+  <div class="sec">环境</div><table>
+    ${row('innerWidth×Height', `${innerWidth}×${innerHeight}`)}
+    ${row('screen', `${screen.width}×${screen.height}`)}
+    ${row('avail', `${screen.availWidth}×${screen.availHeight}`)}
+    ${row('devicePixelRatio', devicePixelRatio)}
+    ${row('UA 含 Headless', /Headless/.test(navigator.userAgent) ? '是' : '否')}
+  </table>`;
+}
+
+function blob() {
+  const s = stats();
+  const qq = (a,p) => a.length ? a.slice().sort((x,y)=>x-y)[Math.min(a.length-1, Math.floor(a.length*p))] : 0;
+  return {
+    tag: document.getElementById('tag').value || 'untagged',
+    headless: /Headless/.test(navigator.userAgent), ua: navigator.userAgent,
+    moves: moves.length, pointers: pointers.length, downs: downs.length,
+    spanMs: Math.round(s.span), rate: s.span ? +(moves.length/(s.span/1000)).toFixed(1) : 0,
+    pathPx: Math.round(s.path),
+    gapMedian: +qq(s.gaps,.5).toFixed(1), gapP95: +qq(s.gaps,.95).toFixed(1),
+    gapMax: +Math.max(0,...s.gaps,0).toFixed(1), jumps60: s.gaps.filter(g=>g>60).length,
+    dtMedian: +qq(s.dts,.5).toFixed(1), dtMax: +Math.max(0,...s.dts,0).toFixed(1), dtSd: +s.dtSd.toFixed(2),
+    preDown300: s.preDown, downPressure: s.downPressure,
+    allTrusted: moves.every(m=>m.trusted),
+    movementNonZeroPct: moves.length ? Math.round(100*s.mvNonZero/moves.length) : null,
+    movementMatchPct: s.mvCheck ? Math.round(100*s.mvMatch/s.mvCheck) : null,
+    inner: [innerWidth, innerHeight], screen: [screen.width, screen.height], dpr: devicePixelRatio,
+    raw: { moves, downs, ups }
+  };
+}
+document.getElementById('report').onclick = async () => {
+  const b = blob();
+  if (b.moves < 5) { live.textContent = '还没拖出轨迹，先在左边按住左键拖一条线'; return; }
+  try {
+    await fetch('/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+    live.textContent = `已上报「${b.tag}」：${b.moves} moves`;
+  } catch (e) { live.textContent = '上报失败：' + e.message; }
+};
+document.getElementById('reset').onclick = () => { moves=[];pointers=[];downs=[];ups=[];clicks=[]; fit(); render(); };
+document.getElementById('dump').onclick = () => {
+  const blob = { tag: document.getElementById('tag').value || 'untagged', ua: navigator.userAgent,
+    screen: [screen.width, screen.height, screen.availWidth, screen.availHeight],
+    inner: [innerWidth, innerHeight], dpr: devicePixelRatio, moves, pointers, downs, ups, clicks };
+  const s = JSON.stringify(blob());
+  console.log('MOUSE_TRACE_JSON', s);
+  navigator.clipboard?.writeText(s).catch(()=>{});
+  live.textContent = `已导出 ${moves.length} moves（同时打到 console）`;
+};
+fit(); render();
+</script>
+</body>
+</html>
