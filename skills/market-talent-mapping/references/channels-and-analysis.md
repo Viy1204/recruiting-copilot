@@ -18,7 +18,8 @@
 4. **猎聘/Boss 快速连续调用返回空**：搜索间要 `sleep 3~4s`，否则页面未加载完返回空数组。
 5. **猎聘全国搜索相关度松**：通用关键词会引来跨行业噪声。按 `current_title` 关联度正则过滤；**猎聘不支持按公司精确定向**（"公司名 + 岗位词"是松散全文匹配，会返回不相干的人）。
 6. **别用别的程序同时连 boss 的浏览器调试端口**：会拧死会话（`Network.enable timed out`）。
-7. **Python 读中文源码**：Windows 默认 GBK 会把中文搞坏 → `PYTHONUTF8=1 python -X utf8 script.py`。
+7. **猎聘封境外 IP**：VPN / 整机隧道不关，`liepin` 接口被拦「境外」。用前关 VPN 或把 `*.liepin.com` 分流直连。页被清成 about:blank 是 liepin-cli < 0.2.4 的已知问题（加载期 Runtime 检测），`npm update -g @viyzhu/liepin-cli` 根治。
+8. **Python 读中文源码**：Windows 默认 GBK 会把中文搞坏 → `PYTHONUTF8=1 python -X utf8 script.py`。
 
 ## 每候选人数据 schema
 
