@@ -37,12 +37,16 @@ dsh plugin --profile web remove recruiting-copilot
    resume-review、interview-schedule、market-talent-mapping）在任意工作区可用。
 2. Web UI 右侧出现「招聘浏览器」面板：一只可以直接用的浏览器。
 
-## 浏览器默认有头（2026-08-19 翻回来的）
+## 默认模式按源分开（2026-08-19）
 
-面板拉起的浏览器**默认有头**（只有 `RECRUIT_BROWSER_HIDDEN` 显式给真值才无头），与
-boss-cli / liepin-cli 同语义。
+面板拉起的浏览器：**boss 源默认有头、liepin 源默认无头**，与两个 CLI 各自的默认一一对应
+（`DEFAULT_SOURCES[].defaultHidden`）。`RECRUIT_BROWSER_HIDDEN` 是**统一覆盖开关**，
+**只在显式设置时生效**——不设时各源用自己的默认，显式设了才把两家拉平。
 
-**为什么翻回来**：原先默认无头，理由是隐藏窗口不抢焦点——「离屏有头」
+**猎聘为什么不跟着翻**：猎聘的风控形态一次都没观测过，没有证据支持改它的默认，
+而无头带来的不抢焦点是实打实的好处。观测到同类症状再说。
+
+**BOSS 为什么翻回来**：原先两个源都默认无头，理由是隐藏窗口不抢焦点——「离屏有头」
 （`--window-position=-32000,-32000`）实测在 Windows 上**创建可见窗口必然激活它**，照样抢焦点，
 加 `--no-startup-window` 也只是把激活推迟到建 tab 那一刻；而无头下面板依赖的每条 CDP 能力
 （screencast 推帧、`Emulation` 贴合、`Input.*` 派发、`captureScreenshot`）与有头**零退化**。
@@ -56,10 +60,10 @@ boss-cli / liepin-cli 同语义。
 所以 #17（不伪装 `HeadlessChrome` UA）和 #10（否掉离屏有头）这两个决策的前提都不再成立，
 需要重新评估——但**不是**靠伪装 UA 把无头留下来，那与「不做识别不出自动化方向的对抗」的红线冲突。
 
-真要无头（清楚这是在拿账号冒险）：
+真要把 BOSS 也压成无头（清楚这是在拿账号冒险）：
 
 ```bash
-RECRUIT_BROWSER_HIDDEN=true      # 三方共读：本插件 / boss-cli / liepin-cli
+RECRUIT_BROWSER_HIDDEN=true      # 三方共读的统一覆盖：本插件 / boss-cli / liepin-cli
 ```
 
 已有实例在跑时改变量不生效（端口上已有实例会被复用），得先 `boss shutdown` / `liepin quit` 关掉那只。

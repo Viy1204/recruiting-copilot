@@ -431,23 +431,44 @@ test("readHeadless 按 /json/version 的 UA 判模式", () => {
   assert.equal(readHeadless(null), null);
 });
 
-test("默认有头，无头必须显式开启（与两个 CLI 同语义）", () => {
+test("共读变量是统一覆盖开关，不设时各源用自己的默认", () => {
   const saved = process.env.RECRUIT_BROWSER_HIDDEN;
   try {
+    // 不设：boss 有头（实测无头会被判成第三方辅助工具）、猎聘无头（风控形态没观测过）
     delete process.env.RECRUIT_BROWSER_HIDDEN;
-    assert.equal(hiddenModeEnabled(), false, "HeadlessChrome UA 已实测招来 web 端登录限制，不能是默认");
+    assert.equal(hiddenModeEnabled(false), false, "boss 默认有头");
+    assert.equal(hiddenModeEnabled(true), true, "猎聘默认无头");
+
+    // 显式设置就拉平两家，源默认不再起作用
     for (const v of ["true", "TRUE", "1", "yes", "y"]) {
       process.env.RECRUIT_BROWSER_HIDDEN = v;
-      assert.equal(hiddenModeEnabled(), true, v);
+      assert.equal(hiddenModeEnabled(false), true, v);
+      assert.equal(hiddenModeEnabled(true), true, v);
     }
-    for (const v of ["false", "FALSE", "0", "no", "maybe", ""]) {
+    for (const v of ["false", "FALSE", "0", "no", "n"]) {
       process.env.RECRUIT_BROWSER_HIDDEN = v;
-      assert.equal(hiddenModeEnabled(), false, v);
+      assert.equal(hiddenModeEnabled(false), false, v);
+      assert.equal(hiddenModeEnabled(true), false, v);
+    }
+
+    // 无意义值不当覆盖，回落到源默认
+    for (const v of ["maybe", ""]) {
+      process.env.RECRUIT_BROWSER_HIDDEN = v;
+      assert.equal(hiddenModeEnabled(false), false, v);
+      assert.equal(hiddenModeEnabled(true), true, v);
     }
   } finally {
     if (saved === undefined) delete process.env.RECRUIT_BROWSER_HIDDEN;
     else process.env.RECRUIT_BROWSER_HIDDEN = saved;
   }
+});
+
+test("两个内置源的默认模式与各自 CLI 对齐（boss 有头 / 猎聘无头）", () => {
+  const sources = normalizeSources(undefined);
+  const boss = sources.find((s) => s.name === "boss");
+  const liepin = sources.find((s) => s.name === "liepin");
+  assert.equal(boss.defaultHidden, false);
+  assert.equal(liepin.defaultHidden, true);
 });
 
 test("normalizeSources：patch 只写差异，userDataDir/homeUrl 从内置默认补", () => {
