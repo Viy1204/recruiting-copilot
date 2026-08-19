@@ -431,19 +431,19 @@ test("readHeadless 按 /json/version 的 UA 判模式", () => {
   assert.equal(readHeadless(null), null);
 });
 
-test("隐藏模式默认开启，只有显式 false 才退回有头", () => {
+test("默认有头，无头必须显式开启（与两个 CLI 同语义）", () => {
   const saved = process.env.RECRUIT_BROWSER_HIDDEN;
   try {
     delete process.env.RECRUIT_BROWSER_HIDDEN;
-    assert.equal(hiddenModeEnabled(), true);
-    process.env.RECRUIT_BROWSER_HIDDEN = "true";
-    assert.equal(hiddenModeEnabled(), true);
-    process.env.RECRUIT_BROWSER_HIDDEN = "false";
-    assert.equal(hiddenModeEnabled(), false);
-    process.env.RECRUIT_BROWSER_HIDDEN = "FALSE";
-    assert.equal(hiddenModeEnabled(), false);
-    process.env.RECRUIT_BROWSER_HIDDEN = "0";
-    assert.equal(hiddenModeEnabled(), true, "只认 false，不做 truthy 猜测");
+    assert.equal(hiddenModeEnabled(), false, "HeadlessChrome UA 已实测招来 web 端登录限制，不能是默认");
+    for (const v of ["true", "TRUE", "1", "yes", "y"]) {
+      process.env.RECRUIT_BROWSER_HIDDEN = v;
+      assert.equal(hiddenModeEnabled(), true, v);
+    }
+    for (const v of ["false", "FALSE", "0", "no", "maybe", ""]) {
+      process.env.RECRUIT_BROWSER_HIDDEN = v;
+      assert.equal(hiddenModeEnabled(), false, v);
+    }
   } finally {
     if (saved === undefined) delete process.env.RECRUIT_BROWSER_HIDDEN;
     else process.env.RECRUIT_BROWSER_HIDDEN = saved;

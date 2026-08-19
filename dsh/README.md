@@ -37,19 +37,29 @@ dsh plugin --profile web remove recruiting-copilot
    resume-review、interview-schedule、market-talent-mapping）在任意工作区可用。
 2. Web UI 右侧出现「招聘浏览器」面板：一只可以直接用的浏览器。
 
-## 浏览器默认无头
+## 浏览器默认有头（2026-08-19 翻回来的）
 
-面板拉起的浏览器**默认无头**（`RECRUIT_BROWSER_HIDDEN` 不等于 `false` 即无头）。
+面板拉起的浏览器**默认有头**（只有 `RECRUIT_BROWSER_HIDDEN` 显式给真值才无头），与
+boss-cli / liepin-cli 同语义。
 
-实测原因：想过用「离屏有头」（`--window-position=-32000,-32000`）来隐藏窗口，但在 Windows 上
-**创建可见窗口必然激活它**，照样抢键盘焦点，加 `--no-startup-window` 也只是把激活推迟到建 tab 那一刻。
-而无头下面板依赖的每条 CDP 能力（screencast 推帧、`Emulation` 贴合、`Input.*` 派发、
-`captureScreenshot`）与有头**零退化**，截图字节数逐字节相同。
+**为什么翻回来**：原先默认无头，理由是隐藏窗口不抢焦点——「离屏有头」
+（`--window-position=-32000,-32000`）实测在 Windows 上**创建可见窗口必然激活它**，照样抢焦点，
+加 `--no-startup-window` 也只是把激活推迟到建 tab 那一刻；而无头下面板依赖的每条 CDP 能力
+（screencast 推帧、`Emulation` 贴合、`Input.*` 派发、`captureScreenshot`）与有头**零退化**。
+当时对代价的评估是「UA 里多个 `HeadlessChrome`，没有观测到实际危害」（#17）。
 
-**要看浏览器在做什么就用这个面板** —— 这正是它存在的理由。真要有头窗口（例如需要在真窗口里人工操作）：
+**危害已经观测到了**：一个账号被 BOSS 限制 **web 端登录 24 小时**，页面文案明确写「检测到您的
+账号存在使用第三方招聘管理系统、插件、外挂、软件等辅助工具」——判定的是工具指纹，不是行为频率；
+另一个团队用上游 boss-cli（默认有头）长期无事，他们的 AI 擅自改走无头之后当天封号。两个独立
+样本都指向无头。抢焦点是体验问题，被限 web 端登录是业务问题，天平已经变了。
+
+所以 #17（不伪装 `HeadlessChrome` UA）和 #10（否掉离屏有头）这两个决策的前提都不再成立，
+需要重新评估——但**不是**靠伪装 UA 把无头留下来，那与「不做识别不出自动化方向的对抗」的红线冲突。
+
+真要无头（清楚这是在拿账号冒险）：
 
 ```bash
-RECRUIT_BROWSER_HIDDEN=false     # 三方共读：本插件 / boss-cli / liepin-cli
+RECRUIT_BROWSER_HIDDEN=true      # 三方共读：本插件 / boss-cli / liepin-cli
 ```
 
 已有实例在跑时改变量不生效（端口上已有实例会被复用），得先 `boss shutdown` / `liepin quit` 关掉那只。
