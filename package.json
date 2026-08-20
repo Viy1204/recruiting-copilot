@@ -11,7 +11,18 @@
     "liepin-cli",
     "cdp"
   ],
+  "license": "MIT",
+  "author": "Viy1204",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Viy1204/recruiting-copilot.git"
+  },
+  "homepage": "https://github.com/Viy1204/recruiting-copilot#readme",
+  "bugs": "https://github.com/Viy1204/recruiting-copilot/issues",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\""
   },
