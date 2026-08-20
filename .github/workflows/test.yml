@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 20 是 node:test 的最早 LTS 支持线；24 对齐开发机
-        node: ['20', '24']
+        # 22 是最早把 --test 位置参数当 glob 解析的 LTS（20 按路径解析，
+        # "tests/*.test.mjs" 会找不到文件）；24 对齐开发机
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
