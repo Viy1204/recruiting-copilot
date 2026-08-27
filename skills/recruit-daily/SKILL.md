@@ -11,7 +11,8 @@ description: >
 每日主力动作：把 Boss 直聘 + 猎聘两个渠道的「查未读 → 主动寻源 → 初筛 → 打招呼 → 建档 → 出日报」串成一条流水线。
 
 **这是编排文档**：CLI 命令细节见 [`references/channels.md`](references/channels.md)，
-台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)。
+台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)，
+日报卡片推送见 [`references/daily-card.md`](references/daily-card.md)。
 本文档只管「顺序、判断、跨渠道协同、安全」。
 
 ## 铁律：先读事实源，别凭记忆
@@ -57,7 +58,13 @@ description: >
    - 两种载体结构相同，见 ledger-and-report.md。内容**从台账同步**，不另立事实源。
    - **完成判据**：日报含今日概况数字、按岗人选表、待用户确认清单三块，且文档链接/文件路径已回给用户。
 
-8. **回填关键词迭代表**：从本轮「初筛通过/强匹配」的真实简历反向提取搜索词，
+8. **推日报卡片（可选补充）**：用户要在 IM 收到提醒时，往飞书推一张互动卡片，正文只放
+   「四个数字 + 重点人选 + 待你拍板清单」，长尾折叠，按钮跳第 7 步的文档。骨架、字段坑与发送命令见
+   [`references/daily-card.md`](references/daily-card.md)。没 IM 通道 → 跳过，别伪造推送。
+   - **完成判据**：卡片过 schema 校验**且**过美观度自查（校验通过≠可发），五层结构齐，
+     数字与台账一致，`message_id` 与收件人已回给用户。
+
+9. **回填关键词迭代表**：从本轮「初筛通过/强匹配」的真实简历反向提取搜索词，
    写回 `01-jd/_internal/<role>.md` 的迭代表（有效词/无效词/积极信号/拒绝模式）。下轮先读它。
    - **完成判据**：今天每个出过「初筛通过」人选的岗位，迭代表都新增了一行。
 
