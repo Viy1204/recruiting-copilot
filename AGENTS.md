@@ -20,7 +20,7 @@
 ```
 skills/recruit-init/           初始化流程 + 工作区脚手架模板（templates/）
 skills/recruit-grill/          逐岗逼问式梳理岗位真实要求（+ 问题清单）
-skills/recruit-daily/          每日招聘流水线（+ 双通道命令参考、台账日报格式）
+skills/recruit-daily/          每日招聘流水线（+ 双通道命令参考、台账日报格式、日报卡片推送）
 skills/market-talent-mapping/  某岗市场人才深度盘点（+ 渠道与统计参考、报告模板）
 skills/resume-review/          本地/飞书邮箱简历收取与评估（单份或批量）
 skills/interview-schedule/     面试预约：飞书日程+视频会议+拉面试官+档案同步
