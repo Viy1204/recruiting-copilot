@@ -145,6 +145,11 @@ skill 目录里（不必把仓库克隆成工作区）：
 面板接管需要 `@viyzhu/boss-cli-fork` ≥ 0.7.0、`@viyzhu/liepin-cli` ≥ 0.2.0：更早的版本要么用随机调试端口，
 要么命令跑完就关浏览器，面板连不上。装旧版时面板的空态文案会直接告诉你是版本问题。
 
+**Boss 窗口会不会被命令弹到前台？** `@viyzhu/boss-cli-fork` ≥ 0.7.2 起：窗口已最小化就不动它；
+只有在线简历截图（`boss action resume` / `boss preview`）会临时还原窗口、截完立刻再最小化，
+因为 Chrome 最小化后不绘帧，canvas 简历根本渲染不出来。把 CLI 接进后台系统定时跑、连那一下
+都不想要的，设 `BOSS_BROWSER_NO_FOREGROUND=true`（`boss login` 不受影响，扫码必须可见）。
+
 更新 / 卸载：
 
 ```bash
