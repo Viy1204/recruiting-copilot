@@ -434,10 +434,11 @@ test("readHeadless 按 /json/version 的 UA 判模式", () => {
 test("共读变量是统一覆盖开关，不设时各源用自己的默认", () => {
   const saved = process.env.RECRUIT_BROWSER_HIDDEN;
   try {
-    // 不设：boss 有头（实测无头会被判成第三方辅助工具）、猎聘无头（风控形态没观测过）
+    // 不设：原样透传该源自己的默认。两个内置源现在都是 false（有头），见下方那条测试；
+    // 这里测的是 hiddenModeEnabled 本身的透传语义，所以两个方向都要覆盖。
     delete process.env.RECRUIT_BROWSER_HIDDEN;
-    assert.equal(hiddenModeEnabled(false), false, "boss 默认有头");
-    assert.equal(hiddenModeEnabled(true), true, "猎聘默认无头");
+    assert.equal(hiddenModeEnabled(false), false, "源默认有头时透传有头");
+    assert.equal(hiddenModeEnabled(true), true, "源默认无头时透传无头");
 
     // 显式设置就拉平两家，源默认不再起作用
     for (const v of ["true", "TRUE", "1", "yes", "y"]) {
@@ -463,12 +464,14 @@ test("共读变量是统一覆盖开关，不设时各源用自己的默认", ()
   }
 });
 
-test("两个内置源的默认模式与各自 CLI 对齐（boss 有头 / 猎聘无头）", () => {
+// 端口上已有实例会被直接复用：面板以无头拉起某个源，那个 CLI 的命令就会连上这只无头实例，
+// 等于绕过 CLI 自己的默认。所以这两个值必须跟着 boss-cli / liepin-cli 走，不能各行其是。
+test("两个内置源的默认模式与各自 CLI 对齐（2026-09-21 起都是有头）", () => {
   const sources = normalizeSources(undefined);
   const boss = sources.find((s) => s.name === "boss");
   const liepin = sources.find((s) => s.name === "liepin");
   assert.equal(boss.defaultHidden, false);
-  assert.equal(liepin.defaultHidden, true);
+  assert.equal(liepin.defaultHidden, false);
 });
 
 test("normalizeSources：patch 只写差异，userDataDir/homeUrl 从内置默认补", () => {
