@@ -37,7 +37,8 @@ description: >
 2. **定寻源岗位与优先级**：读 CONTEXT「在招岗位与优先级」，按优先级分配今天的额度。
 
 3. **双通道 × 双入口寻源**（每个目标岗都跑），命令与坑见 channels.md：
-   - **boss**：`boss positions` 拿岗位槽位 → 人才库 `boss search <词> --job <岗>` + 推荐 `boss recommend <岗>`。
+   - **boss**：人才库 `boss search <词> --job <岗>` + 推荐 `boss recommend <岗>`。
+     （`boss positions` 当前读不出职位，别拿它拿岗位槽位——岗位名直接用 CONTEXT 里的。）
    - **猎聘**：`liepin joblist --json` 拿 ejobId → `liepin search "<词>" --city <城市> --json` + `liepin recommend --json`。
    - 搜索词用 `_internal/<role>.md` 关键词迭代表里最新一轮的有效词。
    - **完成判据**：每个目标岗，boss 与猎聘各自的 search + recommend 两入口都跑过——漏一个渠道或入口 = 没做完。
@@ -72,8 +73,10 @@ description: >
 
 - **默认逐个/批量打招呼前必须用户确认**（不群发）。用户在本轮**明确授权**"合适的直接打招呼"
   即视为本轮的持续授权，可直接打，但**逐一回报**打了谁；跨轮不自动延续，明天要重新授权。
-- **boss `--greet auto`** 只按内置的学历/年龄标签筛，标签缺失保守跳过；它**不判命脉**——
-  想更准就先用命脉关键词收窄搜索池，再 auto。
+- **boss 搜索池打招呼没有自动模式**（`--greet auto` 不存在）：只能 `boss search` 之后
+  `boss greet --index <序号>` 一个一个点，**消耗畅聊卡且不可撤回**。先 `--dry-run` 验证定位，
+  再去掉它真打。既然是逐个点，就别指望工具替你筛——**命脉判断在打之前做完**，
+  用命脉关键词 + `--degree/--exp-range/--status` 这些筛选参数把池子收窄，再逐个确认。
 - **遇每日沟通额度上限**（付费弹层）：停下问用户，别自己决定花付费权益。
 - **遇风控 / 账号异常 / 验证码**：立即停，不硬闯，报告用户。
 - **商业敏感信息**（CONTEXT 里标注敏感的内容）**不写进对外话术和日报**；
