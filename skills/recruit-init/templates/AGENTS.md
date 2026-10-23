@@ -23,8 +23,11 @@
 | 约面试 / 面试改期取消：建日程拉面试官、通知候选人、同步档案 | `skills/interview-schedule/SKILL.md` |
 | 新开一个岗位 / 重新梳理某岗位的真实要求 | `skills/recruit-grill/SKILL.md` |
 | 重建 / 修复工作区结构 | `skills/recruit-init/SKILL.md` |
+| 查看任务动态 / 逐人结果 / 候选阶段人数（默认本机网页，原生手动可选） | `skills/recruit-board/SKILL.md` + `skills/recruit-board/references/hosts.md` |
 | boss 直聘 CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `boss help` |
 | 猎聘 CLI 命令细节 | `skills/recruit-daily/references/channels.md` + `liepin help` |
+
+看板开工统一读 `skills/recruit-board/references/hosts.md`：Claude Desktop、Codex App、WorkBuddy 默认使用网页；六执行入口在脚本可用时先 start、进入真实步骤，尽早确认前台服务并打开或复用页面，同时给本轮链接。只查看不 start，也不为读状态联系招聘平台；没有打开工具就给本机链接，原生 `/recruiting-board` 由用户手动选择。缺脚本或接入失败按共享降级继续本体，不自动覆盖旧 skills。
 
 ## 会话卫生（跨会话记忆只有文件）
 

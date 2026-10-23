@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "demo-review",
+  "workflow": "resume-review",
+  "label": "简历收取与评估",
+  "role": "测试设计岗",
+  "ownerSessionId": "another-demo-session",
+  "status": "running",
+  "reason": null,
+  "createdAt": "2026-10-22T10:01:22.213Z",
+  "updatedAt": "2026-10-22T10:01:22.213Z",
+  "steps": [
+    {
+      "id": "context",
+      "label": "读取现行标准",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "mail",
+      "label": "收取邮箱简历",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "parse",
+      "label": "解析简历与初评",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "evaluate",
+      "label": "逐份评估",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "records",
+      "label": "落面试档案",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "ledger",
+      "label": "更新台账",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    },
+    {
+      "id": "summary",
+      "label": "交付汇总",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T10:01:22.213Z"
+    }
+  ]
+}

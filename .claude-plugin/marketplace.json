@@ -11,6 +11,12 @@
       "description": "初始化招聘工作区、梳理岗位真实要求、每日 Boss直聘+猎聘寻源初筛打招呼、台账与日报。",
       "source": "./",
       "category": "productivity"
+    },
+    {
+      "name": "recruiting-board",
+      "description": "可选原生招聘进展面板：查看本地台账、任务记录与候选资料，可保存本地岗位状态，手动打开。需支持 function hooks/Pane 的宿主。",
+      "source": "./skills/recruit-board",
+      "category": "productivity"
     }
   ]
 }

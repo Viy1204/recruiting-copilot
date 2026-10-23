@@ -11,6 +11,10 @@ description: >
 
 把"约面试"从口头变成一次做全：**日历日程（含飞书视频会议）+ 面试官进会 + 候选人邀约话术 + 档案台账同步**。
 
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `interview-schedule` 先 start、保存 run id 并进入真实步骤，在查忙闲等取数前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；日程要素待确认时记录 calendar 的 `wait`，降级或改期/取消仍按实际结果记录。
+
+在 calendar / invitation / records 等步骤逐人及时写 `result`，按核实情况区分“日程已创建”“仅生成话术”“邀约待发/已核实发送”和“档案台账已同步”；建会要素待确认时按共享协议记录待确认，继续遵守下方确认规则。
+
 ## 前置
 
 - `lark-cli` 已配置（飞书日程/会议是本流程的本体）。**没有 → 走文末"无飞书降级"**，其余照做。

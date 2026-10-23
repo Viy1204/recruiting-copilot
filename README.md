@@ -61,7 +61,7 @@
 
 ## 前置条件（所有工具通用）
 
-1. [Node.js](https://nodejs.org) ≥ 20，本机装有 Chrome。
+1. [Node.js](https://nodejs.org) ≥ 22，本机装有 Chrome。
 2. 运行下方「安装与使用」里的依赖安装脚本。脚本装的 Boss CLI 是
    [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版——它跟着 Boss 前端改版走，
    带着当前的兼容与安全基线。macOS 上如果 npm 全局命令不在 `PATH`，脚本会幂等地改一次当前
@@ -114,6 +114,59 @@ claude plugin install recruiting-copilot
 - `/interview-schedule` —— 约面试：日历 + 视频会议 + 拉面试官，档案台账同步
 - `/ask-viy` —— 不知道该用哪个？问它
 
+### 本地招聘进展看板（v0.7.0-beta.1 测试版）
+
+本轮升级以预发布版本供试用，固定标签为 `v0.7.0-beta.1`。完整安装、已有工作区升级与回退步骤见 [测试版说明](docs/releases/v0.7.0-beta.1.md)；正式版仍使用 `v0.6.6`。
+
+`skills/recruit-board/` 自带完整模型、进度脚本、本机网页和可选原生 mod，初始化复制整个 `skills/` 时一同携带。**网页版是 Claude、Codex App、WorkBuddy 的统一主界面**；六个执行流程在脚本可用时默认记录并尽早打开或复用看板。缺少脚本的旧工作区仍可照常招聘，并说明本轮未记录进度。
+
+在本地源码目录启动网页（Node ≥22，无额外依赖）：
+
+```bash
+npm run board -- --workspace "/绝对路径/你的招聘工作区" --port 4318
+npm run board:progress -- workflows
+```
+
+复制后的工作区直接运行 `node skills/recruit-board/scripts/server.mjs --workspace "/绝对路径/工作区"`。在 Claude 的 Browser/Preview、Codex App 的 Browser、WorkBuddy 右侧浏览器或普通浏览器打开 `http://127.0.0.1:4318/`。宿主有专用服务工具时由它管理前台进程；没有可用界面工具时返回本机链接，不承诺自动停靠或后台常驻。服务健康核验、已有实例复用和本轮链接交接见 [三端打开约定](skills/recruit-board/references/hosts.md)。页面只展示本地台账与独立任务记录，不连接 CDP、招聘网站或既有 DSH 面板。
+
+支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与本轮发布复验的边界见 [发布验收](verification/release-v0.7.0-beta.1-checks.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
+
+上部为“工作区任务”：默认跟随最新创建的任务，手动选择历史或打开明确 run 链接后固定；阅读详情或编辑时有新任务，保留阅读位置并提供“回到最新”。首页按所选任务读取最近三条真实处理记录，完整名单和候选资料继续按需查看；人数按姓名＋原岗位去重，收据条数不当作人数。没有 run 显示“尚无任务进度记录”，旧任务没有收据显示“未记录”，不补造历史。前台按一秒间隔检查，后台降频、恢复时立即同步；读取状态与业务最后记录分开，动画只反馈实际变化。
+
+下部按“在招 / 关注 / 全部”查看候选阶段，关注是按工作区隔离的个人偏好，搜索只缩小岗位选项。候选记录展示原状态和评级，同人不同原岗位不自动合并。关闭岗位存量仍可在“全部”查看，重复冲突、未配置、缺失与陈旧数据均明确标注。只有表头的台账是正常零条，未读取台账是未知；不计算转化率，不拖拽改状态、不提供候选人外联操作。进度命令与六流程映射见 [共享进度协议](skills/recruit-board/references/progress.md)。
+
+旧工作区可选用固定文件 `_shared/recruit-board.config.json`，按完整原值补充状态阶段与岗位别名，例如：
+
+```json
+{
+  "schemaVersion": 1,
+  "statusStages": { "已沟通-待答复": "talking" },
+  "roleAliases": { "旧岗位名": "标准岗位名" }
+}
+```
+
+阶段值仅限 `screen`、`contact`、`talking`、`decision`、`interview`、`offer`、`joined`、`ended`、`unclassified`。状态键按 trim＋英文小写精确匹配，可覆盖标准映射；显式 `unclassified` 表示阶段待核，不再报未识别状态。岗位别名仅 trim 后完整匹配，目标须存在于本次成功读取的 CONTEXT 岗位表，禁止链与循环；筛选用标准名，`rawRole` 保留原岗位，去重键不变。配置任一字段非法则整份不生效；首次失败使用标准映射并提示，曾成功应用后变坏或消失则整体保留上次候选、岗位与源时间并标陈旧。无配置使用标准行为。可选说明字段 `description`、`verifiedAt`、`source` 不参与执行；配置字典与说明不进入 HTTP 快照。
+
+点击候选姓名可进入本地资料，按需读取台账背景、备注、来源与附件；返回名单保留筛选和任务。自动档案关联要求完整唯一姓名和岗位相合，同名或打码记录不猜配；完整岗位值若是其他正式岗位或别名，不能剥括号归到当前岗。仅开放工作区内 Markdown、TXT 和 PDF，档案相对附件按档案目录解析；工作区外、外链、缺失和不支持文件明确提示。资料正文、路径与文件映射不放入全量快照。
+
+需要明确消歧时，可选 `_shared/recruit-board.files.json` 使用原候选 ID（姓名＋原岗位的 JSON 数组字符串）关联文件；路径相对工作区，最多每条记录 30 份，`label`／`kind` 可省略：
+
+```json
+{
+  "schemaVersion": 1,
+  "candidates": {
+    "[\"合成甲\",\"原岗位\"]": {
+      "files": [
+        { "path": "03-interview/合成甲.md", "label": "面试档案", "kind": "markdown" },
+        { "path": "runtime/resumes/example.pdf", "label": "简历", "kind": "pdf" }
+      ]
+    }
+  }
+}
+```
+
+岗位筛选旁“管理”支持在招、已下架、已关闭、暂停、待核。保存只修改 `CONTEXT.md` 当前标准岗位表的一格状态，保留其他字节、换行和 UTF-8／带 BOM UTF-16 编码；原文备份至 `runtime/recruit-board/roles/`。取消不写入；revision 或独占锁冲突返回 409，重新读取再操作。此操作只更新本地岗位表，不修改招聘平台岗位。HTTP 保存限定同源 JSON 与会话令牌，候选资料维持只读；原生 `scripts/actions.mjs` 共用 `candidate`、`document`、`open-document`、`role-info`、`role-set` 后端，不另写一套文件规则。
+
 ### 方式三：DeepSeek Harness 插件（任意工作区都能用这套招聘 skill）
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）用户，
@@ -125,10 +178,10 @@ dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.g
 
 （`web` 是 Web 界面 profile；`headless` 等其他 profile 同理，把 `web` 换成名字即可。）
 
-安装后**重启 DSH 会话**，本仓库 `skills/` 下的 7 个 skill 就会出现在任意工作区的
+安装后**重启 DSH 会话**，本仓库 `skills/` 下的工作流就会出现在任意工作区的
 skill 目录里（不必把仓库克隆成工作区）：
 `ask-viy`、`recruit-init`、`recruit-grill`、`recruit-daily`、`resume-review`、
-`interview-schedule`、`market-talent-mapping`。
+`interview-schedule`、`market-talent-mapping`，以及测试版新增的本地 `recruit-board` 指引。
 
 **附带功能——Web UI 右侧「招聘浏览器」面板**：DSH Web 界面右侧是一只**能直接上手操作的浏览器**，
 鼠标、滚轮、键盘、中文输入法、粘贴全都直通。**BOSS 和猎聘都是可用的源**，面板顶部一键切换；

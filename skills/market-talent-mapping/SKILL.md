@@ -14,6 +14,10 @@ description: >
 
 产出：**本地 markdown（事实源，必出）**；有 lark-cli 再出飞书云文档（给老板/可脱敏喂猎头）；需要可扫读版再出 HTML。
 
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `mapping` 先 start、保存 run id 并进入真实步骤，在广度取数前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)，按下方六段流程记录实际结果；进度不增加联系授权。
+
+仅为 deep-dive 中实际深挖的代表人选逐人及时写 `result`，记录已核实的判断与风险；广度取数的大样本列表不能整批记成已评估。
+
 这是**编排文档**：渠道命令细节走 `boss help` / `liepin help` 与 [`references/channels-and-analysis.md`](references/channels-and-analysis.md)。本文档管顺序、判断、数据可信度、报告结构与安全。
 
 ## 铁律：先读事实源，再动手

@@ -12,6 +12,8 @@ description: >
 
 首次使用时跑一次。目标：搭好一个「任何 AI 工具打开都能直接干活」的招聘工作区。
 
+网页开工（默认）：目标工作区实际建立后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `init` start、保存 run id，按 [`共享进度协议`](../recruit-board/references/progress.md) 补记依赖与建目录的已观测结果，再进入当前真实步骤，尽早确认服务并打开或复用网页，同时交付本轮链接。目录未建立前不 start，不向源码仓库写 runtime；缺脚本或接入失败按共享降级继续初始化，不为看板覆盖旧 skills。
+
 ## Step 1 前置依赖检查
 
 先定位本 `SKILL.md` 所在的目录，然后运行它自带的安装脚本。在本模板仓库根目录中的命令是：

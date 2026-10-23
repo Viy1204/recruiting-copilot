@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "id": "demo-daily",
+  "workflow": "daily",
+  "label": "每日招聘",
+  "role": "测试研发岗",
+  "ownerSessionId": "demo-session",
+  "status": "waiting",
+  "reason": "等待确认本轮联系名单",
+  "createdAt": "2026-10-22T09:59:04.366Z",
+  "updatedAt": "2026-10-22T10:56:43.850Z",
+  "resultsRevision": 9,
+  "results": [
+    {
+      "id": "demo-a-screen",
+      "stepId": "screen",
+      "candidateId": "[\"演示候选人甲\",\"测试研发岗\"]",
+      "action": "完成初筛",
+      "outcome": "核心项目经历匹配，异地安排需要确认。",
+      "attention": "decision",
+      "nextAction": "是否先沟通到岗地点，再推进面试？",
+      "updatedAt": "2026-10-22T10:50:00.000Z"
+    },
+    {
+      "id": "demo-a-ledger",
+      "stepId": "ledger",
+      "candidateId": "[\"演示候选人甲\",\"测试研发岗\"]",
+      "action": "核对台账",
+      "outcome": "已核对资料入口；地点确认事项仍保留。",
+      "attention": "none",
+      "nextAction": null,
+      "updatedAt": "2026-10-22T10:55:00.000Z"
+    },
+    {
+      "id": "demo-b-screen",
+      "stepId": "screen",
+      "candidateId": "[\"演示候选人乙\",\"测试研发岗\"]",
+      "action": "完成初筛",
+      "outcome": "经历方向匹配，作品证据还需补充。",
+      "attention": "notice",
+      "nextAction": "补充作品后复核。",
+      "updatedAt": "2026-10-22T10:51:00.000Z"
+    },
+    {
+      "id": "demo-c-greet",
+      "stepId": "greet",
+      "candidateId": "[\"演示候选人丙\",\"测试研发岗\"]",
+      "action": "核实联系结果",
+      "outcome": "已确认本轮沟通记录，等待候选人回复。",
+      "attention": "none",
+      "nextAction": null,
+      "updatedAt": "2026-10-22T10:52:00.000Z"
+    },
+    {
+      "id": "demo-d-screen",
+      "stepId": "screen",
+      "candidateId": "[\"演示候选人丁\",\"测试研发岗\"]",
+      "action": "完成初筛",
+      "outcome": "建议进入约谈，面试重点已经整理。",
+      "attention": "decision",
+      "nextAction": "是否安排首轮约谈？",
+      "updatedAt": "2026-10-22T10:53:00.000Z"
+    },
+    {
+      "id": "demo-new-screen",
+      "stepId": "screen",
+      "candidateId": "[\"演示未入账人选\",\"测试研发岗\"]",
+      "action": "核对初筛材料",
+      "outcome": "已完成材料核对，尚未写入候选台账。",
+      "attention": "none",
+      "nextAction": null,
+      "updatedAt": "2026-10-22T10:54:00.000Z"
+    }
+  ],
+  "steps": [
+    {
+      "id": "unread",
+      "label": "查未处理",
+      "status": "completed",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:17.755Z"
+    },
+    {
+      "id": "priorities",
+      "label": "确定寻源岗位",
+      "status": "completed",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:17.771Z"
+    },
+    {
+      "id": "sourcing",
+      "label": "双通道寻源",
+      "status": "completed",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:17.787Z"
+    },
+    {
+      "id": "screen",
+      "label": "按标准初筛",
+      "status": "completed",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:17.797Z"
+    },
+    {
+      "id": "greet",
+      "label": "联系候选人",
+      "status": "running",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:04.366Z"
+    },
+    {
+      "id": "ledger",
+      "label": "更新台账",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:04.366Z"
+    },
+    {
+      "id": "report",
+      "label": "生成日报",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:04.366Z"
+    },
+    {
+      "id": "card",
+      "label": "推送日报卡片",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:04.366Z"
+    },
+    {
+      "id": "keywords",
+      "label": "回填搜索词",
+      "status": "pending",
+      "reason": null,
+      "updatedAt": "2026-10-22T09:59:04.366Z"
+    }
+  ]
+}
