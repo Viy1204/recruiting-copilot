@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing';
 import type { Engine } from 'claude-code/testing';
 import type { FsStat, On, RenderElement } from 'claude-code';
-import type { CandidateDetail, DocumentContent, RecruitingBoardState, RoleInfo, RoleSetResult, Run, RunActivity, RunResult } from './types';
+import type { CandidateDetail, DocumentContent, RecruitingBoardState, RoleInfo, RoleSetResult, Run, RunActivity, RunResult, RunResults } from './types';
 import { createRun, LEDGER_COLUMNS } from './model.mjs';
 
 const now = '2026-10-22T01:00:00.000Z';
@@ -36,7 +36,7 @@ function setup(on: On) {
   const env = {
     clock, detail, content, cwd: root, files: {} as Record<string, string>, roots: new Set<string>(), stats: {} as Record<string, FsStat>, calls: [] as string[][],
     store: {} as Record<string, unknown>, storeWrites: [] as { key: string; value: unknown }[], writes: 0, latest: null as RecruitingBoardState | null, opens: 0,
-    errors: {} as Record<string, string>, delays: {} as Record<string, number>, roleSet: null as RoleSetResult | null, activity: null as RunActivity | null,
+    errors: {} as Record<string, string>, delays: {} as Record<string, number>, roleSet: null as RoleSetResult | null, activity: null as RunActivity | null, results: null as RunResults | null,
     info: { contextRevision: '1'.repeat(64), roles: [{ name: '合成岗位', priority: 'P0', status: '在招', configured: true }], allowedStatuses: ['在招', '已下架', '已关闭', '暂停', '待核'] } as RoleInfo
   };
   addWorkspace(env);
@@ -94,7 +94,7 @@ function setup(on: On) {
     } else if (command === 'run-results' || command === 'run-activity') {
       const runId = argv[argv.indexOf('--run') + 1]!;
       const run = JSON.parse(env.files[runFile(workspaceRoot, runId)]!) as Run;
-      value = command === 'run-results' ? { runId, updatedAt: run.updatedAt, results: run.results ?? null, revision: run.resultsRevision ?? 0 } : env.activity ?? { runId, updatedAt: run.updatedAt, items: run.results === null ? null : [...run.results].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).slice(0, 3), revision: run.resultsRevision ?? 0 };
+      value = command === 'run-results' ? env.results ?? { runId, updatedAt: run.updatedAt, results: run.results ?? null, revision: run.resultsRevision ?? 0 } : env.activity ?? { runId, updatedAt: run.updatedAt, items: run.results === null ? null : [...run.results].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).slice(0, 3), revision: run.resultsRevision ?? 0 };
     } else throw new Error('测试未定义的动作');
     const stdout = JSON.stringify(value);
     if (env.delays[command]) await clock.sleep(env.delays[command]!);
@@ -127,17 +127,27 @@ function setResults(env: { files: Record<string, string> }, results: RunResult[]
   env.files[runFile(workspaceRoot, id)] = JSON.stringify({ ...run, results, resultsRevision: revision });
 }
 
-test('原生 Pane 按阶段展开候选，步骤默认折叠且名单不显示私密列', async ($, on) => {
+test('执行记录和候选阶段默认折叠，展开后保留流程与名单且不显示评级私密列', async ($, on) => {
   setup(on);
   expect((await open($)).text).toContain('已打开');
   const ui = await mount($);
-  expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^本轮需确认$/ })).toBeDefined();
+  expect(await ui.find({ key: 'run' })).toBeUndefined();
+  expect(await ui.find({ key: 'run-results' })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeUndefined();
+  expect(await ui.find({ key: 'stage-talking' })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^最近动态$/ })).toBeUndefined();
+  await ui.press({ key: 'show-records' });
   expect(await ui.find({ type: 'Text', text: /^1\. 查未处理/ })).toBeUndefined();
   await ui.press({ key: 'show-steps' });
   expect(await ui.find({ type: 'Text', text: /^1\. 查未处理/ })).toBeDefined();
   await ui.press({ key: 'show-steps' });
   expect(await ui.find({ type: 'Text', text: /^1\. 查未处理/ })).toBeUndefined();
+  await ui.press({ key: 'show-records' });
+  await ui.press({ key: 'show-stages' });
+  expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeDefined();
   await ui.press({ key: 'stage-talking' });
+  expect(await ui.find({ type: 'Text', text: /^A$/ })).toBeUndefined();
   expect(await ui.find({ type: 'Button', text: /^合成甲$/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /私密备注/ })).toBeUndefined();
   await ui.unmount();
@@ -147,8 +157,10 @@ test('无业务变化的轮询不写状态，有源变化仍同步并保留详�
   const env = setup(on);
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-stages' });
   await ui.press({ key: 'stage-talking' });
   await ui.press({ key: (await ui.find({ type: 'Button', text: /^合成甲$/ }))!.key! });
+  await ui.press({ key: 'candidate-background' });
   const beforePoll = env.writes;
   const beforeSync = env.latest?.snapshot?.generatedAt;
   await env.clock.advance(6000);
@@ -191,6 +203,7 @@ test('兼容配置的别名保留跨原岗位记录，配置故障陈旧后能�
   await open($);
   const ui = await mount($);
   expect(await ui.find({ type: 'Text', text: /尚无任务进度记录/ })).toBeDefined();
+  await ui.press({ key: 'show-stages' });
   await ui.select({ key: 'role', value: '合成岗位' });
   expect(await ui.find({ type: 'Text', text: /共 2 条/ })).toBeDefined();
   await ui.press({ key: 'stage-talking' });
@@ -226,6 +239,7 @@ for (const args of ['C:/synthetic recruiting/招聘工作区', '"C:/synthetic re
     expect(opened.text).toContain('已打开');
     const ui = await mount($);
     expect(await ui.find({ type: 'Text', text: /^招聘工作区$/ })).toBeDefined();
+    await ui.press({ key: 'show-stages' });
     expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeDefined();
     await ui.unmount();
   });
@@ -259,11 +273,16 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const env = setup(on);
     await open($);
     const ui = await mount($, surface);
+    await ui.press({ key: 'show-stages' });
     await ui.press({ key: 'stage-talking' });
     const candidate = await ui.find({ type: 'Button', text: /^合成甲$/ });
     expect(candidate?.key?.length).toBeLessThan(50);
     await ui.press({ key: candidate!.key! });
     expect(env.calls.find(argv => argv[2] === 'candidate')?.slice(2)).toEqual(['candidate', '--workspace', root, '--candidate', candidateId]);
+    expect(await ui.find({ type: 'Code', text: '合成背景摘要' })).toBeUndefined();
+    expect(await ui.find({ type: 'Code', text: '私密备注' })).toBeUndefined();
+    expect(await ui.find({ type: 'Text', text: /缺失简历.pdf · 文件缺失/ })).toBeDefined();
+    await ui.press({ key: 'candidate-background' });
     expect(await ui.find({ type: 'Code', text: '合成背景摘要' })).toBeDefined();
     expect(await ui.find({ type: 'Code', text: '私密备注' })).toBeDefined();
     expect(await ui.find({ type: 'Text', text: /来源轮次：test/ })).toBeDefined();
@@ -299,9 +318,9 @@ test('岗位编辑取消不写入，保存携带进入时的版本并保留个�
   expect(await ui.find({ type: 'Text', text: /^新状态：暂停$/ })).toBeDefined();
   expect((await ui.find({ key: 'role-status-0' }))?.text).toBe('在招');
   expect((await ui.find({ key: 'role-status-3' }))?.text).toBe('暂停 · 已选');
-  expect(env.calls.filter(argv => argv[2] !== 'run-activity').map(argv => argv[2])).toEqual(['role-info']);
+  expect(env.calls.filter(argv => !['run-activity', 'run-results'].includes(argv[2]!)).map(argv => argv[2])).toEqual(['role-info']);
   await ui.press({ key: 'role-cancel' });
-  expect(env.calls.filter(argv => argv[2] !== 'run-activity').map(argv => argv[2])).toEqual(['role-info']);
+  expect(env.calls.filter(argv => !['run-activity', 'run-results'].includes(argv[2]!)).map(argv => argv[2])).toEqual(['role-info']);
   await ui.press({ key: 'manage-roles' });
   await ui.press({ key: 'role-status-2' });
   await ui.press({ key: 'role-save' });
@@ -312,6 +331,7 @@ test('岗位编辑取消不写入，保存携带进入时的版本并保留个�
   expect((await ui.find({ key: 'role' }))?.props.value).toBe('合成岗位');
   expect((await ui.find({ key: 'role' }))?.props.options).toContainEqual({ value: '合成岗位', label: '合成岗位 · 当前范围外' });
   expect(await ui.find({ type: 'Text', text: /在当前范围外/ })).toBeDefined();
+  await ui.press({ key: 'show-stages' });
   expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeDefined();
   await ui.unmount();
 });
@@ -340,6 +360,7 @@ for (const outcome of ['success', 'conflict'] as const) {
     env.files[runFile(root, 'newer-run')] = JSON.stringify(newRun('newer-run', '2026-10-22T01:00:01.000Z'));
     await open($);
     const ui = await mount($);
+    await ui.press({ key: 'show-records' });
     await ui.select({ key: 'run', value: 'native-test' });
     await ui.press({ key: 'manage-roles' });
     await ui.press({ key: 'role-status-3' });
@@ -364,6 +385,7 @@ for (const outcome of ['success', 'conflict'] as const) {
     expect(env.calls.filter(argv => argv[2] === 'role-set')).toHaveLength(1);
     expect(await ui.find({ key: 'follow-latest' })).toBeDefined();
     await ui.press({ key: 'follow-latest' });
+    await ui.press({ key: 'show-records' });
     expect((await ui.find({ key: 'run' }))?.props.value).toBe('newer-run');
     expect(await ui.find({ type: 'Text', text: /^管理岗位$/ })).toBeUndefined();
     await ui.unmount();
@@ -374,6 +396,7 @@ test('切换工作区清理候选详情、岗位草稿与旧快照，坏台账�
   const env = setup(on);
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-stages' });
   await ui.press({ key: 'stage-talking' });
   await ui.press({ key: (await ui.find({ type: 'Button', text: /^合成甲$/ }))!.key! });
   const other = '/synthetic-other-workspace';
@@ -382,6 +405,7 @@ test('切换工作区清理候选详情、岗位草稿与旧快照，坏台账�
   await open($, other);
   expect(await ui.find({ type: 'Code', text: '私密备注' })).toBeUndefined();
   expect(await ui.find({ key: 'candidate-back' })).toBeUndefined();
+  await ui.press({ key: 'show-stages' });
   expect(await ui.find({ type: 'Text', text: /候选人阶段 · 共 未知 条/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /CSV 表头必须按约定排列九列/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /^synthetic-other-workspace$/ })).toBeDefined();
@@ -401,6 +425,7 @@ test('在招、关注、全部和岗位搜索共用统计范围，未知岗位�
   env.files[`${root}/02-sourcing/dedup-ledger.csv`] += '\n2,合成乙,关闭岗位,,B,待初筛,test,,\n3,合成丙,未知岗位,,B,初筛通过,test,,';
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-stages' });
   expect(await ui.find({ type: 'Text', text: /共 2 条/ })).toBeDefined();
   expect((await ui.find({ key: 'role' }))?.props.options).toContainEqual({ value: '未知岗位', label: '未知岗位 · 状态未知' });
   expect((await ui.find({ key: 'role' }))?.props.options).not.toContainEqual({ value: '关闭岗位', label: '关闭岗位 · 已关闭' });
@@ -471,6 +496,7 @@ test('刷新后已选岗位消失保留选择并显示未知，空范围和无�
   const env = setup(on);
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-stages' });
   await ui.input({ key: 'role-search', text: '找不到' });
   expect(await ui.find({ type: 'Text', text: /没有匹配的岗位/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /共 1 条/ })).toBeDefined();
@@ -489,22 +515,24 @@ test('刷新后已选岗位消失保留选择并显示未知，空范围和无�
   await ui.unmount();
 });
 
-test('旧任务未记录与新任务零人区分，结果正文按需读取且不常驻快照', async ($, on) => {
+test('首页与结果页区分旧任务未记录和新任务零人，结果不常驻快照', async ($, on) => {
   const env = setup(on);
   setResults(env, null, 'native-test', root, 0);
   await open($);
   const ui = await mount($);
+  expect(await ui.find({ type: 'Text', text: /尚未记录候选人处理结果，需确认人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeUndefined();
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(1);
+  await ui.press({ key: 'show-records' });
   expect((await ui.find({ key: 'run-results' }))?.text).toContain('未记录');
-  expect((await ui.find({ key: 'run-decisions' }))?.text).toContain('未记录');
-  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(0);
   await ui.press({ key: 'run-results' });
   expect(await ui.find({ type: 'Text', text: /尚未记录候选人处理结果，人数未知/ })).toBeDefined();
   expect(env.calls.at(-1)?.slice(2)).toEqual(['run-results', '--workspace', root, '--run', 'native-test']);
   await ui.press({ key: 'results-back' });
   setResults(env, []);
   await env.clock.advance(2000);
-  expect((await ui.find({ type: 'Button', text: '0 人' }))?.text).toBe('0 人');
-  expect(await ui.find({ type: 'Text', text: '本轮已记录' })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeDefined();
+  expect((await ui.find({ key: 'run-results' }))?.text).toContain('本轮已记录 0 人');
   await ui.press({ key: 'run-results' });
   expect(await ui.find({ type: 'Text', text: /本轮已记录 0 人，尚无候选人处理结果/ })).toBeDefined();
   expect(env.latest?.snapshot?.runs?.[0]).not.toHaveProperty('results');
@@ -519,10 +547,11 @@ test('结果按人分组并优先未消解确认，同人其他步骤none不冲�
   setResults(env, rows);
   await open($);
   const ui = await mount($);
-  expect(await ui.find({ type: 'Text', text: '本轮已记录' })).toBeDefined();
-  expect(await ui.find({ type: 'Button', text: /^3 人$/ })).toBeDefined();
-  expect(await ui.find({ type: 'Text', text: '需你确认' })).toBeDefined();
-  expect(await ui.find({ type: 'Button', text: /^1 人$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^本轮需确认 1 人$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Button', text: /^合成甲$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^未入账乙$/ })).toBeUndefined();
+  await ui.press({ key: 'show-records' });
+  expect((await ui.find({ key: 'run-results' }))?.text).toContain('本轮已记录 3 人');
   await ui.press({ key: 'run-results' });
   const summaries = await ui.findAll({ type: 'Text', text: /^(合成甲|未入账乙|普通丙)$/ });
   expect(summaries.map(item => item.text)).toEqual(['合成甲', '未入账乙', '普通丙']);
@@ -540,6 +569,7 @@ test('结果按人分组并优先未消解确认，同人其他步骤none不冲�
   expect(await ui.find({ type: 'Button', text: /^合成甲$/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /^未入账乙$/ })).toBeUndefined();
   await ui.press({ key: (await ui.find({ type: 'Button', text: /^合成甲$/ }))!.key! });
+  await ui.press({ key: 'candidate-background' });
   expect(await ui.find({ type: 'Code', text: '合成背景摘要' })).toBeDefined();
   expect((await ui.find({ key: 'candidate-back' }))?.text).toBe('返回本轮处理记录');
   await ui.press({ key: 'candidate-back' });
@@ -571,7 +601,7 @@ test('同毫秒同人数结果更正仍自动刷新，纯步骤变化不重读�
   expect(await ui.find({ type: 'Text', text: /每日招聘 · 等待/ })).toBeDefined();
   setResults(env, [{ ...result('screen', candidateId, 'decision'), outcome: '同毫秒已更正结论' }], 'native-test', root, 2);
   await env.clock.advance(2000);
-  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(firstReads + 1);
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(firstReads + 2);
   expect(await ui.find({ type: 'Text', text: /^同毫秒已更正结论$/ })).toBeDefined();
   env.errors['run-results'] = '合成结果读取拒绝';
   setResults(env, [{ ...result('screen', candidateId, 'decision'), outcome: '恢复后的结论' }], 'native-test', root, 3);
@@ -588,12 +618,14 @@ test('同毫秒同人数结果更正仍自动刷新，纯步骤变化不重读�
 
 test('第一次结果读取失败不假零，失败任务明确说明仅展示已记录结果', async ($, on) => {
   const env = setup(on);
-  setResults(env, [result('screen')]);
+  setResults(env, [result('screen', candidateId, 'decision')]);
   const run = JSON.parse(env.files[runFile()]!) as Run;
   env.files[runFile()] = JSON.stringify({ ...run, status: 'failed', reason: '合成任务失败' });
   env.errors['run-results'] = '读取拒绝';
   await open($);
   const ui = await mount($);
+  expect(await ui.find({ type: 'Text', text: /本轮确认列表读取失败.*当前人数未知/ })).toBeDefined();
+  await ui.press({ key: 'show-records' });
   await ui.press({ key: 'run-results' });
   expect(await ui.find({ type: 'Text', text: /任务失败，以下仅为已记录/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /结果读取失败.*当前人数未知/ })).toBeDefined();
@@ -611,6 +643,7 @@ test('异步结果切run、切工作区或关闭后不覆盖当前视图，候�
   setResults(env, [{ ...result('other'), outcome: '另工作区结果哨兵' }], 'native-test', other);
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-records' });
   await ui.select({ key: 'run', value: 'native-test' });
   env.delays['run-results'] = 3000;
   const first = ui.press({ key: 'run-results' });
@@ -626,8 +659,9 @@ test('异步结果切run、切工作区或关闭后不覆盖当前视图，候�
   env.delays['run-results'] = 3000;
   const reload = ui.press({ key: 'results-reload' });
   await env.clock.settle();
-  await open($, other);
   delete env.delays['run-results'];
+  await open($, other);
+  await ui.press({ key: 'show-records' });
   await ui.press({ key: 'run-results' });
   expect(await ui.find({ type: 'Text', text: /^另工作区结果哨兵$/ })).toBeDefined();
   await env.clock.advance(3000);
@@ -642,6 +676,7 @@ test('异步结果切run、切工作区或关闭后不覆盖当前视图，候�
   expect(await ui.find({ key: 'candidate-back' })).toBeUndefined();
   expect(await ui.find({ type: 'Code', text: '私密备注' })).toBeUndefined();
   env.delays['run-results'] = 3000;
+  await ui.press({ key: 'show-records' });
   const closing = ui.press({ key: 'run-results' });
   await env.clock.settle();
   await ui.press({ key: 'results-back' });
@@ -660,6 +695,7 @@ test('默认跟随createdAt最新，其他会话旧任务更新不抢；手选�
   env.files[runFile()] = JSON.stringify({ ...newRun(), ownerSessionId: 'synthetic-session', updatedAt: '2026-10-22T01:00:05.000Z' });
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-records' });
   expect((await ui.find({ type: 'Select', key: 'run' }))?.props.value).toBe('newest-run');
   expect(env.latest?.taskSelection).toEqual({ mode: 'live', runId: 'newest-run' });
   env.files[runFile()] = JSON.stringify({ ...newRun(), ownerSessionId: 'synthetic-session', updatedAt: '2026-10-22T01:00:10.000Z' });
@@ -672,6 +708,7 @@ test('默认跟随createdAt最新，其他会话旧任务更新不抢；手选�
   expect(env.latest?.taskSelection.mode).toBe('pinned');
   expect(await ui.find({ type: 'Text', text: /有新任务，当前阅读保持不变/ })).toBeDefined();
   await ui.press({ key: (await ui.find({ type: 'Button', text: /回到最新/ }))!.key! });
+  await ui.press({ key: 'show-records' });
   expect((await ui.find({ key: 'run' }))?.props.value).toBe('third-run');
   expect(env.latest?.taskSelection.mode).toBe('live');
   await ui.unmount();
@@ -683,8 +720,9 @@ for (const reading of ['activity-candidate', 'results', 'roles', 'steps', 'prefe
     setResults(env, [result('read', candidateId, 'decision')]);
     await open($);
     const ui = await mount($);
-    if (reading === 'activity-candidate') await ui.press({ key: (await ui.find({ type: 'Button', text: /^合成甲$/ }))!.key! });
-    else if (reading === 'results') await ui.press({ key: 'run-results' });
+    if (reading === 'activity-candidate' || reading === 'steps') await ui.press({ key: 'show-records' });
+    if (reading === 'activity-candidate') await ui.press({ key: (await ui.findAll({ type: 'Button', text: /^合成甲$/ })).find(button => button.key?.startsWith('activity-candidate-'))!.key! });
+    else if (reading === 'results') await ui.press({ key: 'run-decisions' });
     else if (reading === 'roles') await ui.press({ key: 'manage-roles' });
     else if (reading === 'steps') await ui.press({ key: 'show-steps' });
     else await ui.press({ key: 'choose-following' });
@@ -705,6 +743,7 @@ for (const reading of ['activity-candidate', 'results', 'roles', 'steps', 'prefe
     else if (reading === 'steps') await ui.press({ key: 'show-steps' });
     else await ui.press({ key: 'choose-following' });
     await env.clock.advance(2000);
+    if (reading === 'results' || reading === 'roles' || reading === 'preferences') await ui.press({ key: 'show-records' });
     expect((await ui.find({ key: 'run' }))?.props.value).toBe('native-test');
     await ui.press({ key: (await ui.find({ type: 'Button', text: /回到最新/ }))!.key! });
     expect(env.latest?.taskSelection).toEqual({ mode: 'live', runId: 'newer-run' });
@@ -739,6 +778,7 @@ test('固定任务移除保留选择与未知，读取期间live任务消失也�
   env.files[runFile(root, 'fallback-run')] = JSON.stringify({ ...newRun('fallback-run'), createdAt: '2026-10-22T00:59:00.000Z' });
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-records' });
   await ui.select({ key: 'run', value: 'native-test' });
   delete env.files[runFile()];
   await env.clock.advance(2000);
@@ -749,6 +789,7 @@ test('固定任务移除保留选择与未知，读取期间live任务消失也�
   env.files[runFile()] = JSON.stringify(newRun());
   await env.clock.advance(2000);
   await ui.press({ key: (await ui.find({ type: 'Button', text: /跟随最新/ }))!.key! });
+  await ui.press({ key: 'show-records' });
   await ui.press({ key: 'show-steps' });
   delete env.files[runFile()];
   await env.clock.advance(2000);
@@ -766,11 +807,12 @@ test('最近动态仅取3条收据而非3人，默认读取一次，真实revisi
   await open($);
   const ui = await mount($);
   expect(env.calls.filter(argv => argv[2] === 'run-activity').map(argv => argv.slice(2))).toEqual([['run-activity', '--workspace', root, '--run', 'native-test']]);
-  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(0);
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(1);
+  await ui.press({ key: 'show-records' });
   expect(await ui.find({ type: 'Text', text: /^最近动态$/ })).toBeDefined();
   expect(await ui.findAll({ type: 'Text', text: /^结论(first|second|third)$/ })).toHaveLength(3);
   expect(await ui.find({ type: 'Text', text: /^结论older$/ })).toBeUndefined();
-  expect(await ui.findAll({ type: 'Button', text: /^合成甲$/ })).toHaveLength(2);
+  expect((await ui.findAll({ type: 'Button', text: /^合成甲$/ })).filter(button => button.key?.startsWith('activity-candidate-'))).toHaveLength(2);
   expect(await ui.find({ type: 'Button', text: /^未入账乙$/ })).toBeUndefined();
   expect(await ui.find({ type: 'Text', text: /^原岗位：原始岗位$/ })).toBeDefined();
   const stableWrites = env.writes;
@@ -795,6 +837,7 @@ test('动态null不假零，读取失败保留陈旧记录，相同失败版本�
   setResults(env, null, 'native-test', root, 0);
   await open($);
   const ui = await mount($);
+  await ui.press({ key: 'show-records' });
   expect(await ui.find({ type: 'Text', text: /尚未记录候选人处理结果，最近动态未知/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /还没有候选人处理记录/ })).toBeUndefined();
   env.errors['run-activity'] = '合成动态读取拒绝';
@@ -826,6 +869,7 @@ test('动态初次读取失败不显示空记录，过旧或串任务版本拒�
   const ui = await mount($);
   expect(await ui.find({ type: 'Text', text: /最近动态读取失败.*最近动态未知/ })).toBeDefined();
   expect(await ui.find({ type: 'Text', text: /还没有候选人处理记录/ })).toBeUndefined();
+  await ui.press({ key: 'show-records' });
   delete env.errors['run-activity'];
   env.activity = { runId: 'native-test', revision: 1, updatedAt: now, items: [result('too-old')] };
   await ui.press({ key: (await ui.find({ type: 'Button', text: '重新读取最近动态' }))!.key! });
@@ -854,9 +898,10 @@ for (const destination of ['run', 'workspace', 'end'] as const) {
     const first = open($);
     await env.clock.settle();
     const ui = await mount($);
+    await ui.press({ key: 'show-records' });
     delete env.delays['run-activity'];
     if (destination === 'run') await ui.select({ key: 'run', value: 'second-run' });
-    else if (destination === 'workspace') await open($, other);
+    else if (destination === 'workspace') { await open($, other); await ui.press({ key: 'show-records' }); }
     else await $.session.end({ reason: 'clear', sessionId: 'synthetic-session', resume: { id: 'synthetic-session' } });
     await env.clock.advance(3000);
     await first;
@@ -894,11 +939,173 @@ test('阅读详情仍显示工作区、任务与源快照陈旧提示，资料�
   await ui.unmount();
 });
 
+test('首页仅列本轮decision前五人，岗位筛选不改名单，资料可返回且每条确认依据可达', async ($, on) => {
+  const env = setup(on);
+  const others = Array.from({ length: 5 }, (_, index) => JSON.stringify([`需确认${index + 1}`, '另一岗位']));
+  const high = JSON.stringify(['高评级人选', '合成岗位']);
+  env.files[`${root}/02-sourcing/dedup-ledger.csv`] += '\n2,高评级人选,合成岗位,,A,已约面试,test,,';
+  setResults(env, [
+    { ...result('first', candidateId, 'decision'), nextAction: '确认业务方向' },
+    { ...result('second', candidateId, 'decision', 'ledger'), nextAction: '确认到岗时间' },
+    result('normal', candidateId, 'none', 'report'),
+    ...others.map((id, index) => result(`other-${index}`, id, 'decision')),
+    result('notice', high, 'notice')
+  ]);
+  await open($);
+  const ui = await mount($);
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 6 人 · 先显示前 5 人/ })).toBeDefined();
+  expect(await ui.findAll({ type: 'Button', text: '查看依据' })).toHaveLength(5);
+  expect(await ui.find({ type: 'Text', text: /^高评级人选$/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^需确认5$/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^A$/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^合成岗位$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^原状态：已回复$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Button', text: '查看资料' })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: '下一步：确认业务方向' })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: '下一步：确认到岗时间' })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^动作first/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^结论first$/ })).toBeUndefined();
+  await ui.press({ key: 'scope-following' });
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 6 人/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /不受下方岗位范围筛选影响/ })).toBeDefined();
+  await ui.press({ key: (await ui.find({ type: 'Button', text: '查看资料' }))!.key! });
+  expect((await ui.find({ key: 'candidate-back' }))?.text).toBe('返回本轮需确认');
+  expect(await ui.find({ type: 'Code', text: '私密备注' })).toBeUndefined();
+  expect(await ui.find({ type: 'Button', text: '打开 PDF' })).toBeDefined();
+  await ui.press({ key: 'candidate-back' });
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 6 人/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^本轮处理记录$/ })).toBeUndefined();
+  await ui.press({ key: (await ui.find({ type: 'Button', text: '查看依据' }))!.key! });
+  expect((await ui.find({ key: 'results-filter-decision' }))?.text).toBe('需你确认 · 已选');
+  expect(await ui.find({ type: 'Text', text: '下一步：确认业务方向' })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: '下一步：确认到岗时间' })).toBeDefined();
+  await ui.press({ key: 'results-back' });
+  await ui.press({ key: 'run-decisions' });
+  expect(await ui.find({ type: 'Text', text: /^需确认5$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^高评级人选$/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test('首页自动确认列表不固定阅读且只在run或revision变化时重读，失败版本隐藏旧确认', async ($, on) => {
+  const env = setup(on);
+  setResults(env, [result('initial', candidateId, 'decision')]);
+  await open($);
+  const ui = await mount($);
+  const writes = env.writes;
+  await env.clock.advance(6000);
+  expect(env.writes).toBe(writes);
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(1);
+  const nextId = 'next-run';
+  env.files[runFile(root, nextId)] = JSON.stringify(newRun(nextId, '2026-10-22T01:00:01.000Z'));
+  setResults(env, [{ ...result('next', JSON.stringify(['新轮人选', '合成岗位']), 'decision'), updatedAt: '2026-10-22T01:00:01.000Z' }], nextId);
+  await env.clock.advance(2000);
+  expect(env.latest?.taskSelection).toEqual({ mode: 'live', runId: nextId });
+  expect(await ui.find({ type: 'Text', text: /^新轮人选$/ })).toBeDefined();
+  expect(await ui.find({ type: 'Button', text: /^合成甲$/ })).toBeUndefined();
+  expect(await ui.find({ key: 'follow-latest' })).toBeUndefined();
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(2);
+  env.errors['run-results'] = '确认列表暂未读取';
+  setResults(env, [{ ...result('next', JSON.stringify(['新轮人选', '合成岗位']), 'decision'), updatedAt: '2026-10-22T01:00:01.000Z', nextAction: '确认新版本要求' }], nextId, root, 2);
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: /确认列表读取失败.*当前人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^新轮人选$/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  const failedWrites = env.writes;
+  await env.clock.advance(4000);
+  expect(env.writes).toBe(failedWrites);
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(3);
+  delete env.errors['run-results'];
+  await ui.press({ key: 'confirmations-reload' });
+  expect(await ui.find({ type: 'Text', text: '下一步：确认新版本要求' })).toBeDefined();
+  env.errors['run-results'] = '空版本的结果读取失败';
+  setResults(env, [], nextId, root, 3);
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^新轮人选$/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  setResults(env, null, nextId, root, 4);
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: /尚未记录候选人处理结果，需确认人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test('首页确认仅显示与正常摘要同版本的结果，超前版本等摘要刷新且更新中不露旧下一步', async ($, on) => {
+  const env = setup(on);
+  setResults(env, [{ ...result('current', candidateId, 'decision'), nextAction: '原版本下一步' }]);
+  const future = { ...result('future', candidateId, 'decision'), nextAction: '新版本下一步' };
+  env.results = { runId: 'native-test', revision: 2, updatedAt: now, results: [future] };
+  await open($);
+  const ui = await mount($);
+  expect(await ui.find({ type: 'Text', text: /确认记录版本超前.*当前人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeUndefined();
+  const writes = env.writes;
+  await env.clock.advance(4000);
+  expect(env.writes).toBe(writes);
+  expect(env.calls.filter(argv => argv[2] === 'run-results')).toHaveLength(1);
+  env.results = null;
+  setResults(env, [future], 'native-test', root, 2);
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: '下一步：新版本下一步' })).toBeDefined();
+  env.delays['run-results'] = 3000;
+  setResults(env, [{ ...future, nextAction: '再次更新的下一步' }], 'native-test', root, 3);
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: /正在更新本轮确认列表，当前人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  expect(await ui.find({ type: 'Text', text: /本轮需确认 0 人/ })).toBeUndefined();
+  await env.clock.advance(3000);
+  expect(await ui.find({ type: 'Text', text: '下一步：再次更新的下一步' })).toBeDefined();
+  const valid = env.files[runFile()]!;
+  env.files[runFile()] = '{';
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: /任务摘要未能读取最新记录，需确认人数未知/ })).toBeDefined();
+  expect(await ui.find({ type: 'Text', text: /^下一步：/ })).toBeUndefined();
+  env.files[runFile()] = valid;
+  await env.clock.advance(2000);
+  expect(await ui.find({ type: 'Text', text: '下一步：再次更新的下一步' })).toBeDefined();
+  await ui.unmount();
+});
+
+for (const destination of ['run', 'workspace', 'end'] as const) {
+  test(`首页确认旧请求不会串入当前视图：${destination}`, async ($, on) => {
+    const env = setup(on);
+    on('session.end', ($, e) => ({ sessionId: e.sessionId }));
+    const other = '/synthetic-other-workspace';
+    addWorkspace(env, other);
+    env.files[runFile(root, 'second-run')] = JSON.stringify({ ...newRun('second-run', '2026-10-22T00:59:00.000Z'), updatedAt: now });
+    setResults(env, [result('old', JSON.stringify(['旧确认人选', '合成岗位']), 'decision')]);
+    setResults(env, [result('second', JSON.stringify(['第二轮确认人选', '合成岗位']), 'decision')], 'second-run');
+    setResults(env, [result('other', JSON.stringify(['另一工作区确认人选', '合成岗位']), 'decision')], 'native-test', other);
+    env.delays['run-results'] = 3000;
+    const first = open($);
+    await env.clock.settle();
+    const ui = await mount($);
+    delete env.delays['run-results'];
+    if (destination === 'run') {
+      await ui.press({ key: 'show-records' });
+      await ui.select({ key: 'run', value: 'second-run' });
+      await ui.press({ key: 'show-records' });
+    } else if (destination === 'workspace') await open($, other);
+    else await $.session.end({ reason: 'clear', sessionId: 'synthetic-session', resume: { id: 'synthetic-session' } });
+    await env.clock.advance(3000);
+    await first;
+    expect(await ui.find({ type: 'Text', text: /^旧确认人选$/ })).toBeUndefined();
+    if (destination === 'run') expect(await ui.find({ type: 'Text', text: /^第二轮确认人选$/ })).toBeDefined();
+    else if (destination === 'workspace') expect(await ui.find({ type: 'Text', text: /^另一工作区确认人选$/ })).toBeDefined();
+    else expect(env.latest?.confirmations).toBeNull();
+    await ui.unmount();
+  });
+}
+
 for (const surface of ['desktop', 'terminal'] as const) {
   test(`窄栏阶段分两列，正常宽度三列；焦点在对话侧仍同步：${surface}`, async ($, on) => {
     const env = setup(on);
     await open($);
     const ui = await mount($, surface);
+    await ui.press({ key: 'show-stages' });
     const stageRows = (element: RenderElement): number[] => {
       const children = 'children' in element ? element.children ?? [] : [];
       const stageCount = children.filter(child => typeof child !== 'string' && child.type === 'Box' && child.children?.some(item => typeof item !== 'string' && item.type === 'Button' && item.props.key.startsWith('stage-'))).length;

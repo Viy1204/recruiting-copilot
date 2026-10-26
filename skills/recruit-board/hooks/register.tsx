@@ -7,7 +7,7 @@ const PANE = 'recruiting-board';
 type Selection = RecruitingBoardState['selection'];
 type PreferenceChange = { kind: 'scope'; value: Selection['scope'] } | { kind: 'role'; value: string } | { kind: 'following'; value: string };
 type ResultsPanel = Extract<RecruitingBoardPanel, { kind: 'results' }>;
-const initial: RecruitingBoardState = { snapshot: null, panel: null, error: null, workspaceRoot: null, selection: { scope: 'active', following: [], role: '', query: '', editor: null, message: null }, taskSelection: { mode: 'live', runId: null }, activity: null, stage: null, sessionId: null, showSteps: false, showDetails: false };
+const initial: RecruitingBoardState = { snapshot: null, panel: null, error: null, workspaceRoot: null, selection: { scope: 'active', following: [], role: '', query: '', editor: null, message: null }, taskSelection: { mode: 'live', runId: null }, activity: null, confirmations: null, stage: null, sessionId: null, showRecords: false, showStages: false, showSteps: false, showDetails: false };
 const board = atom({ plugin: 'recruiting-board', key: 'board' } as const, initial);
 const time = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未知';
 const within = (root: string, target: string) => {
@@ -108,10 +108,10 @@ function resultRevision(run: RunSummary | undefined) {
 }
 
 function withSnapshot(current: RecruitingBoardState, snapshot: BoardSnapshot): RecruitingBoardState {
-  const hold = current.panel !== null || current.showSteps || current.showDetails || current.selection.editor !== null;
+  const hold = current.panel !== null || current.showRecords || current.showDetails || current.selection.editor !== null;
   const task = selectTask(snapshot.runs, current.taskSelection, hold);
   const taskSelection = hold && task.newerRunId && task.selection.mode === 'live' ? { ...task.selection, mode: 'pinned' as const } : task.selection;
-  return { ...current, snapshot, error: null, taskSelection, activity: current.activity?.runId === taskSelection.runId ? current.activity : null };
+  return { ...current, snapshot, error: null, taskSelection, activity: current.activity?.runId === taskSelection.runId ? current.activity : null, confirmations: task.run && current.confirmations?.runId === taskSelection.runId ? current.confirmations : null };
 }
 
 async function loadActivity($: EngineInterface, force = false) {
@@ -158,6 +158,26 @@ function groupResults(results: RunResult[]) {
   return [...groups.values()].sort((a, b) => order[a.attention] - order[b.attention] || b.updatedAt.localeCompare(a.updatedAt));
 }
 
+async function loadConfirmations($: EngineInterface, force = false) {
+  const held = await read($, board);
+  const run = held.snapshot?.runs?.find(run => run.id === held.taskSelection.runId);
+  if (!held.workspaceRoot || !run || root !== held.workspaceRoot) return;
+  const workspaceRoot = held.workspaceRoot;
+  const revision = resultRevision(run);
+  if (!force && held.confirmations?.runId === run.id && held.confirmations.revision === revision) return;
+  const requestId = ++requestSequence;
+  await update($, board, (current): RecruitingBoardState => root !== workspaceRoot || current.workspaceRoot !== workspaceRoot || current.taskSelection.runId !== run.id || resultRevision(current.snapshot?.runs?.find(item => item.id === run.id)) !== revision ? current : ({ ...current, confirmations: { requestId, runId: run.id, revision, status: 'loading', data: current.confirmations?.runId === run.id ? current.confirmations.data : null, error: null } }));
+  const active = await read($, board);
+  if (root !== workspaceRoot || active.workspaceRoot !== workspaceRoot || active.taskSelection.runId !== run.id || active.confirmations?.requestId !== requestId || resultRevision(active.snapshot?.runs?.find(item => item.id === run.id)) !== revision) return;
+  try {
+    const data = await action($, workspaceRoot, 'run-results', ['--run', run.id]);
+    if (data.runId !== run.id || data.revision !== revision) throw new Error(data.runId === run.id && revision !== null && data.revision > revision ? '确认记录版本超前，等待任务摘要刷新。' : '确认记录不属于当前任务版本，请重新读取。');
+    await update($, board, (current): RecruitingBoardState => root !== workspaceRoot || current.workspaceRoot !== workspaceRoot || current.taskSelection.runId !== run.id || current.confirmations?.requestId !== requestId || resultRevision(current.snapshot?.runs?.find(item => item.id === run.id)) !== revision ? current : ({ ...current, confirmations: { ...current.confirmations, status: 'ready', data, error: null } }));
+  } catch (error) {
+    await update($, board, (current): RecruitingBoardState => root !== workspaceRoot || current.workspaceRoot !== workspaceRoot || current.taskSelection.runId !== run.id || current.confirmations?.requestId !== requestId || resultRevision(current.snapshot?.runs?.find(item => item.id === run.id)) !== revision ? current : ({ ...current, confirmations: { ...current.confirmations, status: current.confirmations.data ? 'stale' : 'error', error: `本轮确认列表读取失败：${messageOf(error)}` } }));
+  }
+}
+
 async function loadResults($: EngineInterface) {
   const held = await read($, board);
   const panel = held.panel;
@@ -178,19 +198,21 @@ async function loadResults($: EngineInterface) {
   }
 }
 
-async function openResults($: EngineInterface, runId: string, filter: ResultsPanel['filter']) {
+async function openResults($: EngineInterface, runId: string, filter: ResultsPanel['filter'], candidateId?: string) {
   const held = await read($, board);
   if (!held.workspaceRoot || held.taskSelection.runId !== runId) return;
   const workspaceRoot = held.workspaceRoot;
   const requestId = ++requestSequence;
-  await update($, board, (current): RecruitingBoardState => current.workspaceRoot !== workspaceRoot || current.taskSelection.runId !== runId ? current : ({ ...current, panel: { kind: 'results', requestId, runId, revision: null, status: 'loading', data: null, filter, expanded: [], message: null } }));
+  await update($, board, (current): RecruitingBoardState => current.workspaceRoot !== workspaceRoot || current.taskSelection.runId !== runId ? current : ({ ...current, panel: { kind: 'results', requestId, runId, revision: null, status: 'loading', data: null, filter, expanded: candidateId ? [candidateId] : [], message: null } }));
   await loadResults($);
 }
 
 async function selectRun($: EngineInterface, runId: string) {
+  const held = await read($, board);
+  if (held.panel?.kind === 'roles' && held.panel.status === 'saving') return;
   const requestId = ++requestSequence;
-  await update($, board, (current): RecruitingBoardState => ({ ...current, taskSelection: { mode: 'pinned', runId }, activity: current.activity?.runId === runId ? current.activity : null, panel: current.panel?.kind === 'results' ? { kind: 'results', requestId, runId, revision: null, status: 'loading', data: null, filter: current.panel.filter, expanded: [], message: null } : null }));
-  await Promise.all([loadResults($), loadActivity($)]);
+  await update($, board, (current): RecruitingBoardState => current.panel?.kind === 'roles' && current.panel.status === 'saving' ? current : ({ ...current, taskSelection: { mode: 'pinned', runId }, activity: current.activity?.runId === runId ? current.activity : null, confirmations: current.confirmations?.runId === runId ? current.confirmations : null, panel: current.panel?.kind === 'results' ? { kind: 'results', requestId, runId, revision: null, status: 'loading', data: null, filter: current.panel.filter, expanded: [], message: null } : null }));
+  await Promise.all([loadResults($), loadActivity($), loadConfirmations($)]);
 }
 
 async function followLatest($: EngineInterface) {
@@ -199,9 +221,9 @@ async function followLatest($: EngineInterface) {
   await update($, board, (current): RecruitingBoardState => {
     if (current.panel?.kind === 'roles' && current.panel.status === 'saving') return current;
     const taskSelection = selectTask(current.snapshot?.runs ?? null, { mode: 'live', runId: null }).selection;
-    return { ...current, taskSelection, activity: current.activity?.runId === taskSelection.runId ? current.activity : null, panel: null, showSteps: false, showDetails: false, selection: { ...current.selection, editor: null } };
+    return { ...current, taskSelection, activity: current.activity?.runId === taskSelection.runId ? current.activity : null, confirmations: current.confirmations?.runId === taskSelection.runId ? current.confirmations : null, panel: null, showRecords: false, showSteps: false, showDetails: false, selection: { ...current.selection, editor: null } };
   });
-  await loadActivity($);
+  await Promise.all([loadActivity($), loadConfirmations($)]);
 }
 
 async function candidateBack($: EngineInterface) {
@@ -213,14 +235,14 @@ async function candidateBack($: EngineInterface) {
   if (returnTo && (returnTo.status !== 'ready' || returnTo.revision !== resultRevision(held.snapshot?.runs?.find(run => run.id === returnTo.runId)))) await loadResults($);
 }
 
-async function openCandidate($: EngineInterface, candidateId: string, fromActivity = false) {
+async function openCandidate($: EngineInterface, candidateId: string, origin: Extract<RecruitingBoardPanel, { kind: 'candidate' }>['origin'] = 'stages') {
   const held = await read($, board);
   if (!held.workspaceRoot) return;
   const workspaceRoot = held.workspaceRoot;
   const returnTo = held.panel?.kind === 'results' ? held.panel : held.panel?.kind === 'candidate' ? held.panel.returnTo : null;
   if (!held.snapshot?.candidates?.some(candidate => candidate.id === candidateId)) return;
   const requestId = ++requestSequence;
-  await update($, board, (current): RecruitingBoardState => current.workspaceRoot !== workspaceRoot ? current : ({ ...current, panel: { kind: 'candidate', requestId, candidateId, fromActivity: fromActivity || held.panel?.kind === 'candidate' && held.panel.fromActivity, status: 'loading', detail: null, document: null, documentId: null, documentBusy: false, message: null, returnTo } }));
+  await update($, board, (current): RecruitingBoardState => current.workspaceRoot !== workspaceRoot ? current : ({ ...current, panel: { kind: 'candidate', requestId, candidateId, origin: held.panel?.kind === 'candidate' ? held.panel.origin : origin, showBackground: false, status: 'loading', detail: null, document: null, documentId: null, documentBusy: false, message: null, returnTo } }));
   try {
     const detail = await action($, workspaceRoot, 'candidate', ['--candidate', candidateId]);
     await update($, board, (current): RecruitingBoardState => current.workspaceRoot !== workspaceRoot || current.panel?.kind !== 'candidate' || current.panel.requestId !== requestId ? current : ({ ...current, panel: { ...current.panel, status: 'ready', detail } }));
@@ -339,6 +361,7 @@ async function refresh($: EngineInterface) {
     const results = current.panel;
     if (current.workspaceRoot === workspaceRoot) await Promise.all([
       loadActivity($),
+      loadConfirmations($),
       results?.kind === 'results' && results.revision !== resultRevision(snapshot.runs?.find(run => run.id === results.runId)) ? loadResults($) : Promise.resolve()
     ]);
   } catch {
@@ -351,7 +374,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await update($, board, (current): RecruitingBoardState => {
       const { role: legacyRole, runId: legacyRunId, ...normalized } = current as RecruitingBoardState & { role?: string; runId?: string | null };
-      return { ...initial, ...normalized, snapshot: current.snapshot ? { ...current.snapshot, runs: current.snapshot.runs?.map(runSummary) ?? null } : null, selection: current.selection ?? preferences(undefined, legacyRole ?? ''), taskSelection: current.taskSelection ?? (legacyRunId ? { mode: 'pinned', runId: legacyRunId } : initial.taskSelection), activity: null, panel: null };
+      return { ...initial, ...normalized, snapshot: current.snapshot ? { ...current.snapshot, runs: current.snapshot.runs?.map(runSummary) ?? null } : null, selection: current.selection ?? preferences(undefined, legacyRole ?? ''), taskSelection: current.taskSelection ?? (legacyRunId ? { mode: 'pinned', runId: legacyRunId } : initial.taskSelection), activity: null, confirmations: null, panel: null };
     });
     try {
       if (!(await $.command.list()).some(command => command.name === PANE)) {
@@ -410,7 +433,7 @@ export const register: Register = on => {
     root = null;
     refreshing = null;
     openingSequence++;
-    await update($, board, (current): RecruitingBoardState => ({ ...current, panel: null, activity: null }));
+    await update($, board, (current): RecruitingBoardState => ({ ...current, panel: null, activity: null, confirmations: null }));
     return next(e);
   });
 
@@ -461,21 +484,25 @@ export const register: Register = on => {
       const detail = panel.detail;
       return <Box flexDirection="column" gap="md" padding="sm">
         {taskContext}
-        <Button key="candidate-back" plain label={panel.returnTo ? '返回本轮处理记录' : panel.fromActivity ? '返回最近动态' : '返回阶段名单'} onPress={() => { void candidateBack($); }} />
+        <Button key="candidate-back" plain label={panel.returnTo ? '返回本轮处理记录' : panel.origin === 'confirmations' ? '返回本轮需确认' : panel.origin === 'activity' ? '返回最近动态' : '返回阶段名单'} onPress={() => { void candidateBack($); }} />
         <Text size="heading" weight="semibold">{detail?.candidate.name ?? '候选人详情'}</Text>
         {panel.status === 'loading' && <Text dimColor>正在读取候选人资料…</Text>}
         {panel.message && <Text color={panel.status === 'error' ? 'error' : 'warning'}>{panel.message}</Text>}
         {panel.status === 'error' && <Button key="candidate-retry" label="重新读取候选资料" onPress={() => { void openCandidate($, panel.candidateId); }} />}
         {detail && <Box flexDirection="column" gap="sm">
-          <Text>{detail.candidate.role} · {detail.candidate.rating ?? '未评级'} · {detail.candidate.rawStatus ?? '状态未归类'}</Text>
+          <Text>{detail.candidate.role} · {detail.candidate.rawStatus ?? '状态未归类'}</Text>
           {detail.candidate.rawRole !== detail.candidate.role && <Text size="caption" dimColor>原岗位：{detail.candidate.rawRole}</Text>}
-          <Box flexDirection="column" gap="xs"><Text weight="semibold">背景摘要</Text><Code source={detail.background || '台账未记录背景摘要。'} /></Box>
-          <Box flexDirection="column" gap="xs"><Text weight="semibold">备注</Text><Code source={detail.notes || '台账未记录备注。'} /></Box>
+          <Button key="candidate-background" plain label={panel.showBackground ? '背景与评估 · 收起' : '背景与评估 · 展开'} onPress={() => { void update($, board, (current): RecruitingBoardState => current.panel?.kind !== 'candidate' ? current : ({ ...current, panel: { ...current.panel, showBackground: !current.panel.showBackground } })); }} />
+          {panel.showBackground && <Box flexDirection="column" gap="xs">
+            <Text size="caption">原评级：{detail.candidate.rating ?? '未评级'}</Text>
+            <Text weight="semibold">背景摘要</Text><Code source={detail.background || '台账未记录背景摘要。'} />
+            <Text weight="semibold">备注</Text><Code source={detail.notes || '台账未记录备注。'} />
+          </Box>}
           <Text size="caption" dimColor>来源轮次：{detail.sourceRound || '未记录'}</Text>
           {detail.warnings.map(warning => <Text size="caption" color="warning">{warning}</Text>)}
           <Text weight="semibold">关联资料</Text>
           {!detail.documents.length && <Text dimColor>尚无可关联的简历或面试档案。</Text>}
-          {detail.documents.map(document => <Box flexDirection="column" gap="xs" paddingY="xs">
+          {detail.documents.map(document => <Box flexDirection="column" gap="xs" padding="sm" borderStyle="round" borderColor="promptBorder">
             <Text weight="medium">{document.label} · {documentStatuses[document.status]}</Text>
             {document.status !== 'ok' ? <Text size="caption" color="warning">{document.message ?? documentStatuses[document.status]}</Text> : !panel.documentBusy && <Box gap="sm">
               {document.kind !== 'pdf' && <Button key={elementKey('document-read', document.id)} plain label="阅读正文" onPress={() => { void candidateDocument($, document.id); }} />}
@@ -572,63 +599,88 @@ export const register: Register = on => {
     const stageColumns = e.props.bodyColumns < 44 ? 2 : 3;
     const stageRows = Array.from({ length: Math.ceil(view.stages.length / stageColumns) }, (_, index) => view.stages.slice(index * stageColumns, (index + 1) * stageColumns));
     const activity = held.activity?.runId === run?.id ? held.activity : null;
+    const confirmations = held.confirmations?.runId === run?.id ? held.confirmations : null;
+    const confirmationSourceReady = snapshot.sources.runs.status === 'ok';
+    const confirmationReady = confirmationSourceReady && confirmations?.status === 'ready' && confirmations.data !== null && confirmations.data.results !== null && confirmations.data.revision === run?.resultSummary?.revision;
+    const decisions = confirmationReady && run?.resultSummary?.decisions ? groupResults(confirmations?.data?.results ?? []).filter(group => group.attention === 'decision') : [];
     return <Box flexDirection="column" gap="md" padding="sm">
       {taskContext}
       <Box flexDirection="column" gap="sm">
-        {run ? <Box flexDirection="column" gap="sm" padding="sm" borderStyle="single" borderColor="promptBorder">
-          <Box justifyContent="space-between" gap="sm" alignItems="center"><Text size="heading" weight="semibold">{run.label}</Text><Text weight="semibold" color={runColor}>{RUN_LABELS[run.status]}</Text></Box>
-          {run.role && <Text weight="medium">{run.role}</Text>}
-          <Box flexDirection="column" gap="xs">
-            <Text weight="medium">{current ? `${run.status === 'waiting' ? '停留步骤' : run.status === 'running' ? '当前步骤' : '最后步骤'} · ${current.label}` : run.status === 'completed' ? '全部步骤已有完成或跳过记录' : '当前无执行中步骤'}</Text>
-            <Text color={run.status === 'failed' ? 'error' : run.status === 'waiting' ? 'warning' : 'inactive'}>{run.reason ?? current?.reason ?? { running: '按已记录的工作步骤展示。', waiting: '任务等待后续处理。', completed: '本轮已结束，可查看处理记录。', failed: '任务失败，保留最后记录。', cancelled: '任务已取消，保留最后记录。' }[run.status]}</Text>
-          </Box>
-          <Box gap="sm">
-            <Box flexDirection="column" flexGrow={1} flexShrink={1} width="50%" gap="xs" paddingY="xs">
-              <Text weight="medium">本轮已记录</Text>
-              <Button key="run-results" onPress={() => { void openResults($, run.id, 'all'); }}><Text size="heading" weight="semibold">{run.resultSummary === null ? '未记录' : `${run.resultSummary.total} 人`}</Text></Button>
-            </Box>
-            <Box flexDirection="column" flexGrow={1} flexShrink={1} width="50%" gap="xs" paddingY="xs">
-              <Text weight="medium">需你确认</Text>
-              <Button key="run-decisions" variant={run.resultSummary?.decisions ? 'primary' : 'secondary'} onPress={() => { void openResults($, run.id, 'decision'); }}><Text size="heading" weight="semibold">{run.resultSummary === null ? '未记录' : `${run.resultSummary.decisions} 人`}</Text></Button>
-            </Box>
-          </Box>
-          <Text size="caption" dimColor>最后记录 {time(run.updatedAt)}{snapshot.sources.runs.status === 'stale' ? ' · 陈旧' : ''}{run.ownerSessionId === held.sessionId ? ' · 当前会话' : ''}</Text>
-          <Box justifyContent="space-between" gap="sm" alignItems="center">
+        <Text size="heading" weight="semibold">本轮需确认</Text>
+        {run ? <Box flexDirection="column" gap="xs">
+          <Text size="caption" dimColor>{task.newerRunId ? '历史轮次' : '所选轮次'}：{run.label}{run.role ? ` · ${run.role}` : ''} · {time(run.createdAt)}</Text>
+          <Text size="caption" dimColor>确认名单按所选轮次显示，不受下方岗位范围筛选影响。</Text>
+          {!confirmationSourceReady ? <Text color="warning">任务摘要未能读取最新记录，需确认人数未知，暂不显示确认名单。</Text> : run.resultSummary === null ? <Text dimColor>此任务尚未记录候选人处理结果，需确认人数未知。</Text> : run.resultSummary.decisions === 0 ? <Text tabular>本轮需确认 0 人，暂无需你确认的人选。</Text> : confirmationReady ? <Text tabular>本轮需确认 {decisions.length} 人{decisions.length > 5 ? ' · 先显示前 5 人' : ''}</Text> : confirmations?.error ? <Text color="warning">{confirmations.error} 当前人数未知，暂不显示确认名单。</Text> : <Text dimColor>正在更新本轮确认列表，当前人数未知…</Text>}
+          {decisions.slice(0, 5).map(group => {
+            const candidate = snapshot.candidates?.find(candidate => candidate.id === group.candidateId);
+            return <Box key={elementKey('confirmation', group.candidateId)} flexDirection="column" gap="sm" padding="sm" marginTop="sm" borderStyle="round" borderColor="promptBorder">
+              <Box justifyContent="space-between" gap="sm" flexWrap="wrap">
+                {candidate ? <Button key={elementKey('confirmation-candidate', group.candidateId)} plain onPress={() => { void openCandidate($, group.candidateId, 'confirmations'); }}><Text size="heading" weight="semibold">{group.name}</Text></Button> : <Text size="heading" weight="semibold">{group.name}</Text>}
+                <Text size="caption" dimColor>{candidate ? `原状态：${candidateStatus(candidate)}` : '原状态未知'}</Text>
+              </Box>
+              <Text size="caption" dimColor>{candidate?.role ?? group.rawRole}{!candidate ? snapshot.candidates === null ? ' · 台账未读取' : ' · 未入台账' : ''}</Text>
+              {candidate && candidate.rawRole !== candidate.role && <Text size="caption" dimColor>原岗位：{candidate.rawRole}</Text>}
+              <Box flexDirection="column" gap="xs" paddingY="xs">
+                <Text weight="semibold">需要你决定</Text>
+                {group.results.filter(result => result.attention === 'decision' && result.nextAction).map(result => <Text key={elementKey('confirmation-next', result.id)}>下一步：{result.nextAction}</Text>)}
+              </Box>
+              <Box gap="sm" flexWrap="wrap">
+                {candidate && <Button key={elementKey('confirmation-profile', group.candidateId)} variant="secondary" label="查看资料" onPress={() => { void openCandidate($, group.candidateId, 'confirmations'); }} />}
+                <Button key={elementKey('confirmation-evidence', group.candidateId)} plain label="查看依据" onPress={() => { void openResults($, run.id, 'decision', group.candidateId); }} />
+              </Box>
+            </Box>;
+          })}
+          <Button key="run-decisions" plain label={decisions.length > 5 ? `展开全部需确认 · ${decisions.length} 人` : '查看本轮确认依据'} onPress={() => { void openResults($, run.id, 'decision'); }} />
+          {confirmations && (confirmations.status === 'error' || confirmations.status === 'stale') && <Button key="confirmations-reload" plain label="重新读取确认列表" onPress={() => { void loadConfirmations($, true); }} />}
+        </Box> : <Box flexDirection="column" gap="xs"><Text weight="medium">{snapshot.runs === null ? '进度读取失败，任务状态未知' : held.taskSelection.runId ? '所选记录已移除，请选择其他任务' : '尚无任务进度记录'}</Text><Text size="caption" dimColor>{snapshot.runs === null ? '无法确认任务步骤，等待恢复读取。' : held.taskSelection.runId ? '当前任务选择保持不变，人数未知。' : '工作流记录候选处理结果后，会在这里显示本轮需确认的人选。'}</Text></Box>}
+      </Box>
+      {run && <Box flexDirection="column" gap="xs" padding="sm" borderStyle="single" borderColor="promptBorder">
+        <Text weight="semibold">任务进度</Text>
+        <Text size="caption" color={runColor}>{run.label} · {RUN_LABELS[run.status]}{current ? ` · ${current.label}` : ''} · 最后记录 {time(run.updatedAt)}{snapshot.sources.runs.status === 'stale' ? ' · 陈旧' : ''}{run.ownerSessionId === held.sessionId ? ' · 当前会话' : ''}</Text>
+        {(run.status === 'waiting' || run.status === 'failed') && <Text color={run.status === 'failed' ? 'error' : 'warning'}>{run.reason ?? current?.reason ?? (run.status === 'waiting' ? '任务等待后续处理，未记录具体理由。' : '任务失败，未记录具体理由；保留最后记录。')}</Text>}
+      </Box>}
+      <Box flexDirection="column" gap="sm">
+        <Button key="show-records" plain label={held.showRecords ? '执行记录 · 收起' : '执行记录 · 展开'} onPress={() => { void update($, board, (current): RecruitingBoardState => ({ ...current, showRecords: !current.showRecords })); }} />
+        {held.showRecords && <Box flexDirection="column" gap="sm">
+          {runOptions.length > 0 && <Select key="run" label="任务" options={runOptions} value={held.taskSelection.runId ?? ''} onSelect={value => { void selectRun($, value); }} />}
+          {run && <Box flexDirection="column" gap="xs">
+            <Button key="run-results" plain label={`本轮已记录 ${run.resultSummary === null ? '人数未知（未记录）' : `${run.resultSummary.total} 人`} · 查看处理记录`} onPress={() => { void openResults($, run.id, 'all'); }} />
             <Text tabular>完成 {finished}/{run.steps.length} · 跳过 {skipped}</Text>
             <Button key="show-steps" plain label={held.showSteps ? '收起全部步骤' : '查看全部步骤'} onPress={() => { void update($, board, (current): RecruitingBoardState => ({ ...current, showSteps: !current.showSteps })); }} />
-          </Box>
-          {held.showSteps && <Box flexDirection="column" gap="xs">{run.steps.map((step, index) => <Box gap="sm" paddingY="xs" justifyContent="space-between"><Text>{index + 1}. {step.label}{step.reason ? ` · ${step.reason}` : ''}</Text><Text size="caption" color={stepColors[step.status]}>{step.status === 'running' && run.status === 'waiting' ? '当前 · 等待' : step.status === 'running' && run.status === 'cancelled' ? '已停止' : step.status === 'running' && run.status === 'failed' ? '已中断' : STEP_LABELS[step.status]}</Text></Box>)}</Box>}
-        </Box> : <Box flexDirection="column" gap="xs" padding="sm" borderStyle="single" borderColor="promptBorder"><Text weight="medium">{snapshot.runs === null ? '进度读取失败，任务状态未知' : held.taskSelection.runId ? '所选记录已移除，请选择其他任务' : '尚无任务进度记录'}</Text><Text size="caption" dimColor>{snapshot.runs === null ? '无法确认任务步骤，等待恢复读取。' : held.taskSelection.runId ? '当前任务选择保持不变，人数未知。' : view.total === null ? '候选统计等待读取；工作流开始记录后会在这里显示步骤。' : '候选统计已接入；工作流开始记录后会在这里显示步骤。'}</Text></Box>}
-        {runOptions.length > 0 && <Select key="run" label="任务" options={runOptions} value={held.taskSelection.runId ?? ''} onSelect={value => { void selectRun($, value); }} />}
+            {held.showSteps && <Box flexDirection="column" gap="xs">{run.steps.map((step, index) => <Box gap="sm" paddingY="xs" justifyContent="space-between"><Text>{index + 1}. {step.label}{step.reason ? ` · ${step.reason}` : ''}</Text><Text size="caption" color={stepColors[step.status]}>{step.status === 'running' && run.status === 'waiting' ? '当前 · 等待' : step.status === 'running' && run.status === 'cancelled' ? '已停止' : step.status === 'running' && run.status === 'failed' ? '已中断' : STEP_LABELS[step.status]}</Text></Box>)}</Box>}
+          </Box>}
+          {run && <Box flexDirection="column" gap="sm">
+            <Box justifyContent="space-between" gap="sm"><Text weight="semibold">最近动态</Text><Text size="caption" dimColor>最多 3 条记录</Text></Box>
+            {activity?.status === 'loading' && <Text size="caption" dimColor>{activity.data ? '正在更新，以下保留最后记录…' : '正在读取最近记录…'}</Text>}
+            {activity?.message && <Text size="caption" color="warning">{activity.message}{activity.data ? ' 以下保留上次记录（陈旧）。' : ' 最近动态未知。'}</Text>}
+            {activity?.data?.items === null && <Text size="caption" dimColor>此任务尚未记录候选人处理结果，最近动态未知。</Text>}
+            {activity?.data?.items?.length === 0 && <Text size="caption" dimColor>此任务还没有候选人处理记录。</Text>}
+            {activity?.data?.items?.map(item => {
+              const [name, rawRole] = JSON.parse(item.candidateId) as [string, string];
+              const available = snapshot.candidates?.some(candidate => candidate.id === item.candidateId);
+              return <Box key={elementKey('activity-record', item.id)} flexDirection="column" gap="xs" paddingY="sm" borderStyle="single" borderColor="promptBorder" paddingX="sm">
+                <Box justifyContent="space-between" gap="sm">
+                  {available ? <Button key={elementKey('activity-candidate', item.id)} plain onPress={() => { void openCandidate($, item.candidateId, 'activity'); }}><Text weight="semibold">{name}</Text></Button> : <Text weight="semibold">{name}</Text>}
+                  <Text size="caption" color={item.attention === 'none' ? 'inactive' : 'warning'}>{item.attention === 'decision' ? '需你确认' : item.attention === 'notice' ? '提醒' : '已记录'}</Text>
+                </Box>
+                <Text size="caption" dimColor>原岗位：{rawRole}</Text>
+                <Text weight="medium">{item.action}</Text>
+                <Text>{item.outcome}</Text>
+                {item.nextAction && <Text size="caption">下一步：{item.nextAction}</Text>}
+                <Text size="caption" dimColor>{time(item.updatedAt)}</Text>
+                {!available && <Text size="caption" dimColor>{snapshot.candidates === null ? '台账未读取，暂无法打开候选资料。' : '未入台账，保留此条处理记录。'}</Text>}
+              </Box>;
+            })}
+            {activity?.data && snapshot.sources.runs.status === 'stale' && <Text size="caption" color="warning">最近动态沿用最后成功记录（陈旧）。</Text>}
+            {activity && activity.status !== 'loading' && activity.status !== 'ready' && <Button key="activity-reload" plain label="重新读取最近动态" onPress={() => { void loadActivity($, true); }} />}
+          </Box>}
+        </Box>}
+        {!held.showRecords && activity?.message && <Text size="caption" color="warning">{activity.message}{activity.data ? ' 最近动态保留上次记录（陈旧），可展开执行记录重试。' : ' 最近动态未知，可展开执行记录重试。'}</Text>}
       </Box>
-      {run && <Box flexDirection="column" gap="sm">
-        <Box justifyContent="space-between" gap="sm"><Text weight="semibold">最近动态</Text><Text size="caption" dimColor>最多 3 条记录</Text></Box>
-        {activity?.status === 'loading' && <Text size="caption" dimColor>{activity.data ? '正在更新，以下保留最后记录…' : '正在读取最近记录…'}</Text>}
-        {activity?.message && <Text size="caption" color="warning">{activity.message}{activity.data ? ' 以下保留上次记录（陈旧）。' : ' 最近动态未知。'}</Text>}
-        {activity?.data?.items === null && <Text size="caption" dimColor>此任务尚未记录候选人处理结果，最近动态未知。</Text>}
-        {activity?.data?.items?.length === 0 && <Text size="caption" dimColor>此任务还没有候选人处理记录。</Text>}
-        {activity?.data?.items?.map(item => {
-          const [name, rawRole] = JSON.parse(item.candidateId) as [string, string];
-          const available = snapshot.candidates?.some(candidate => candidate.id === item.candidateId);
-          return <Box key={elementKey('activity-record', item.id)} flexDirection="column" gap="xs" paddingY="sm" borderStyle="single" borderColor="promptBorder" paddingX="sm">
-            <Box justifyContent="space-between" gap="sm">
-              {available ? <Button key={elementKey('activity-candidate', item.id)} plain onPress={() => { void openCandidate($, item.candidateId, true); }}><Text weight="semibold">{name}</Text></Button> : <Text weight="semibold">{name}</Text>}
-              <Text size="caption" color={item.attention === 'none' ? 'inactive' : 'warning'}>{item.attention === 'decision' ? '需你确认' : item.attention === 'notice' ? '提醒' : '已记录'}</Text>
-            </Box>
-            <Text size="caption" dimColor>原岗位：{rawRole}</Text>
-            <Text weight="medium">{item.action}</Text>
-            <Text>{item.outcome}</Text>
-            {item.nextAction && <Text size="caption">下一步：{item.nextAction}</Text>}
-            <Text size="caption" dimColor>{time(item.updatedAt)}</Text>
-            {!available && <Text size="caption" dimColor>{snapshot.candidates === null ? '台账未读取，暂无法打开候选资料。' : '未入台账，保留此条处理记录。'}</Text>}
-          </Box>;
-        })}
-        {activity?.data && snapshot.sources.runs.status === 'stale' && <Text size="caption" color="warning">最近动态沿用最后成功记录（陈旧）。</Text>}
-        {activity && activity.status !== 'loading' && activity.status !== 'ready' && <Button key="activity-reload" plain label="重新读取最近动态" onPress={() => { void loadActivity($, true); }} />}
-      </Box>}
-      <Box flexDirection="column" gap="xs">
-        <Text weight="semibold">候选人阶段 · 共 {view.total === null ? '未知' : view.total} 条</Text>
-        <Box gap="sm" flexWrap="wrap">{ROLE_SCOPES.map(item => <Button key={`scope-${item.id}`} plain label={selection.scope === item.id ? `${item.label} · 已选` : item.label} onPress={() => { void changePreference($, { kind: 'scope', value: item.id as Selection['scope'] }); }} />)}</Box>
+      <Box flexDirection="column" gap="sm" padding="sm" borderStyle="single" borderColor="promptBorder">
+        <Text size="heading" weight="semibold">岗位与人选</Text>
+        <Text size="caption" dimColor>按岗位查找人选与资料</Text>
+        <Box gap="sm" flexWrap="wrap">{ROLE_SCOPES.map(item => <Button key={`scope-${item.id}`} variant={selection.scope === item.id ? 'primary' : 'secondary'} label={selection.scope === item.id ? `${item.label} · 已选` : item.label} onPress={() => { void changePreference($, { kind: 'scope', value: item.id as Selection['scope'] }); }} />)}</Box>
         <Input key="role-search" label="搜索岗位" placeholder="搜索当前范围的岗位" value={selection.query} onInput={value => { void update($, board, (current): RecruitingBoardState => ({ ...current, selection: { ...current.selection, query: value } })); }} onSubmit={value => { void update($, board, (current): RecruitingBoardState => ({ ...current, selection: { ...current.selection, query: value } })); }} />
         <Select key="role" label="岗位" options={roleOptions} value={selection.role} onSelect={value => { void changePreference($, { kind: 'role', value }); }} />
         <Text size="caption" dimColor>{view.label}</Text>
@@ -645,16 +697,20 @@ export const register: Register = on => {
         {selection.message && <Text size="caption" color="warning">{selection.message}</Text>}
         <Button key="manage-roles" plain label="管理岗位" onPress={() => { void manageRoles($); }} />
         {snapshot.sources.ledger.status === 'stale' && <Text size="caption" color="warning">以下保留上次候选记录（陈旧）。</Text>}
-        {stageRows.map(stages => <Box gap="sm">{stages.map(stage => <Box flexDirection="column" flexGrow={1} flexShrink={1} width={stageColumns === 2 ? '50%' : '33%'} padding="sm" gap="xs" borderStyle="single" borderColor={held.stage === stage.id ? 'claude' : 'promptBorder'}>
-          <Button key={`stage-${stage.id}`} plain label={`${stage.label}${held.stage === stage.id ? ' · 收起' : ''}`} onPress={() => { void update($, board, (current): RecruitingBoardState => ({ ...current, stage: current.stage === stage.id ? null : stage.id })); }} />
-          <Text size="heading" weight="semibold" tabular>{stage.count === null ? '—' : stage.count}</Text>
-        </Box>)}</Box>)}
-        {unclassified > 0 && <Text size="caption" dimColor>含 {unclassified} 条未归类候选记录，保留原状态。</Text>}
+        <Button key="show-stages" plain label={held.showStages ? '候选阶段 · 收起' : '候选阶段 · 展开'} onPress={() => { void update($, board, (current): RecruitingBoardState => ({ ...current, showStages: !current.showStages })); }} />
         {snapshot.sources.context.status !== 'ok' && <Text size="caption" dimColor>未读取岗位配置{snapshot.sources.context.status === 'stale' ? '，上次配置已陈旧' : '，仅列台账岗位'}</Text>}
-        {held.stage && <Box flexDirection="column" gap="xs" padding="xs">
-          <Text weight="medium">{view.stages.find(stage => stage.id === held.stage)?.label}</Text>
-          {!members.length && <Text size="caption">{view.total === null ? '台账未读取，记录数未知' : '此阶段暂无候选记录'}</Text>}
-          {members.map(candidate => <Box flexDirection="column" gap="xs" paddingY="xs"><Box justifyContent="space-between" gap="sm"><Button key={elementKey('candidate', candidate.id)} plain onPress={() => { void openCandidate($, candidate.id); }}><Text weight="medium">{candidate.name}</Text></Button><Text dimColor>{candidate.rating || '未评级'}</Text></Box><Text size="caption" dimColor>{candidate.role} · {candidateStatus(candidate)}</Text>{candidate.rawRole !== candidate.role && <Text size="caption" dimColor>原岗位：{candidate.rawRole}</Text>}</Box>)}
+        {held.showStages && <Box flexDirection="column" gap="xs">
+          <Text weight="semibold">候选人阶段 · 共 {view.total === null ? '未知' : view.total} 条</Text>
+          {stageRows.map(stages => <Box gap="sm">{stages.map(stage => <Box flexDirection="column" flexGrow={1} flexShrink={1} width={stageColumns === 2 ? '50%' : '33%'} padding="sm" gap="xs" borderStyle="single" borderColor={held.stage === stage.id ? 'claude' : 'promptBorder'}>
+            <Button key={`stage-${stage.id}`} plain label={`${stage.label}${held.stage === stage.id ? ' · 收起' : ''}`} onPress={() => { void update($, board, (current): RecruitingBoardState => ({ ...current, stage: current.stage === stage.id ? null : stage.id })); }} />
+            <Text size="heading" weight="semibold" tabular>{stage.count === null ? '—' : stage.count}</Text>
+          </Box>)}</Box>)}
+          {unclassified > 0 && <Text size="caption" dimColor>含 {unclassified} 条未归类候选记录，保留原状态。</Text>}
+          {held.stage && <Box flexDirection="column" gap="xs" padding="xs">
+            <Text weight="medium">{view.stages.find(stage => stage.id === held.stage)?.label}</Text>
+            {!members.length && <Text size="caption">{view.total === null ? '台账未读取，记录数未知' : '此阶段暂无候选记录'}</Text>}
+            {members.map(candidate => <Box flexDirection="column" gap="xs" paddingY="xs"><Button key={elementKey('candidate', candidate.id)} plain onPress={() => { void openCandidate($, candidate.id); }}><Text weight="medium">{candidate.name}</Text></Button><Text size="caption" dimColor>{candidate.role} · {candidateStatus(candidate)}</Text>{candidate.rawRole !== candidate.role && <Text size="caption" dimColor>原岗位：{candidate.rawRole}</Text>}</Box>)}
+          </Box>}
         </Box>}
       </Box>
       <Box flexDirection="column" gap="xs">

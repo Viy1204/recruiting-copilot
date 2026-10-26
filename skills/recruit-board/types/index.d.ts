@@ -59,7 +59,7 @@ export type BoardSnapshot = {
   sources: { ledger: SourceState; context: SourceState; runs: SourceState; config: SourceState };
 };
 export type RecruitingBoardPanel = {
-  kind: 'candidate'; requestId: number; candidateId: string; fromActivity: boolean; status: 'loading' | 'ready' | 'error'; detail: CandidateDetail | null; document: DocumentContent | null; documentId: string | null; documentBusy: boolean; message: string | null;
+  kind: 'candidate'; requestId: number; candidateId: string; origin: 'stages' | 'activity' | 'confirmations'; showBackground: boolean; status: 'loading' | 'ready' | 'error'; detail: CandidateDetail | null; document: DocumentContent | null; documentId: string | null; documentBusy: boolean; message: string | null;
   returnTo: Extract<RecruitingBoardPanel, { kind: 'results' }> | null;
 } | {
   kind: 'roles'; requestId: number; status: 'loading' | 'ready' | 'saving' | 'error'; info: RoleInfo | null; role: string; selectedStatus: string; message: string | null;
@@ -80,9 +80,12 @@ export type RecruitingBoardState = {
   };
   taskSelection: { mode: 'live' | 'pinned'; runId: string | null };
   activity: { requestId: number; runId: string; revision: number | null; status: 'loading' | 'ready' | 'stale' | 'error'; data: RunActivity | null; message: string | null } | null;
+  confirmations: { requestId: number; runId: string; revision: number | null; status: 'loading' | 'ready' | 'stale' | 'error'; data: RunResults | null; error: string | null } | null;
   stage: string | null;
   sessionId: string | null;
   workspaceRoot: string | null;
+  showRecords: boolean;
+  showStages: boolean;
   showSteps: boolean;
   showDetails: boolean;
 };

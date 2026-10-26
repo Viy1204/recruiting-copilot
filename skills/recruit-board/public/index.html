@@ -24,73 +24,89 @@
     </div>
     <div id="alerts" class="system-alert" role="status" aria-live="polite" hidden></div>
     <div class="content-grid">
-      <section class="workflow-column" aria-labelledby="runs-heading">
-        <div class="section-heading">
-          <h2 id="runs-heading">工作区任务</h2>
-          <div class="run-select-wrap">
-            <label class="sr-only" for="run">选择工作区任务</label>
-            <select id="run" disabled><option value="">正在读取进度</option></select>
-            <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
-          </div>
+      <section class="workflow-column" aria-labelledby="decisions-heading">
+        <div class="section-heading decisions-heading"><h2 id="decisions-heading" tabindex="-1">本轮需确认</h2><span id="decisions-count" class="count-badge" hidden></span></div>
+        <p id="decisions-scope" class="decisions-scope">仅此任务 · 岗位筛选不改变本轮</p>
+        <p id="decisions-status" class="decisions-status" role="status" aria-live="polite">正在读取本轮确认记录…</p>
+        <button id="retry-decisions" class="text-button" type="button" hidden>重试确认名单</button>
+        <div id="decisions-content" hidden>
+          <ul id="decision-list" class="decision-list" aria-label="所选任务的需确认名单"></ul>
+          <button id="show-more-decisions" class="text-button" type="button" aria-expanded="false" aria-controls="decision-list" hidden></button>
         </div>
-        <div class="task-controls">
-          <div class="segmented-control task-mode" role="group" aria-label="任务查看方式">
-            <button id="follow-live" type="button" aria-pressed="true">实时跟随</button>
-            <button id="pin-run" type="button" aria-pressed="false">查看历史</button>
-          </div>
-          <button id="latest-run" class="text-button" type="button" hidden>回到最新</button>
-        </div>
-        <p id="selection-note" class="selection-note" role="status" aria-live="polite" hidden></p>
-        <article id="task-card" class="task-card">
-          <div class="task-freshness"><span id="task-sync">等待读取</span><span id="task-recorded">最后记录 · 未知</span></div>
-          <div class="task-meta"><span id="task-position" class="task-overline">工作区记录</span><span id="run-state" class="status-pill">正在读取</span></div>
-          <p id="workflow-name" class="workflow-name" hidden></p>
-          <h3 id="current-step" class="task-title">正在读取任务</h3>
-          <p id="task-reason" class="task-reason">只展示已记录的工作步骤。</p>
-          <div id="run-result-summary" class="run-result-summary" hidden>
-            <div class="run-result-buttons">
-              <button id="show-run-results" class="result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>本轮已记录</span><strong id="run-result-total">未记录</strong></button>
-              <button id="show-run-decisions" class="result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>需你确认</span><strong id="run-result-decisions">未记录</strong></button>
-            </div>
-            <p id="result-stale-note" class="result-stale-note" hidden></p>
-          </div>
-          <section id="run-activity" class="run-activity" aria-labelledby="activity-heading" hidden>
-            <div class="activity-heading"><h4 id="activity-heading">最近动态</h4><span class="muted">最多 3 条记录</span></div>
-            <p id="activity-status" class="activity-status" role="status" aria-live="polite"></p>
-            <button id="retry-activity" class="text-button" type="button" hidden>重试动态</button>
-            <ul id="activity-list" class="activity-list" aria-label="最近处理记录"></ul>
-            <div id="activity-record-host"></div>
-          </section>
-          <section id="run-results" class="run-results" aria-labelledby="run-results-heading" hidden>
-            <div class="results-heading"><h4 id="run-results-heading">本轮处理记录</h4><button id="collapse-results" class="text-button" type="button">收起</button></div>
-            <p id="results-status" class="results-status" role="status" aria-live="polite"></p>
-            <button id="retry-results" class="text-button" type="button" hidden>重试读取</button>
-            <div id="results-content">
-              <div id="results-filters" class="results-filters" role="group" aria-label="处理记录筛选">
-                <button type="button" data-results-filter="all" aria-pressed="true">全部</button>
-                <button type="button" data-results-filter="decision" aria-pressed="false">需确认</button>
-                <button type="button" data-results-filter="notice" aria-pressed="false">提醒</button>
-              </div>
-              <p class="results-caption">按姓名＋原岗位计人，需你确认的记录优先。</p>
-              <ul id="result-list" class="result-list" aria-label="本轮候选人处理记录"></ul>
-            </div>
-            <div id="run-record-host"></div>
-          </section>
-          <div id="progress-area" hidden>
-            <p id="completion-count" class="progress-caption"></p>
-            <ol id="step-track" class="step-track" aria-label="各步骤的记录状态"></ol>
-            <details id="steps-detail" class="step-disclosure">
-              <summary class="step-summary"><span id="steps-summary">查看全部步骤</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
-              <ol id="steps" class="step-list"></ol>
-            </details>
-          </div>
+        <div id="decision-record-host"></div>
+        <article id="task-card" class="task-card" aria-labelledby="task-heading">
+          <div class="task-heading"><h3 id="task-heading">任务进度</h3><span id="run-state" class="status-pill">正在读取</span></div>
+          <h4 id="workflow-name" class="workflow-name" hidden></h4>
+          <p id="current-step" class="current-step">正在读取任务</p>
+          <p id="task-reason" class="task-reason" hidden></p>
         </article>
+        <details id="execution-records" class="panel-disclosure">
+          <summary class="panel-summary"><span>执行记录</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <div class="execution-content">
+            <div class="section-heading">
+              <h3>工作区任务</h3>
+              <div class="run-select-wrap">
+                <label class="sr-only" for="run">选择工作区任务</label>
+                <select id="run" disabled><option value="">正在读取进度</option></select>
+                <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </div>
+            </div>
+            <div class="task-controls">
+              <div class="segmented-control task-mode" role="group" aria-label="任务查看方式">
+                <button id="follow-live" type="button" aria-pressed="true">实时跟随</button>
+                <button id="pin-run" type="button" aria-pressed="false">查看历史</button>
+              </div>
+              <button id="latest-run" class="text-button" type="button" hidden>回到最新</button>
+            </div>
+            <p id="selection-note" class="selection-note" role="status" aria-live="polite" hidden></p>
+            <div class="task-freshness"><span id="task-sync">等待读取</span><span id="task-recorded">最后记录 · 未知</span></div>
+            <div id="run-result-summary" class="run-result-summary" hidden>
+              <div class="run-result-buttons">
+                <button id="show-run-results" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>查看处理名单</span><span id="run-result-total">未记录</span></button>
+                <button id="show-run-decisions" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>查看确认记录</span><span id="run-result-decisions">未记录</span></button>
+              </div>
+              <p id="result-stale-note" class="result-stale-note" hidden></p>
+            </div>
+            <section id="run-results" class="run-results" aria-labelledby="run-results-heading" hidden>
+              <div class="results-heading"><h4 id="run-results-heading">本轮处理记录</h4><button id="collapse-results" class="text-button" type="button">收起</button></div>
+              <p id="results-status" class="results-status" role="status" aria-live="polite"></p>
+              <button id="retry-results" class="text-button" type="button" hidden>重试读取</button>
+              <div id="results-content">
+                <div id="results-filters" class="results-filters" role="group" aria-label="处理记录筛选">
+                  <button type="button" data-results-filter="all" aria-pressed="true">全部</button>
+                  <button type="button" data-results-filter="decision" aria-pressed="false">需确认</button>
+                  <button type="button" data-results-filter="notice" aria-pressed="false">提醒</button>
+                </div>
+                <p class="results-caption">仅限所选任务，按姓名＋原岗位计人，需确认的记录优先。</p>
+                <ul id="result-list" class="result-list" aria-label="所选任务的候选人处理记录"></ul>
+              </div>
+              <div id="run-record-host"></div>
+            </section>
+            <section id="run-activity" class="run-activity" aria-labelledby="activity-heading" hidden>
+              <div class="activity-heading"><h4 id="activity-heading">近期流水</h4><span class="muted">该任务最近 3 条记录</span></div>
+              <p id="activity-status" class="activity-status" role="status" aria-live="polite"></p>
+              <button id="retry-activity" class="text-button" type="button" hidden>重试流水</button>
+              <ul id="activity-list" class="activity-list" aria-label="最近处理记录"></ul>
+              <div id="activity-record-host"></div>
+            </section>
+            <div id="progress-area" hidden>
+              <p id="task-position" class="task-overline">工作区记录</p>
+              <p id="completion-count" class="progress-caption"></p>
+              <ol id="step-track" class="step-track" aria-label="各步骤的记录状态"></ol>
+              <details id="steps-detail" class="step-disclosure">
+                <summary class="step-summary"><span id="steps-summary">查看全部步骤</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
+                <ol id="steps" class="step-list"></ol>
+              </details>
+            </div>
+          </div>
+        </details>
       </section>
-      <section class="candidates-column" aria-labelledby="stages-heading">
-        <div class="section-heading"><h2 id="stages-heading">候选人阶段</h2><p class="candidate-total">共 <strong id="total">—</strong> 条</p></div>
+      <section class="candidates-column" aria-labelledby="candidates-heading">
+        <div class="section-heading"><h2 id="candidates-heading">岗位与人选</h2></div>
+        <p class="section-caption">按岗位查找人选与资料</p>
         <div class="role-scope-tools">
           <div id="role-scopes" class="segmented-control" role="group" aria-label="岗位范围"></div>
-          <button id="choose-following" class="text-button" type="button" aria-expanded="false" aria-controls="following-picker">选择关注</button>
+          <button id="choose-following" class="secondary-button" type="button" aria-expanded="false" aria-controls="following-picker">选择关注</button>
         </div>
         <div id="following-picker" class="following-picker" hidden>
           <h3>选择关注岗位</h3>
@@ -110,7 +126,7 @@
             <select id="role"><option value="">在招岗位汇总</option></select>
             <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
           </div>
-          <button id="manage-roles" class="text-button" type="button" aria-expanded="false" aria-controls="role-manager">管理</button>
+          <button id="manage-roles" class="secondary-button" type="button" aria-expanded="false" aria-controls="role-manager">管理</button>
         </div>
         <p id="role-options-note" class="role-options-note" role="status" aria-live="polite" hidden></p>
         <p id="role-preferences-note" class="role-preferences-note" role="status" hidden></p>
@@ -124,19 +140,25 @@
           <div class="control-actions"><button id="save-role" class="primary-button" type="submit">保存</button><button id="cancel-role" class="text-button" type="button">取消</button></div>
           <p id="role-result" role="status" aria-live="polite"></p>
         </form>
-        <div id="stages" class="stage-grid" role="group" aria-label="候选人阶段，选择后展开名单"></div>
-        <div id="candidate-notes" class="candidate-notes"></div>
         <p id="role-note" class="scope-note">正在读取岗位配置</p>
-        <div id="candidate-detail" class="candidate-detail" role="region" aria-labelledby="detail-title" hidden>
-          <div class="detail-heading"><h3><span id="detail-title"></span><span id="detail-count" class="muted"></span></h3><button id="collapse-stage" type="button" aria-label="收起候选人名单">收起</button></div>
-          <ul id="candidate-list" class="candidate-list"></ul>
-          <div id="stage-record-host">
-            <div id="candidate-record" class="candidate-record" role="region" aria-label="候选资料" hidden>
-              <button id="back-to-list" class="text-button" type="button">返回名单</button>
-              <div id="record-content" aria-live="polite"></div>
+        <details id="candidate-stages" class="panel-disclosure">
+          <summary class="panel-summary"><span>候选阶段</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <div class="stages-content">
+            <p class="candidate-total">当前岗位范围共 <strong id="total">—</strong> 条候选记录</p>
+            <div id="stages" class="stage-grid" role="group" aria-label="候选人阶段，选择后展开名单"></div>
+            <div id="candidate-notes" class="candidate-notes"></div>
+            <div id="candidate-detail" class="candidate-detail" role="region" aria-labelledby="detail-title" hidden>
+              <div class="detail-heading"><h3><span id="detail-title"></span><span id="detail-count" class="muted"></span></h3><button id="collapse-stage" type="button" aria-label="收起候选人名单">收起</button></div>
+              <ul id="candidate-list" class="candidate-list"></ul>
+              <div id="stage-record-host">
+                <div id="candidate-record" class="candidate-record" role="region" aria-label="候选资料" hidden>
+                  <button id="back-to-list" class="text-button" type="button">返回名单</button>
+                  <div id="record-content" aria-live="polite"></div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </details>
         <p id="filter-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
       </section>
     </div>
