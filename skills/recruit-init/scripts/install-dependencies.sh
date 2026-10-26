@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BOSS_CLI_SOURCE=${BOSS_CLI_SOURCE:-git+https://github.com/Viy1204/boss-cli.git#main}
+BOSS_CLI_SOURCE=${BOSS_CLI_SOURCE:-git+https://github.com/Viy1204/boss-cli.git#copilot-beta-20261026}
 LIEPIN_CLI_SOURCE=${LIEPIN_CLI_SOURCE:-@viyzhu/liepin-cli}
 PROFILE_BLOCK_START='# >>> recruiting-copilot npm global bin >>>'
 PROFILE_BLOCK_END='# <<< recruiting-copilot npm global bin <<<'

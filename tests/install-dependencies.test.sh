@@ -165,7 +165,7 @@ test_boss_source_defaults_to_fork_and_can_be_overridden() {
   default_clone=$(sed -n '1p' "$default_sandbox/git.log")
   override_install=$(grep '^install -g ' "$override_sandbox/npm.log" | sed -n '1p')
   case "$default_clone" in
-    'clone --depth 1 --branch main https://github.com/Viy1204/boss-cli.git '*) ;;
+    'clone --depth 1 --branch copilot-beta-20261026 https://github.com/Viy1204/boss-cli.git '*) ;;
     *) fail "default Boss CLI clone source (got $default_clone)" ;;
   esac
   assert_equals \

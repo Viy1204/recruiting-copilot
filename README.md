@@ -114,9 +114,9 @@ claude plugin install recruiting-copilot
 - `/interview-schedule` —— 约面试：日历 + 视频会议 + 拉面试官，档案台账同步
 - `/ask-viy` —— 不知道该用哪个？问它
 
-### 本地招聘进展看板（v0.7.0-beta.1 测试版）
+### 本地招聘进展看板（v0.7.0-beta.2 测试版）
 
-本轮升级以预发布版本供试用，固定标签为 `v0.7.0-beta.1`。完整安装、已有工作区升级与回退步骤见 [测试版说明](docs/releases/v0.7.0-beta.1.md)；正式版仍使用 `v0.6.6`。
+本轮升级以预发布版本供试用，固定标签为 `v0.7.0-beta.2`。完整安装、已有工作区升级与回退步骤见 [测试版说明](docs/releases/v0.7.0-beta.2.md)；正式版仍使用 `v0.6.6`。
 
 `skills/recruit-board/` 自带完整模型、进度脚本、本机网页和可选原生 mod，初始化复制整个 `skills/` 时一同携带。**网页版是 Claude、Codex App、WorkBuddy 的统一主界面**；六个执行流程在脚本可用时默认记录并尽早打开或复用看板。缺少脚本的旧工作区仍可照常招聘，并说明本轮未记录进度。
 
@@ -129,9 +129,9 @@ npm run board:progress -- workflows
 
 复制后的工作区直接运行 `node skills/recruit-board/scripts/server.mjs --workspace "/绝对路径/工作区"`。在 Claude 的 Browser/Preview、Codex App 的 Browser、WorkBuddy 右侧浏览器或普通浏览器打开 `http://127.0.0.1:4318/`。宿主有专用服务工具时由它管理前台进程；没有可用界面工具时返回本机链接，不承诺自动停靠或后台常驻。服务健康核验、已有实例复用和本轮链接交接见 [三端打开约定](skills/recruit-board/references/hosts.md)。页面只展示本地台账与独立任务记录，不连接 CDP、招聘网站或既有 DSH 面板。
 
-支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与本轮发布复验的边界见 [发布验收](verification/release-v0.7.0-beta.1-checks.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
+支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与本轮发布复验的边界见 [发布验收](verification/release-v0.7.0-beta.2-checks.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
 
-上部为“工作区任务”：默认跟随最新创建的任务，手动选择历史或打开明确 run 链接后固定；阅读详情或编辑时有新任务，保留阅读位置并提供“回到最新”。首页按所选任务读取最近三条真实处理记录，完整名单和候选资料继续按需查看；人数按姓名＋原岗位去重，收据条数不当作人数。没有 run 显示“尚无任务进度记录”，旧任务没有收据显示“未记录”，不补造历史。前台按一秒间隔检查，后台降频、恢复时立即同步；读取状态与业务最后记录分开，动画只反馈实际变化。
+首页优先显示当前任务“本轮需确认”的人选、待拍板事项、资料和依据。执行记录与候选阶段默认折叠，可按需查看步骤、完整处理名单和任务历史。默认跟随最新创建的任务，手动选择历史或打开明确 run 链接后固定；阅读详情或编辑时有新任务，保留阅读位置并提供“回到最新”。人数按姓名＋原岗位去重，收据条数不当作人数；岗位筛选不改变当前任务的确认名单。没有 run 显示“尚无任务进度记录”，旧任务没有收据显示“未记录”，不补造历史。前台按一秒间隔检查，后台降频、恢复时立即同步；读取状态与业务最后记录分开，动画只反馈实际变化。
 
 下部按“在招 / 关注 / 全部”查看候选阶段，关注是按工作区隔离的个人偏好，搜索只缩小岗位选项。候选记录展示原状态和评级，同人不同原岗位不自动合并。关闭岗位存量仍可在“全部”查看，重复冲突、未配置、缺失与陈旧数据均明确标注。只有表头的台账是正常零条，未读取台账是未知；不计算转化率，不拖拽改状态、不提供候选人外联操作。进度命令与六流程映射见 [共享进度协议](skills/recruit-board/references/progress.md)。
 
