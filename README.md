@@ -1,260 +1,243 @@
-# recruiting-copilot —— AI 招聘副驾
+# recruiting-copilot · AI 招聘副驾
 
-给 HR / 猎头用的一套 AI 招聘工作流：**逼问式梳理岗位真实要求 → Boss直聘 + 猎聘双通道每日寻源初筛 → 打招呼 → 约面试 → 候选人台账 → 日报**。
-另有市场人才盘点、简历评估，以及从飞书邮箱按需收取猎聘 / BOSS 的简历附件。
+给 HR 和猎头用的招聘工作流。先把岗位要求问清楚，再让 AI 按同一套标准做 BOSS 直聘与猎聘寻源、简历初筛、面试安排、台账和日报。你通过本地看板查看进度、核对人选和处理待确认事项。
 
-配合任意 AI 编程助手使用：Claude Code、Codex、workbuddy、qoderwork、MiniMax Code、Z code 等——
-只要你的工具能读工作区里的 `AGENTS.md`，就能跑这套流程。
+支持 Claude Code、Codex、WorkBuddy、Qoder、MiniMax Code、ZCode 等能读取项目文件的 AI 工具。招聘标准、候选台账和面试档案保存在你自己的工作区，换工具也能继续使用。
 
-> ### ⚠️ 账号安全须知（2026-08-19 更新，务必读）
->
-> **两条规则：不要开无头；日常招聘动作走 CLI 命令，别在「招聘浏览器」面板里手动点操作。**
->
-> **关于无头**：**BOSS 和猎聘现在都默认有头**（真窗口，启动时会抢一次键盘焦点）。
-> 两家都有实测样本，同一条根因：
->
-> - BOSS（2026-08-19 翻回有头）——一个账号被 **限制 web 端登录 24 小时**，页面文案
->   写明「检测到您的账号存在使用第三方招聘管理系统、插件、外挂、软件等辅助工具」；另一个团队
->   用上游版（默认有头）长期无事，他们的 AI 擅自改走无头之后当天封号。
-> - 猎聘（2026-09-21 翻回有头）——2026-09-20 实测连续无头调用后账号被判「行为异常」，302 到
->   `safe.liepin.com/.../captchaPage_PC`，业务接口开始静默拦截。liepin-cli v0.2.7 同步翻默认。
->
-> 根因是同一条：无头 Chrome 的 UA 自报 `HeadlessChrome`，而 Client Hints 仍说 `Google Chrome`，
-> 这个自相矛盾是零误报的信号。三方都**刻意不伪装 UA**（伪装与「不做识别不出自动化方向的对抗」
-> 这条红线冲突），所以绕不过去，只能不用无头。
->
-> **别设 `RECRUIT_BROWSER_HIDDEN=true`**——它是**统一覆盖开关**，会把两家一起拖进无头。
-> 抢焦点是体验问题，账号被限是业务问题。想看画面用本面板，不是翻回无头。
->
-> 顺便：被限期间**只有 web 端受限**，BOSS直聘 APP 和 PC 客户端照常能用，不必停工。
->
-> 原因：boss-cli 的反检测保护（拦风控 SDK、把上报端点用 204 假装成功、注入页面守卫等四层）
-> 全部挂在 **CLI 进程自己的 CDP session** 上，**进程一退出就全部失效**。已实测确认。所以浏览器
-> 跨命令常驻期间是完全裸奔的，面板操作和面板发起的导航都在这个裸奔时段里，不受任何保护。
->
-> 同一个测试账号在 2026-08-18 被限制两次：一次是排查时并挂第二个 host 加反复切贴合（页面秒级
-> 反复 resize），限制几小时；一次是点面板的**有头/无头切换**（同一会话内 UA 在 `HeadlessChrome`
-> 与 `Chrome` 之间突变），**限制 24 小时**。
->
-> 本版本已做的加固：
->
-> - **摘掉有头/无头切换按钮**——默认已经是有头，正常不需要切模式；同一会话内切模式会造成
->   UA 突变，那正是第二次被限的原因。
-> - **面板默认折叠、默认只读**，且折叠状态持久化。展开会让 host 持续订阅画面并开启崩溃自愈；
->   要手动操作需按工具栏 🔒 显式打开。
-> - **风控页熔断**：一旦页面落到 403 / verify / security-check，host 立刻停掉自愈重启、停掉
->   贴合重发、拒绝一切导航与启动，面板顶部显示红色提示条，需人工确认后才解除。
->   （被限期间继续访问会把恢复时间一路延长。）
->
-> 如果你之前装过旧版本并在面板里手动操作过，建议 `git pull` 更新后重启 DSH 会话。
-> 细节与后续计划见 [#33](https://github.com/Viy1204/recruiting-copilot/issues/33)。
+![招聘进展看板总览：左侧为本轮待确认人选和任务进度，右侧为岗位筛选与候选阶段](docs/images/recruit-board-overview.jpg)
 
-## 它帮你做什么
+*图中展开了“候选阶段”。本页所有截图均来自实际运行的看板，岗位、姓名、经历和数字全部为合成演示数据。*
 
-- **岗位梳理**：一次一问的访谈，把「我要一个厉害的 XX」问成一份可执行的初筛标准——硬门槛、命脉技能、排除信号、目标公司、搜索词。同时产出对外 JD 与对内寻源笔记。
-- **每日招聘**：说一句「处理今天的招聘」，AI 就去查两个平台的未读、按你的标准主动搜人、初筛、经你确认后打招呼，然后补台账、出日报，还能把日报推成一张飞书卡片（四个数字 + 重点人选 + 待你拍板，点按钮跳完整文档）。
-- **市场盘点**：某个岗到底好不好招？一次深度调研说清市场供给、薪资水位、目标公司的人挖不挖得动，并附可推进名单。
-- **简历收取与评估**：直接丢本地简历，或让 AI 去飞书邮箱翻近期的猎聘 / BOSS 简历邮件，去重下载附件后走同一套 review、台账与面试档案流程。
-- **约面试**：查面试官忙闲、建带视频会议链接的日历日程、拉面试官进会、生成候选人邀约话术，面试档案自动同步。
-- **越用越准**：每轮从命中的真实简历反向提取搜索词，回填关键词迭代表，下一轮搜索更准。
-- **安全红线**：对外不可逆的动作（打招呼、点「不合适」、通知候选人）默认先经你确认，绝不自动拒人。
+当前正式版为 **v0.7.0**，已包含招聘进展看板。[开始使用](#开始使用) · [看板功能图解](#招聘进展看板) · [已有工作区升级](docs/releases/v0.7.0.md#升级已有工作区)
 
-## 前置条件（所有工具通用）
+## 你可以这样用
 
-1. [Node.js](https://nodejs.org) ≥ 22，本机装有 Chrome。
-2. 运行下方「安装与使用」里的依赖安装脚本。脚本默认安装 Boss 维护包
-   `@viyzhu/boss-cli-fork@0.8.5`，源码在 [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli)，
-   可用 `BOSS_CLI_SOURCE` 覆盖来源。macOS 上如果 npm 全局命令不在 `PATH`，脚本会幂等地改一次当前
-   shell 的配置文件（zsh 写 `~/.zprofile`，bash 写 `~/.bash_profile`）。
-3. 两个平台各扫码登录一次（登录态存在浏览器的 user-data-dir 里，一次能管很久）：
-   ```bash
-   boss login
-   liepin login
-   ```
-   `login` 需要可见窗口供人工扫码。BOSS 和猎聘默认都有头；猎聘会优先复用有效登录态，
-   仅在确需人工登录且当前实例不可见时才切换为可见窗口。不要为检查状态强制重登。
-4. **可选**：飞书用户装 lark-cli 并配置凭证 → 日报出飞书云文档并可推一张互动卡片到私聊/群、
-   约面试直接建日历日程和视频会议，还能从飞书邮箱收取猎聘 / BOSS 简历附件；不装则日报输出本地 Markdown、
-   不推卡片、约面试给你一份手动建会清单、简历需本地提供。寻源、本地简历 review 和台账功能都不受影响。
+在 AI 工具中打开招聘工作区，用自然语言提出任务即可。
 
-## 安装与使用
+| 你说 | AI 按流程完成 |
+| --- | --- |
+| “帮我初始化招聘工作区” | 检查依赖、建立目录和模板、注册 Skill 入口，再逐岗梳理要求 |
+| “梳理这个岗位的招聘要求” | 一次一问，明确硬门槛、命脉技能、排除信号、目标公司与搜索词，产出对外 JD 和对内寻源笔记 |
+| “处理今天的招聘” | 查双平台未处理事项、主动寻源、按标准初筛、核对联系授权、补台账、出日报并回填搜索词 |
+| “盘点这个岗位的市场人才” | 调研供给、薪资和目标公司，整理候选名单与招聘建议 |
+| “评估这些简历” | 评估本地文件；也可按指定时间窗从飞书邮箱收取猎聘或 BOSS 简历附件，去重后评估并落档 |
+| “帮我约面试” | 核对人选、面试官与时间，经确认后创建飞书日程和视频会议，生成候选人邀约内容并同步档案 |
+| “打开招聘看板” | 查看本轮需确认人选、执行记录、逐人结果、岗位阶段和本地资料 |
+| “这套工具怎么用” | 按总目录选择下一步流程 |
 
-### 方式一：通用（Codex / workbuddy / qoderwork / MiniMax Code / Z code / 任何 agent 工具）
+飞书是可选项。配置 `lark-cli` 后，可生成飞书日报文档、按授权推送日报卡片、查询面试官忙闲和创建日程，也可从飞书邮箱收取简历。未配置时，日报保存在本地，简历由你提供，约面试给出手动建会清单。
+
+## 招聘进展看板
+
+网页版是 Claude Desktop、Codex App、WorkBuddy 的统一入口。六个执行流程在进度脚本可用时记录实际步骤，并尽早打开或复用看板。能否显示在工具右侧取决于当前宿主；普通浏览器也能使用。
+
+### 先看本轮需要你决定的人
+
+首页把“本轮需确认”放在最前面。每张卡片列出候选人、台账原状态和需要你决定的具体问题。展开 **查看依据** 可以核对初筛结论，再点 **查看资料** 阅读本地档案。
+
+![待确认人选卡片：显示约谈安排与到岗地点问题，展开依据后可以核对初筛结论](docs/images/recruit-board-decisions.jpg)
+
+确认名单只对应当前选定任务，右侧切换岗位不会改变这份名单。同一个人在本轮有多条确认记录时合并展示，避免把记录条数当成人数。看完后在 AI 对话中给出决定，由原招聘流程继续执行。
+
+### 查清任务做到哪一步、处理过哪些人
+
+展开 **执行记录**，可以看到任务选择、最近三条流水、最后记录时间和步骤状态。默认跟随最新任务，也可固定查看历史；阅读资料或编辑岗位时，新任务不会抢走当前页面。
+
+![执行记录：显示最新任务、最后记录时间、近期流水和各步骤完成情况](docs/images/recruit-board-execution.jpg)
+
+点 **查看处理名单**，可以逐人核对动作、结论和下一步，并按“全部 / 需确认 / 提醒”筛选。同一人不同步骤的记录保留在同一组中。
+
+<details>
+<summary>查看逐人处理名单截图</summary>
+
+![逐人处理名单：待确认人选优先，其他记录按提醒和已记录区分，并保留每步的结论](docs/images/recruit-board-results.jpg)
+
+</details>
+
+这里展示的是已经写入本地的任务记录。读取正常表示页面能取得数据，不代表 AI 进程仍在运行；旧任务未写逐人结果时显示“未记录”，不会从台账猜补历史。
+
+### 按岗位展开候选阶段
+
+在 **岗位与人选** 中切换“在招 / 关注 / 全部”，选择一个岗位，再展开 **候选阶段**。点阶段数字即可查看名单，点姓名进入候选资料。
+
+![岗位与候选阶段：选择研发工程师后查看八条记录，展开待初筛阶段可见对应人选](docs/images/recruit-board-stages.jpg)
+
+“关注”是本机保存的工作区偏好，搜索框用于缩小岗位选项。已关闭岗位的历史人选仍可在“全部”中查看。阶段按台账当前状态归类，姓名加原岗位计一条候选记录，同名不同岗位分别保留。
+
+### 在确认前打开候选资料
+
+候选资料页保留原岗位与原状态，并提供已关联的简历、面试档案和背景评估。Markdown 和 TXT 可在页内查看，PDF 可独立打开或下载；返回名单后保留原筛选与任务。
+
+![候选资料：从人选进入本地文件列表，页内阅读面试档案的初筛结论、匹配证据和待确认事项](docs/images/recruit-board-candidate.jpg)
+
+资料仅从招聘工作区内读取。同名、打码姓名或岗位不明确时不猜配档案；需要指定关联时，使用[文件关联配置](skills/recruit-board/references/configuration.md#明确关联候选资料)。
+
+### 管理本地岗位状态
+
+岗位筛选旁的 **管理** 支持在招、已下架、已关闭、暂停、待核。下图是在招岗位选择“暂停”后的待保存状态。
+
+![本地岗位管理：选择岗位与目标状态，保存前可取消，并明确提示不会修改招聘平台岗位](docs/images/recruit-board-role-management.jpg)
+
+保存只更新工作区 `CONTEXT.md` 岗位表的一格状态，并备份原文件；取消不写入。它不会在 BOSS 或猎聘发布、下架或关闭职位。候选台账和候选状态在看板内保持只读。
+
+## 开始使用
+
+准备 Node.js ≥ 22、本机 Chrome 或 Edge，以及可正常登录的 BOSS 直聘或猎聘招聘者账号。涉及哪个平台，就完成对应平台的登录。Windows 下的 `sh` 命令在 Git Bash 中运行。
+
+### 1. 下载固定版本并安装依赖
 
 ```bash
 git clone --branch v0.7.0 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
+```
+
+进入源码目录。
+
+```bash
 cd recruiting-copilot
+```
+
+安装两个平台的 CLI。
+
+```bash
 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-用你的 AI 工具打开这个目录，说：**「帮我初始化招聘工作区」**。
-AI 会检查依赖、在你指定的位置建好工作区、注册各工具认得的项目级 skill，
-然后逐个岗位跟你梳理招聘要求。
+安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.5` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
 
-> 补充：用 `~/.agents/skills` 约定的工具，也可以 `npx skills add Viy1204/recruiting-copilot`
-> 把这套 skill 装成全局。不装也没关系——工作区里已经带了一份。
+若只想诊断环境，给脚本加 `--check-only`，它不会安装包或修改 shell 配置。正常安装时，macOS 若缺少 npm 全局命令路径，脚本会更新当前 shell 的配置文件。
 
-之后每天：用 AI 工具打开**你自己的工作区目录**，说 **「处理今天的招聘」**。
-任何时候不确定该干什么，说一句 **「这套工具怎么用」**，AI 会按总目录带你走。
+### 2. 建立你自己的招聘工作区
 
-### 方式二：Claude Code 插件（额外获得 slash 命令与自动触发）
+用 AI 工具打开下载的 `recruiting-copilot` 目录，说：
 
-```
-claude plugin marketplace add <本仓库地址>
-claude plugin install recruiting-copilot
-```
+> 帮我初始化招聘工作区。
 
-然后：
+AI 会询问工作区位置，建立模板和各工具的 Skill 入口，再逐个岗位梳理真实要求。**本仓库是工具源码，岗位数据和候选资料放在新建的独立工作区。**
 
-- `/recruit-init` —— 初始化工作区（首次一次）
-- `/recruit-grill <岗位>` —— 梳理某个岗位的要求
-- `/recruit-daily` —— 处理今天的招聘（日常也可以直接说「处理今天的招聘」）
-- `/recruit-mapping <岗位>` —— 深度盘点某岗的市场人才
-- `/resume-review` —— 评估本地简历，或收取飞书邮箱的猎聘 / BOSS 简历附件后评估
-- `/interview-schedule` —— 约面试：日历 + 视频会议 + 拉面试官，档案台账同步
-- `/ask-viy` —— 不知道该用哪个？问它
+已有工作区先按[升级说明](docs/releases/v0.7.0.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
 
-### 本地招聘进展看板（v0.7.0 正式版）
+### 3. 在可见窗口中完成人工登录
 
-v0.7.0 将本地招聘进展看板纳入正式版本，固定安装标签为 `v0.7.0`。本轮待确认名单、任务与逐人记录、岗位本地管理和可选原生面板一同交付。安装、已有工作区升级与回退步骤见 [正式版说明](docs/releases/v0.7.0.md)。
-
-`skills/recruit-board/` 自带完整模型、进度脚本、本机网页和可选原生 mod，初始化复制整个 `skills/` 时一同携带。**网页版是 Claude、Codex App、WorkBuddy 的统一主界面**；六个执行流程在脚本可用时默认记录并尽早打开或复用看板。缺少脚本的旧工作区仍可照常招聘，并说明本轮未记录进度。
-
-在本地源码目录启动网页（Node ≥22，无额外依赖）：
+BOSS 使用：
 
 ```bash
-npm run board -- --workspace "/绝对路径/你的招聘工作区" --port 4318
-npm run board:progress -- workflows
+boss login
 ```
 
-复制后的工作区直接运行 `node skills/recruit-board/scripts/server.mjs --workspace "/绝对路径/工作区"`。在 Claude 的 Browser/Preview、Codex App 的 Browser、WorkBuddy 右侧浏览器或普通浏览器打开 `http://127.0.0.1:4318/`。宿主有专用服务工具时由它管理前台进程；没有可用界面工具时返回本机链接，不承诺自动停靠或后台常驻。服务健康核验、已有实例复用和本轮链接交接见 [三端打开约定](skills/recruit-board/references/hosts.md)。页面只展示本地台账与独立任务记录，不连接 CDP、招聘网站或既有 DSH 面板。
+猎聘使用：
 
-支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与正式版验收的边界见 [正式版说明](docs/releases/v0.7.0.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
-
-首页优先显示当前任务“本轮需确认”的人选、待拍板事项、资料和依据。执行记录与候选阶段默认折叠，可按需查看步骤、完整处理名单和任务历史。默认跟随最新创建的任务，手动选择历史或打开明确 run 链接后固定；阅读详情或编辑时有新任务，保留阅读位置并提供“回到最新”。人数按姓名＋原岗位去重，收据条数不当作人数；岗位筛选不改变当前任务的确认名单。没有 run 显示“尚无任务进度记录”，旧任务没有收据显示“未记录”，不补造历史。前台按一秒间隔检查，后台降频、恢复时立即同步；读取状态与业务最后记录分开，动画只反馈实际变化。
-
-下部按“在招 / 关注 / 全部”查看候选阶段，关注是按工作区隔离的个人偏好，搜索只缩小岗位选项。候选记录展示原状态和评级，同人不同原岗位不自动合并。关闭岗位存量仍可在“全部”查看，重复冲突、未配置、缺失与陈旧数据均明确标注。只有表头的台账是正常零条，未读取台账是未知；不计算转化率，不拖拽改状态、不提供候选人外联操作。进度命令与六流程映射见 [共享进度协议](skills/recruit-board/references/progress.md)。
-
-旧工作区可选用固定文件 `_shared/recruit-board.config.json`，按完整原值补充状态阶段与岗位别名，例如：
-
-```json
-{
-  "schemaVersion": 1,
-  "statusStages": { "已沟通-待答复": "talking" },
-  "roleAliases": { "旧岗位名": "标准岗位名" }
-}
+```bash
+liepin login
 ```
 
-阶段值仅限 `screen`、`contact`、`talking`、`decision`、`interview`、`offer`、`joined`、`ended`、`unclassified`。状态键按 trim＋英文小写精确匹配，可覆盖标准映射；显式 `unclassified` 表示阶段待核，不再报未识别状态。岗位别名仅 trim 后完整匹配，目标须存在于本次成功读取的 CONTEXT 岗位表，禁止链与循环；筛选用标准名，`rawRole` 保留原岗位，去重键不变。配置任一字段非法则整份不生效；首次失败使用标准映射并提示，曾成功应用后变坏或消失则整体保留上次候选、岗位与源时间并标陈旧。无配置使用标准行为。可选说明字段 `description`、`verifiedAt`、`source` 不参与执行；配置字典与说明不进入 HTTP 快照。
+在打开的浏览器中完成扫码或平台验证。登录态有效时复用现有会话；出现登录过期后再处理，不为检查状态反复重登。
 
-点击候选姓名可进入本地资料，按需读取台账背景、备注、来源与附件；返回名单保留筛选和任务。自动档案关联要求完整唯一姓名和岗位相合，同名或打码记录不猜配；完整岗位值若是其他正式岗位或别名，不能剥括号归到当前岗。仅开放工作区内 Markdown、TXT 和 PDF，档案相对附件按档案目录解析；工作区外、外链、缺失和不支持文件明确提示。资料正文、路径与文件映射不放入全量快照。
+### 4. 从工作区开始日常任务
 
-需要明确消歧时，可选 `_shared/recruit-board.files.json` 使用原候选 ID（姓名＋原岗位的 JSON 数组字符串）关联文件；路径相对工作区，最多每条记录 30 份，`label`／`kind` 可省略：
+以后用 AI 工具打开**你自己的招聘工作区**，说“处理今天的招聘”。AI 按 `CONTEXT.md` 中已经确认的标准执行，记录任务进展并交付本机看板链接。
 
-```json
-{
-  "schemaVersion": 1,
-  "candidates": {
-    "[\"合成甲\",\"原岗位\"]": {
-      "files": [
-        { "path": "03-interview/合成甲.md", "label": "面试档案", "kind": "markdown" },
-        { "path": "runtime/resumes/example.pdf", "label": "简历", "kind": "pdf" }
-      ]
-    }
-  }
-}
+也可通过 `npx skills add Viy1204/recruiting-copilot` 为采用 Agent Skills 约定的工具安装全局技能。工作区本身已携带流程，这一步不是必需项。
+
+### Claude Code 插件入口
+
+需要插件命令时，在 Claude Code 终端中添加已克隆的固定版本目录。
+
+```bash
+claude plugin marketplace add "/绝对路径/recruiting-copilot"
 ```
 
-岗位筛选旁“管理”支持在招、已下架、已关闭、暂停、待核。保存只修改 `CONTEXT.md` 当前标准岗位表的一格状态，保留其他字节、换行和 UTF-8／带 BOM UTF-16 编码；原文备份至 `runtime/recruit-board/roles/`。取消不写入；revision 或独占锁冲突返回 409，重新读取再操作。此操作只更新本地岗位表，不修改招聘平台岗位。HTTP 保存限定同源 JSON 与会话令牌，候选资料维持只读；原生 `scripts/actions.mjs` 共用 `candidate`、`document`、`open-document`、`role-info`、`role-set` 后端，不另写一套文件规则。
+安装主插件。
 
-### 方式三：DeepSeek Harness 插件（任意工作区都能用这套招聘 skill）
+```bash
+claude plugin install recruiting-copilot@recruiting-copilot
+```
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）用户，
-在任意目录执行：
+如果已配置同名 marketplace，先核对来源再按原来源更新，见[正式版安装说明](docs/releases/v0.7.0.md#固定版本安装)。重新打开会话后，可使用 `/recruiting-copilot:recruit-init`、`/recruiting-copilot:recruit-daily`、`/recruiting-copilot:resume-review` 等入口，也可以继续用自然语言。
+
+### DeepSeek Harness 入口
+
+在使用 Web profile 的环境中安装：
 
 ```bash
 dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.7.0
 ```
 
-（`web` 是 Web 界面 profile；`headless` 等其他 profile 同理，把 `web` 换成名字即可。）
+重新打开 DSH 会话后加载招聘技能。DSH 还提供独立的 **招聘浏览器**，用于观察两个 CLI 的平台页面，默认折叠、只读。它与上面的本地招聘进展看板用途不同，日常平台动作仍走 CLI。安装、更新和该面板的说明见 [DSH 文档](dsh/README.md)。
 
-安装后**重启 DSH 会话**，本仓库 `skills/` 下的工作流就会出现在任意工作区的
-skill 目录里（不必把仓库克隆成工作区）：
-`ask-viy`、`recruit-init`、`recruit-grill`、`recruit-daily`、`resume-review`、
-`interview-schedule`、`market-talent-mapping`，以及本地 `recruit-board` 指引。
+## 手动打开看板
 
-**附带功能——Web UI 右侧「招聘浏览器」面板**：DSH Web 界面右侧是一只**能直接上手操作的浏览器**，
-鼠标、滚轮、键盘、中文输入法、粘贴全都直通。**BOSS 和猎聘都是可用的源**，面板顶部一键切换；
-浏览器没起时在面板里点一下就能拉起——用的是两个 CLI 各自的 user-data-dir 和固定调试端口，
-登录态通用，之后跑 `boss` / `liepin` 命令会直连同一只，不会另开一只。
-
-**两个源的默认模式不同**：BOSS 有头（真窗口，抢一次键盘焦点），猎聘无头。
-**不要为了不被打扰把 BOSS 改成无头**——无头的 `HeadlessChrome` UA 已实测招来 web 端登录限制，
-见开头的安全须知。面板的价值在于不用切窗口就能看到页面：它默认开着「贴合」，把页面视口固定成
-按源写死的尺寸（BOSS `958×1149`、猎聘 `1440×1149`），所以面板里的文字是原生大小，
-而不是整页缩小后的糊图。
-
-`RECRUIT_BROWSER_HIDDEN` 是**统一覆盖开关**（本插件 / boss-cli / liepin-cli 三方共读）：
-不设时两边各用自己的默认，显式设了才拉平两家——所以 `=true` 会把 BOSS 一起拖进无头，别这么用。
-端口上已经有实例在跑时改这个变量不生效（那只会被直接复用），得先 `boss shutdown` /
-`liepin quit` 关掉它。
-
-面板接管需要 `@viyzhu/boss-cli-fork` ≥ 0.7.0、`@viyzhu/liepin-cli` ≥ 0.2.0：更早的版本要么用随机调试端口，
-要么命令跑完就关浏览器，面板连不上。装旧版时面板的空态文案会直接告诉你是版本问题。
-
-**Boss 窗口会不会被命令弹到前台？** `@viyzhu/boss-cli-fork` ≥ 0.7.2 起：窗口已最小化就不动它；
-只有在线简历截图（`boss action resume` / `boss preview`）会临时还原窗口、截完立刻再最小化，
-因为 Chrome 最小化后不绘帧，canvas 简历根本渲染不出来。把 CLI 接进后台系统定时跑、连那一下
-都不想要的，设 `BOSS_BROWSER_NO_FOREGROUND=true`（`boss login` 不受影响，扫码必须可见）。
-
-更新 / 卸载：
+日常工作流会按宿主能力启动或复用看板。只想查看现有工作区时，也可在源码目录启动服务：
 
 ```bash
-dsh plugin --profile web update recruiting-copilot   # 拉到最新提交
-dsh plugin --profile web remove recruiting-copilot   # 卸载
+npm run board -- --workspace "/绝对路径/你的招聘工作区" --port 4318
 ```
 
-> 原理与本地验证见 [`dsh/README.md`](dsh/README.md)：仓库根 `package.json`
-> 声明 `dsh.bundle`，装好后作为 profile 的 patch 层，启用宿主 skill-filesystem
-> 并把本仓库 `skills/` 注册为全局自定义 skill 根；同一个包还带 host 插件（CDP 抓帧）
-> 与客户端模块（右侧面板）。
+保持服务终端运行，在另一个终端核验工作区并取得链接：
 
-## 工作区长什么样
-
-初始化后你会得到一个自足的招聘工作区（换任何 AI 工具打开都能接着干活）：
-
+```bash
+node skills/recruit-board/scripts/connect.mjs --workspace "/绝对路径/你的招聘工作区" --url http://127.0.0.1:4318
 ```
+
+`status` 为 `ready` 时，打开输出中的完整 `url`。明确查看某轮任务时，给探测命令加 `--run <任务ID>`，再打开返回的 `runUrl`。保留链接中的工作区参数，避免把另一工作区的服务当成当前看板。
+
+工作区已复制 `skills/` 后，可用 `node skills/recruit-board/scripts/server.mjs --workspace "/绝对路径/工作区" --port 4318` 启动，无额外 npm 依赖。服务只监听本机，生命周期由宿主或可见终端管理。不同工具中的打开方式、端口冲突与复用规则见[宿主接入说明](skills/recruit-board/references/hosts.md)。
+
+<details>
+<summary>可选：Claude 原生面板</summary>
+
+支持 function hooks/Pane 的 Claude 宿主可手动使用 `/recruiting-board`，也可带招聘工作区绝对路径。原生面板使用宿主组件，保留结果概览、近期记录和候选资料入口。
+
+从工作区 `.claude/skills/recruit-board` 自动发现与 marketplace 安装中选择一个来源，避免重复加载。如果选择同一 marketplace 的可选插件，安装命令为：
+
+```bash
+claude plugin install recruiting-board@recruiting-copilot
+```
+
+重新打开会话后，手动运行 `/recruiting-board` 打开原生面板。兼容性以实际宿主版本为准，原生验证范围见[正式版说明](docs/releases/v0.7.0.md#回退与兼容边界)。日常任务默认使用统一网页。
+
+</details>
+
+## 数据保存在你的工作区
+
+```text
 你的工作区/
-├── CONTEXT.md            ← 唯一事实源：初筛硬规则、在招岗位与优先级、术语表、决策记录
-├── AGENTS.md             ← 告诉 AI 工具在这里怎么干活（路由 + 红线）
-├── skills/               ← 工作流文档的唯一内容源（随工作区走）
-├── .agents/skills/       ← Codex / Agent Skills 项目级自动发现入口
-├── .claude/skills/       ← Claude Code 项目级自动发现入口
-├── .qoder/skills/        ← Qoder 项目级自动发现入口
-├── 01-jd/                ← 对外 JD + _internal/ 对内寻源笔记（不外发）
-├── 02-sourcing/          ← dedup-ledger.csv 候选人台账（唯一事实源）+ shortlist
-├── 03-interview/         ← 面试档案（一人一文件）
-├── 04-offer/  05-onboarding/
-├── _shared/templates/    ← 新岗位/新面试的模板
+├── CONTEXT.md            招聘标准、在招岗位与优先级
+├── AGENTS.md             告诉 AI 如何选择流程和遵守工作约定
+├── skills/               同一份招聘流程和看板脚本
+├── .agents/skills/       Codex / Agent Skills 发现入口
+├── .claude/skills/       Claude Code 发现入口
+├── .qoder/skills/        Qoder 发现入口
+├── 01-jd/               对外 JD，_internal/ 存放对内寻源笔记
+├── 02-sourcing/         dedup-ledger.csv 候选台账与寻源记录
+├── 03-interview/        候选人面试档案
+├── 04-offer/
+├── 05-onboarding/
+├── _shared/templates/  复用模板
 └── runtime/
-    ├── reports/          ← 本地日报与 review 汇总
-    └── resumes/          ← 邮件简历附件 + 导入去重索引
+    ├── reports/        本地日报与评估汇总
+    ├── resumes/        简历附件与导入去重索引
+    └── recruit-board/  独立任务记录与岗位状态备份
 ```
 
-三个隐藏目录里只放指向 `skills/` 的链接，不会复制出三套内容。其他工具即使没有自己的
-skill 注册目录，也能从根目录 `AGENTS.md` 路由到同一套流程。ZCode 可以直接读 `AGENTS.md`；
-想让技能出现在 ZCode 面板里，可在 Settings → Skills 中从 Codex 或 Claude Code 来源导入到当前 Project。
+三个隐藏的 Skill 入口指向同一份 `skills/`，避免各工具读到不同版本。没有专用发现入口的工具从 `AGENTS.md` 路由。ZCode 也可以直接读取 `AGENTS.md`，需要面板入口时再从 Codex 或 Claude Code 来源导入。
 
-## 设计原则（为什么长这样）
+## 使用边界
 
-- **本地文件是唯一事实源**：台账、JD、面试档案都是你目录里的纯文本。AI 换了、工具换了，数据都还在。
-- **标准与执行分离**：筛选标准全在 `CONTEXT.md`（你的），工作流文档不写死任何数字（通用的）——改标准只改一处。
-- **对内对外分离**：寻源策略、排除信号、薪资带宽放 `_internal/` 不外发；对外 JD 干净到可以直接发布。
-- **不可逆动作必经确认**：AI 可以帮你筛一千份简历，但拒绝一个人、联系一个人，默认由你拍板。
-- **邮箱只是输入渠道**：只读收取，不标已读、不移动 / 删除、不回复 / 转发；风险邮件和不可信附件不自动下载。
+- 打招呼、拒绝、通知候选人、发 offer 等对外动作默认先获得你的确认。看板中的“需确认”记录不代表已经执行，岗位状态保存也不改变平台职位。
+- 两个平台默认使用可见浏览器。保留默认模式，不设 `RECRUIT_BROWSER_HIDDEN=true`。遇到验证码、安全验证、账号限制或不明发送结果时停止，先人工核验，不反复刷新、重登或重发。
+- 看板读取本地台账、岗位表和独立任务记录，不连接招聘网站或 CDP。资料缺失、重复冲突、未知状态与陈旧数据会明确提示。
+- 飞书邮箱仅作为简历输入渠道，按指定范围只读收取，不标已读、不移动或删除、不回复或转发。风险附件不自动下载。
 
-想了解这些取舍背后的原因，读 [设计思路与理念](docs/DESIGN.md)。
+## 文档与相关项目
 
-## 绝活日资料包
+| 入口 | 内容 |
+| --- | --- |
+| [v0.7.0 正式版说明](docs/releases/v0.7.0.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
+| [看板配置与资料关联](skills/recruit-board/references/configuration.md) | 旧状态、岗位别名、自定义文件关联和本地岗位保存规则 |
+| [看板宿主接入](skills/recruit-board/references/hosts.md) | 服务探测、工作区核验、网页与原生面板入口 |
+| [共享进度协议](skills/recruit-board/references/progress.md) | 六个工作流怎样记录步骤、逐人结果与待确认事项 |
+| [设计思路与理念](docs/DESIGN.md) | 为什么先梳理岗位、使用本地文件、区分内外资料并保留人工确认 |
+| [BOSS CLI 维护 fork](https://github.com/Viy1204/boss-cli) | `@viyzhu/boss-cli-fork` 的安装、命令和平台操作边界 |
+| [猎聘 CLI](https://github.com/Viy1204/liepin-cli) | `@viyzhu/liepin-cli` 的安装、命令与参数 |
 
-[绝活日分享资料包](https://bytedance.larkoffice.com/docx/JAbcdCacEoxAbNxEqTjcbBotnUh)
+[绝活日分享资料包](https://bytedance.larkoffice.com/docx/JAbcdCacEoxAbNxEqTjcbBotnUh) · [MIT 许可证](LICENSE)
