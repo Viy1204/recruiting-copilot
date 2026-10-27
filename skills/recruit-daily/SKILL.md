@@ -10,6 +10,10 @@ description: >
 
 每日主力动作：把 Boss 直聘 + 猎聘两个渠道的「查未读 → 主动寻源 → 初筛 → 打招呼 → 建档 → 出日报」串成一条流水线。
 
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `daily` 先 start、保存 run id 并进入真实步骤，在耗时寻源前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)，按下方完成判据结束各步，跳步写理由，等待授权记 `wait`。
+
+在 unread / screen / greet 等实际步骤中每处理完一人就及时写 `result`，初筛未通过、失败或跳过也写理由，未核实发送不记成功；待确认名单先记 `decision` 再按原安全边界 `wait`，用户拍板后按共享协议更新原收据消解待确认，不等日报结束才补录。
+
 **这是编排文档**：CLI 命令细节见 [`references/channels.md`](references/channels.md)，
 台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)，
 日报卡片推送见 [`references/daily-card.md`](references/daily-card.md)。

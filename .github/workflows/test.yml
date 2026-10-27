@@ -3,6 +3,7 @@ name: test
 on:
   push:
     branches: [master]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -22,3 +23,5 @@ jobs:
           node-version: ${{ matrix.node }}
       # 零依赖、无 lockfile，不需要 install
       - run: npm test
+      - run: sh tests/install-dependencies.test.sh
+      - run: sh tests/register-workspace-skills.test.sh

@@ -1,2 +1,5 @@
 # npm pack 产物（本地验证 DSH 插件打包用，不入库）
 *.tgz
+recruiting-copilot-*.zip
+.audit/
+.claude/launch.json

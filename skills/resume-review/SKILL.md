@@ -13,6 +13,10 @@ description: >
 从文件或邮箱送到你手上的简历——猎头推的、朋友内推的、候选人直投的——用和每日初筛**同一套标准**评估，
 评完落进同一套台账和档案，不另立体系。
 
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `resume-review` 先 start、保存 run id 并进入真实步骤，在邮箱取数或简历解析前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；本地输入跳过 mail，单份不需汇总时写理由跳过 summary，纯评级回查不 start。
+
+在 evaluate / records 等步骤每完成一人的评估或落档核对就及时写 `result`，包括未达标结论和风险点；需用户决定的按共享协议记待确认，不等批量汇总才补录。
+
 ## 标准来源（每次现读，永不缓存）
 
 **评估标准永远从工作区 `CONTEXT.md` 现读**——标准在动态演进，用户说"按新规评"指的就是它的最新版。

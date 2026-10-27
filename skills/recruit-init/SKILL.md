@@ -12,6 +12,8 @@ description: >
 
 首次使用时跑一次。目标：搭好一个「任何 AI 工具打开都能直接干活」的招聘工作区。
 
+网页开工（默认）：目标工作区实际建立后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `init` start、保存 run id，按 [`共享进度协议`](../recruit-board/references/progress.md) 补记依赖与建目录的已观测结果，再进入当前真实步骤，尽早确认服务并打开或复用网页，同时交付本轮链接。目录未建立前不 start，不向源码仓库写 runtime；缺脚本或接入失败按共享降级继续初始化，不为看板覆盖旧 skills。
+
 ## Step 1 前置依赖检查
 
 先定位本 `SKILL.md` 所在的目录，然后运行它自带的安装脚本。在本模板仓库根目录中的命令是：
@@ -20,10 +22,9 @@ description: >
 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-脚本会检查 Node.js，安装 Boss / 猎聘 CLI，并在 macOS 等环境中自动修复 npm
-全局命令的 `PATH`。默认安装已适配当前 Boss 前端的维护版：
-`git+https://github.com/Viy1204/boss-cli.git#main`。如需替换来源，可在运行前设置
-`BOSS_CLI_SOURCE`。
+脚本会检查 Node.js ≥22，安装 Boss / 猎聘 CLI，并在 macOS 等环境中自动修复 npm
+全局命令的 `PATH`。v0.7.0 默认安装固定的 Boss 维护包
+`@viyzhu/boss-cli-fork@0.8.5`。如需替换来源，可在运行前设置 `BOSS_CLI_SOURCE`。
 
 如果当前 agent 没有全局安装权限，先给同一脚本加 `--check-only`
 获取诊断结果。**无论是权限、Node/npm/git 缺失、网络、构建还是包安装失败，
@@ -31,10 +32,10 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 
 安装后依次确认：
 
-1. `node --version` —— 需要 Node ≥ 20。没有 → 引导去 https://nodejs.org 装 LTS。
-2. `boss help` —— Boss 直聘 CLI。没有 → 重跑安装脚本。不要直接用
-   `npm install -g git+...`：部分 npm 版本会把它留成指向临时缓存的符号链接。
-   本脚本会先构建并打包 fork，再安装持久化的包文件。
+1. `node --version` —— 需要 Node ≥22。没有 → 引导去 https://nodejs.org 装 LTS。
+2. `boss help` —— Boss 直聘 CLI。没有 → 重跑安装脚本。默认从 npm 安装上述固定版本。
+   若用 `BOSS_CLI_SOURCE` 指定带 ref 的 git 来源，本脚本先构建并打包，再安装持久化包文件，
+   避免部分 npm 版本将 git 全局安装留成指向临时缓存的符号链接。
 3. `liepin --version` —— 猎聘 CLI。没有 → 重跑同一安装脚本，不另外维护第二条安装路径。
 4. 本机装有 Chrome 或 Edge（两个 CLI 都靠它驱动真实浏览器）。
 5. **可选**：`lark-cli --version` —— 有且已配置飞书应用凭证 → 日报出飞书云文档、

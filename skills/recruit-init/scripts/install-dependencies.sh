@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BOSS_CLI_SOURCE=${BOSS_CLI_SOURCE:-git+https://github.com/Viy1204/boss-cli.git#main}
+BOSS_CLI_SOURCE=${BOSS_CLI_SOURCE:-@viyzhu/boss-cli-fork@0.8.5}
 LIEPIN_CLI_SOURCE=${LIEPIN_CLI_SOURCE:-@viyzhu/liepin-cli}
 PROFILE_BLOCK_START='# >>> recruiting-copilot npm global bin >>>'
 PROFILE_BLOCK_END='# <<< recruiting-copilot npm global bin <<<'
@@ -34,14 +34,14 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-command -v node >/dev/null 2>&1 || die 'Node.js 20 or newer is required.'
+command -v node >/dev/null 2>&1 || die 'Node.js 22 or newer is required.'
 command -v npm >/dev/null 2>&1 || die 'npm is required.'
 
 node_major=$(node -p 'process.versions.node.split(".")[0]')
 case "$node_major" in
   ''|*[!0-9]*) die "could not parse Node.js version: $node_major" ;;
 esac
-[ "$node_major" -ge 20 ] || die "Node.js 20 or newer is required (found $node_major)."
+[ "$node_major" -ge 22 ] || die "Node.js 22 or newer is required (found $node_major)."
 
 npm_prefix=$(npm config get prefix)
 [ -n "$npm_prefix" ] || die 'npm global prefix is empty.'

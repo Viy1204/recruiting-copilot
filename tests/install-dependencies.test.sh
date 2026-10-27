@@ -23,8 +23,8 @@ make_fake_tools() {
   cat >"$sandbox/fake-bin/node" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
-  --version) printf 'v24.0.0\n' ;;
-  -p) printf '24\n' ;;
+  --version) printf 'v%s.0.0\n' "${FAKE_NODE_MAJOR:-24}" ;;
+  -p) printf '%s\n' "${FAKE_NODE_MAJOR:-24}" ;;
   *) exit 0 ;;
 esac
 EOF
@@ -162,25 +162,32 @@ test_boss_source_defaults_to_fork_and_can_be_overridden() {
   BOSS_CLI_SOURCE='custom-boss-package@1.0.0' \
     run_installer "$override_sandbox" >/dev/null
 
-  default_clone=$(sed -n '1p' "$default_sandbox/git.log")
+  default_install=$(grep '^install -g ' "$default_sandbox/npm.log" | sed -n '1p')
   override_install=$(grep '^install -g ' "$override_sandbox/npm.log" | sed -n '1p')
-  case "$default_clone" in
-    'clone --depth 1 --branch main https://github.com/Viy1204/boss-cli.git '*) ;;
-    *) fail "default Boss CLI clone source (got $default_clone)" ;;
-  esac
+  assert_equals \
+    'install -g @viyzhu/boss-cli-fork@0.8.5' \
+    "$default_install" \
+    'default Boss CLI source'
+  [ ! -e "$default_sandbox/git.log" ] || fail 'default Boss CLI source invoked git'
   assert_equals \
     'install -g custom-boss-package@1.0.0' \
     "$override_install" \
     'overridden Boss CLI source'
 }
 
-test_packed_fork_upgrade_does_not_preemptively_remove_existing_boss() {
+test_git_override_builds_fork_without_preemptively_removing_existing_boss() {
   sandbox=$(mktemp -d)
   trap 'rm -rf "$sandbox"' EXIT HUP INT TERM
   make_fake_tools "$sandbox"
 
-  run_installer "$sandbox" >/dev/null
+  BOSS_CLI_SOURCE='git+https://github.com/Viy1204/boss-cli.git#v0.8.5' \
+    run_installer "$sandbox" >/dev/null
 
+  clone_command=$(sed -n '1p' "$sandbox/git.log")
+  case "$clone_command" in
+    'clone --depth 1 --branch v0.8.5 https://github.com/Viy1204/boss-cli.git '*) ;;
+    *) fail "overridden Boss CLI clone source (got $clone_command)" ;;
+  esac
   if grep '^uninstall -g @joohw/boss-cli$' "$sandbox/npm.log" >/dev/null; then
     fail 'installer preemptively removed the existing Boss package'
   fi
@@ -202,10 +209,39 @@ test_check_only_does_not_install_or_edit_profile() {
   [ ! -e "$sandbox/home/.zprofile" ] || fail 'check-only edited the shell profile'
 }
 
+test_node_20_is_rejected_before_installing_or_editing_profile() {
+  sandbox=$(mktemp -d)
+  trap 'rm -rf "$sandbox"' EXIT HUP INT TERM
+  make_fake_tools "$sandbox"
+
+  if FAKE_NODE_MAJOR=20 run_installer "$sandbox" >"$sandbox/output.log" 2>&1; then
+    fail 'Node.js 20 was accepted'
+  fi
+
+  grep -F 'Node.js 22 or newer is required' "$sandbox/output.log" >/dev/null ||
+    fail 'Node.js 20 rejection did not explain the minimum version'
+  [ ! -e "$sandbox/npm.log" ] || fail 'Node.js 20 invoked npm install'
+  [ ! -e "$sandbox/git.log" ] || fail 'Node.js 20 invoked git'
+  [ ! -e "$sandbox/home/.zprofile" ] || fail 'Node.js 20 edited the shell profile'
+}
+
+test_node_22_is_accepted() {
+  sandbox=$(mktemp -d)
+  trap 'rm -rf "$sandbox"' EXIT HUP INT TERM
+  make_fake_tools "$sandbox"
+
+  FAKE_NODE_MAJOR=22 run_installer "$sandbox" >"$sandbox/output.log"
+
+  [ -x "$sandbox/npm-prefix/bin/boss" ] || fail 'Node.js 22 did not install Boss CLI'
+  [ -x "$sandbox/npm-prefix/bin/liepin" ] || fail 'Node.js 22 did not install Liepin CLI'
+}
+
+test_node_20_is_rejected_before_installing_or_editing_profile
+test_node_22_is_accepted
 test_first_macos_run_adds_profile_block
 test_second_run_keeps_one_profile_block
 test_existing_path_leaves_profile_unchanged
 test_boss_source_defaults_to_fork_and_can_be_overridden
-test_packed_fork_upgrade_does_not_preemptively_remove_existing_boss
+test_git_override_builds_fork_without_preemptively_removing_existing_boss
 test_check_only_does_not_install_or_edit_profile
 printf 'PASS: install-dependencies\n'

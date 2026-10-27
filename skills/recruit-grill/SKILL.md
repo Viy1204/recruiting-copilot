@@ -10,6 +10,8 @@ description: >
 
 把用人需求从「我要一个厉害的 XX」逼问成**可执行的初筛标准**。一次只梳理一个岗位。
 
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `grill` 先 start、保存 run id 并进入真实步骤，尽早确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；访谈等待用户回答时在 interview 记 `wait`，恢复后记 `step`，不把未确认标准当作已完成。
+
 ## 访谈纪律（最重要）
 
 - **一次只问一个问题**。问完等回答，再问下一个。一次抛一串问题会把用户问懵。

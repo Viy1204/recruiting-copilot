@@ -22,9 +22,11 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (rel) => JSON.parse(readFileSync(path.join(repoRoot, rel), "utf8"));
 
-test("package.json 与 .claude-plugin/plugin.json 版本号一致", () => {
+test("主包、主插件与可选看板插件版本号一致", () => {
   const pkg = readJson("package.json");
   const plugin = readJson(path.join(".claude-plugin", "plugin.json"));
+  const board = readJson("skills/recruit-board/.claude-plugin/plugin.json");
+  assert.equal(board.version, pkg.version, "可选原生看板必须使用相同发布版本，避免安装到旧缓存");
   assert.equal(
     plugin.version,
     pkg.version,
