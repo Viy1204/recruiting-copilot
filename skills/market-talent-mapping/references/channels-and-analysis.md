@@ -31,6 +31,8 @@
 5. **猎聘全国搜索相关度松**：通用关键词会引来跨行业噪声。按 `current_title` 关联度正则过滤；**猎聘不支持按公司精确定向**（"公司名 + 岗位词"是松散全文匹配，会返回不相干的人）。
 6. **并发连同一个调试端口没问题，但别从第二个会话 enable 重量级 CDP 域**：DSH 面板就一直并发挂着（只用 `Page.enable` + screencast + `Input.*`）。发 `Runtime.enable` 会被 BOSS 反爬当调试器挂载信号、**杀掉整个浏览器**；发 `Network.enable` 会拧死会话（`Network.enable timed out`）。读页面用 `Runtime.evaluate`，它不需要 enable。
 7. **Python 读中文源码**：Windows 默认 GBK 会把中文搞坏 → `PYTHONUTF8=1 python -X utf8 script.py`。
+8. **猎聘境外 IP 拦截**：扫码成功不代表业务可用；VPN／整机隧道可能使页面进入 `/secure/intercept-abroad-ip`。先停止，由用户调整为直连并确认恢复，不靠重登或反复搜索试探。
+9. **猎聘主页面清空为 `about:blank`**：停止自动化并保留浏览器与登录态；不自动刷新、重登或重发。不要把历史版本的修复结论当作本次根因，涉及发送时先核验平台记录。
 
 ## 每候选人数据 schema
 

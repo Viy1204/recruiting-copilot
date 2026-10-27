@@ -62,17 +62,17 @@
 ## 前置条件（所有工具通用）
 
 1. [Node.js](https://nodejs.org) ≥ 22，本机装有 Chrome。
-2. 运行下方「安装与使用」里的依赖安装脚本。脚本装的 Boss CLI 是
-   [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli) 维护版——它跟着 Boss 前端改版走，
-   带着当前的兼容与安全基线。macOS 上如果 npm 全局命令不在 `PATH`，脚本会幂等地改一次当前
+2. 运行下方「安装与使用」里的依赖安装脚本。脚本默认安装 Boss 维护包
+   `@viyzhu/boss-cli-fork@0.8.5`，源码在 [`Viy1204/boss-cli`](https://github.com/Viy1204/boss-cli)，
+   可用 `BOSS_CLI_SOURCE` 覆盖来源。macOS 上如果 npm 全局命令不在 `PATH`，脚本会幂等地改一次当前
    shell 的配置文件（zsh 写 `~/.zprofile`，bash 写 `~/.bash_profile`）。
 3. 两个平台各扫码登录一次（登录态存在浏览器的 user-data-dir 里，一次能管很久）：
    ```bash
    boss login
    liepin login
    ```
-   `login` 一定是可见窗口（扫码必须看得见）。BOSS 平时跑的也是有头窗口；猎聘平时无头，
-   `liepin login` 会先关掉无头实例再以有头拉起，登录态不会丢。
+   `login` 需要可见窗口供人工扫码。BOSS 和猎聘默认都有头；猎聘会优先复用有效登录态，
+   仅在确需人工登录且当前实例不可见时才切换为可见窗口。不要为检查状态强制重登。
 4. **可选**：飞书用户装 lark-cli 并配置凭证 → 日报出飞书云文档并可推一张互动卡片到私聊/群、
    约面试直接建日历日程和视频会议，还能从飞书邮箱收取猎聘 / BOSS 简历附件；不装则日报输出本地 Markdown、
    不推卡片、约面试给你一份手动建会清单、简历需本地提供。寻源、本地简历 review 和台账功能都不受影响。
@@ -82,7 +82,7 @@
 ### 方式一：通用（Codex / workbuddy / qoderwork / MiniMax Code / Z code / 任何 agent 工具）
 
 ```bash
-git clone <本仓库地址>
+git clone --branch v0.7.0 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
 cd recruiting-copilot
 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
@@ -114,9 +114,9 @@ claude plugin install recruiting-copilot
 - `/interview-schedule` —— 约面试：日历 + 视频会议 + 拉面试官，档案台账同步
 - `/ask-viy` —— 不知道该用哪个？问它
 
-### 本地招聘进展看板（v0.7.0-beta.2 测试版）
+### 本地招聘进展看板（v0.7.0 正式版）
 
-本轮升级以预发布版本供试用，固定标签为 `v0.7.0-beta.2`。完整安装、已有工作区升级与回退步骤见 [测试版说明](docs/releases/v0.7.0-beta.2.md)；正式版仍使用 `v0.6.6`。
+v0.7.0 将本地招聘进展看板纳入正式版本，固定安装标签为 `v0.7.0`。本轮待确认名单、任务与逐人记录、岗位本地管理和可选原生面板一同交付。安装、已有工作区升级与回退步骤见 [正式版说明](docs/releases/v0.7.0.md)。
 
 `skills/recruit-board/` 自带完整模型、进度脚本、本机网页和可选原生 mod，初始化复制整个 `skills/` 时一同携带。**网页版是 Claude、Codex App、WorkBuddy 的统一主界面**；六个执行流程在脚本可用时默认记录并尽早打开或复用看板。缺少脚本的旧工作区仍可照常招聘，并说明本轮未记录进度。
 
@@ -129,7 +129,7 @@ npm run board:progress -- workflows
 
 复制后的工作区直接运行 `node skills/recruit-board/scripts/server.mjs --workspace "/绝对路径/工作区"`。在 Claude 的 Browser/Preview、Codex App 的 Browser、WorkBuddy 右侧浏览器或普通浏览器打开 `http://127.0.0.1:4318/`。宿主有专用服务工具时由它管理前台进程；没有可用界面工具时返回本机链接，不承诺自动停靠或后台常驻。服务健康核验、已有实例复用和本轮链接交接见 [三端打开约定](skills/recruit-board/references/hosts.md)。页面只展示本地台账与独立任务记录，不连接 CDP、招聘网站或既有 DSH 面板。
 
-支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与本轮发布复验的边界见 [发布验收](verification/release-v0.7.0-beta.2-checks.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
+支持 function hooks/Pane 的 Claude 宿主可从**一个来源**加载本 skill 自带的 `recruiting-board` mod：工作区 `.claude/skills/recruit-board` 自动发现，或可选 marketplace 条目（二选一，避免重复加载）。本地 marketplace 方式为 `claude plugin marketplace add "/绝对路径/recruiting-copilot"` 后安装 `recruiting-board`；主插件不含新增 hooks。mod 默认只注册 `/recruiting-board`，用户手动运行才开面板；支持 `/recruiting-board <工作区绝对路径>`，省略参数使用当前会话目录。原生保留结果概览、近期记录和候选资料入口，视觉采用宿主组件，不保证与网页像素一致；日常任务优先统一网页。主 skill `/recruit-board` 负责使用指引，面板停靠位置由宿主决定。已在本机 Claude Desktop 的 2.1.299 引擎实际验证原生加载、阶段名单、候选详情、Markdown 正文、系统 PDF 打开，以及岗位草稿取消、保存和恢复。轮询只在业务数据变化时重绘；历史原生验证与正式版验收的边界见 [正式版说明](docs/releases/v0.7.0.md)。早期 API 可能随版本变化，旧 CLI 的校验不能替代相应 Desktop 运行验证。
 
 首页优先显示当前任务“本轮需确认”的人选、待拍板事项、资料和依据。执行记录与候选阶段默认折叠，可按需查看步骤、完整处理名单和任务历史。默认跟随最新创建的任务，手动选择历史或打开明确 run 链接后固定；阅读详情或编辑时有新任务，保留阅读位置并提供“回到最新”。人数按姓名＋原岗位去重，收据条数不当作人数；岗位筛选不改变当前任务的确认名单。没有 run 显示“尚无任务进度记录”，旧任务没有收据显示“未记录”，不补造历史。前台按一秒间隔检查，后台降频、恢复时立即同步；读取状态与业务最后记录分开，动画只反馈实际变化。
 
@@ -173,7 +173,7 @@ npm run board:progress -- workflows
 在任意目录执行：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git
+dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.7.0
 ```
 
 （`web` 是 Web 界面 profile；`headless` 等其他 profile 同理，把 `web` 换成名字即可。）
@@ -181,7 +181,7 @@ dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.g
 安装后**重启 DSH 会话**，本仓库 `skills/` 下的工作流就会出现在任意工作区的
 skill 目录里（不必把仓库克隆成工作区）：
 `ask-viy`、`recruit-init`、`recruit-grill`、`recruit-daily`、`resume-review`、
-`interview-schedule`、`market-talent-mapping`，以及测试版新增的本地 `recruit-board` 指引。
+`interview-schedule`、`market-talent-mapping`，以及本地 `recruit-board` 指引。
 
 **附带功能——Web UI 右侧「招聘浏览器」面板**：DSH Web 界面右侧是一只**能直接上手操作的浏览器**，
 鼠标、滚轮、键盘、中文输入法、粘贴全都直通。**BOSS 和猎聘都是可用的源**，面板顶部一键切换；

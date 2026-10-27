@@ -664,7 +664,8 @@ test("验证页/安全页的各种形态都算风控页，about:blank 不算", (
     "https://www.zhipin.com/web/user/safe/verify",
     "https://www.zhipin.com/web/passport/zp/verify.html",
     "https://www.zhipin.com/web/passport/cm/security-check.html",
-    "https://www.zhipin.com/web/common/nonsupport.html"
+    "https://www.zhipin.com/web/common/nonsupport.html",
+    "https://lpt.liepin.com/secure/intercept-abroad-ip?backurl=recommend"
   ];
   for (const url of hit) {
     const { mirror } = stubMirror();
@@ -675,6 +676,8 @@ test("验证页/安全页的各种形态都算风控页，about:blank 不算", (
   const { mirror: m2 } = stubMirror();
   m2._checkRiskUrl("about:blank");
   m2._checkRiskUrl("https://www.zhipin.com/web/geek/chat");
+  m2._checkRiskUrl("https://lpt.liepin.com/recommend");
+  m2._checkRiskUrl("https://safe.liepin.com/page/liepin/captchaPage_PC");
   assert.equal(m2.state.risk, null);
 });
 
