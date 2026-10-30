@@ -1,13 +1,16 @@
-import { candidateStatus, ROLE_SCOPES, RUN_LABELS, selectRoles, selectTask, STAGES, STEP_LABELS } from '/model.mjs';
+import { candidateStatus, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } from '/model.mjs';
 import { createSnapshotController } from '/live.mjs';
 
 const byId = id => document.getElementById(id);
-const roleSelect = byId('role'), runSelect = byId('run');
+const roleSelect = byId('role'), runSelect = byId('run'), refreshButton = byId('refresh-board');
 const initialURL = new URL(window.location.href), initialWorkspace = initialURL.searchParams.get('workspace');
 let expectedWorkspaceKey = /^[a-f0-9]{64}$/i.test(initialWorkspace ?? '') ? initialWorkspace.toLowerCase() : null;
 let workspaceBlocked = initialWorkspace !== null && expectedWorkspaceKey === null;
 let snapshot = null, taskSelection = { mode: 'live', runId: null }, selectedStage = null, disconnected = false;
 let selectionMessage = '', displayedRun = null, pageActive = true;
+let candidateSearchLimit = 20;
+let searchConfirmations = null;
+const DECISION_PREVIEW = 2;
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const text = (target, value) => { const element = typeof target === 'string' ? byId(target) : target; if (element.textContent !== value) element.textContent = value; };
 let selectedCandidateId = null, candidateOrigin = null, recordRequest = 0, documentRequest = 0, roleRequest = 0, roleInfo = null, csrfToken = null;
@@ -19,14 +22,430 @@ let activityRequest = 0, activityAbort = null;
 const freshActivity = runId => ({ runId, data: undefined, revision: null, requestedRevision: null, status: 'idle', error: '', retryAt: 0, ahead: null });
 let activityState = freshActivity(null);
 const scopeSummary = scope => ({ active: '在招岗位汇总', following: '关注岗位汇总', all: '全部岗位' }[scope]);
-const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未知';
-const shortTime = value => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+const stamp = value => {
+  const date = new Date(value);
+  const pad = number => String(number).padStart(2, '0');
+  return { date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`, time: `${pad(date.getHours())}:${pad(date.getMinutes())}` };
+};
+const time = value => value ? (({ date, time }) => `${date} ${time}`)(stamp(value)) : '未知';
+const shortTime = value => value ? (({ date, time }) => `${date.slice(5)} ${time}`)(stamp(value)) : '未知';
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
   if (className) element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
 };
+
+const LAYOUT_GROUPS = {
+  board: { parent: 'layout-root', label: '工作台分组', members: [{ id: 'assistant', label: '确认事项' }, { id: 'roles', label: '岗位与人选' }, { id: 'tasks', label: '任务与记录' }] },
+  roles: { parent: 'role-blocks', label: '岗位与人选', members: [{ id: 'role-scope', label: '岗位范围' }, { id: 'candidate-stages', label: '候选阶段' }] },
+  tasks: { parent: 'task-blocks', label: '任务与记录', members: [{ id: 'task-card', label: '任务摘要' }, { id: 'execution-records', label: '执行记录' }] }
+};
+const defaultLayoutOrders = () => Object.fromEntries(Object.entries(LAYOUT_GROUPS).map(([id, group]) => [id, group.members.map(member => member.id)]));
+const layoutState = { editing: false, workspaceKey: null, orders: defaultLayoutOrders(), gesture: null, changedBeforeLoad: false, storageMessage: '' };
+const layoutItems = new Map();
+let applyingLayout = false, layoutScrollFrame = null;
+
+const workspaceNav = byId('workspace-nav');
+const workspaceNavTargets = {
+  overview: byId('workbench-heading'),
+  roles: byId('candidates-heading'),
+  tasks: byId('execution-records').querySelector('summary h3'),
+  following: byId('choose-following')
+};
+workspaceNavTargets.tasks.tabIndex = -1;
+let workspaceNavFocus = null, followingPickerTrigger = byId('choose-following');
+
+function focusWorkbenchTarget(element, block = 'start') {
+  element.focus({ preventScroll: true });
+  element.scrollIntoView({ block, behavior: motionQuery.matches ? 'instant' : 'smooth' });
+}
+
+function setWorkspaceNavTarget(target) {
+  for (const button of workspaceNav.querySelectorAll('[data-nav-target]')) {
+    if (button.dataset.navTarget === target) button.setAttribute('aria-current', 'location');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function navigateWorkspace(target) {
+  if (target === 'roles' && byId('candidate-query').value) clearCandidateSearch(false);
+  if (target === 'tasks') {
+    byId('execution-records').open = true;
+    if (snapshot && !workspaceBlocked) { renderRunResults(selectedRun()); syncActivity(selectedRun()); }
+  }
+  setWorkspaceNavTarget(target);
+  focusWorkbenchTarget(workspaceNavTargets[target]);
+}
+
+for (const button of workspaceNav.querySelectorAll('[data-nav-target]')) button.addEventListener('click', () => navigateWorkspace(button.dataset.navTarget));
+
+function visibleWorkbenchTarget(element) {
+  const style = getComputedStyle(element);
+  return element.getClientRects().length > 0 && style.display !== 'none' && style.visibility === 'visible';
+}
+
+document.addEventListener('focusin', event => {
+  if (workspaceNav.contains(event.target)) workspaceNavFocus = event.target.closest('[data-nav-target]')?.dataset.navTarget ?? (event.target.closest('#workspace-choose-following') ? 'following' : 'roles');
+  else if (event.target !== document.body || visibleWorkbenchTarget(workspaceNav)) workspaceNavFocus = null;
+});
+document.addEventListener('pointerdown', event => { if (!workspaceNav.contains(event.target)) workspaceNavFocus = null; }, true);
+if (typeof ResizeObserver === 'function') {
+  new ResizeObserver(() => {
+    if (!workspaceNavFocus || visibleWorkbenchTarget(workspaceNav)) return;
+    const active = document.activeElement;
+    if (!workspaceNav.contains(active) && active !== document.body && active !== document.documentElement) { workspaceNavFocus = null; return; }
+    const target = workspaceNavTargets[workspaceNavFocus];
+    const fallback = workspaceNavFocus === 'tasks' ? byId('tasks-heading') : workspaceNavTargets.roles;
+    workspaceNavFocus = null;
+    const destination = visibleWorkbenchTarget(target) ? target : fallback;
+    if (destination.matches('h1, h2, h3')) destination.tabIndex = -1;
+    focusWorkbenchTarget(destination);
+  }).observe(document.querySelector('.app'));
+}
+
+const initialPreviewMode = initialURL.searchParams.get('preview');
+const previewEnabled = ['wide', 'narrow'].includes(initialPreviewMode);
+function setPreviewMode(mode) {
+  if (!previewEnabled) return;
+  document.querySelector('.app').dataset.preview = mode;
+  for (const button of byId('preview-toolbar').querySelectorAll('[data-preview-mode]')) button.setAttribute('aria-pressed', String(button.dataset.previewMode === mode));
+  const url = new URL(window.location.href);
+  url.searchParams.set('preview', mode);
+  if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+}
+byId('preview-toolbar').hidden = !previewEnabled;
+if (previewEnabled) setPreviewMode(initialPreviewMode);
+for (const button of byId('preview-toolbar').querySelectorAll('[data-preview-mode]')) button.addEventListener('click', () => setPreviewMode(button.dataset.previewMode));
+
+function announceLayout(message) {
+  text('layout-announcement', message);
+}
+
+function renderLayoutStorageNotice() {
+  const message = layoutState.storageMessage || (!layoutState.workspaceKey && (layoutState.editing || layoutState.changedBeforeLoad) ? '尚未取得工作区标识，布局暂仅在本页保留。' : '');
+  text('layout-storage-note', message);
+  byId('layout-storage-note').hidden = !message;
+}
+
+function persistLayoutOrders() {
+  if (!layoutState.workspaceKey) layoutState.changedBeforeLoad = true;
+  else {
+    try {
+      localStorage.setItem(`recruiting-board:layout:v1:${layoutState.workspaceKey}`, JSON.stringify({ version: 1, orders: layoutState.orders }));
+      layoutState.storageMessage = '';
+      layoutState.changedBeforeLoad = false;
+    } catch (error) {
+      layoutState.storageMessage = '本机布局保存失败；本页排序仍有效，刷新后可能不会保留。';
+    }
+  }
+  renderLayoutStorageNotice();
+}
+
+function parseLayoutOrders(value) {
+  if (!value || value.version !== 1 || !value.orders || typeof value.orders !== 'object' || Array.isArray(value.orders)) throw new Error('布局记录格式无效');
+  const orders = defaultLayoutOrders();
+  let repaired = Object.keys(value.orders).some(id => !Object.hasOwn(LAYOUT_GROUPS, id));
+  for (const [id, defaults] of Object.entries(orders)) {
+    const saved = value.orders[id];
+    if (saved !== undefined && !Array.isArray(saved)) throw new Error('布局分组格式无效');
+    const known = new Set(defaults), unique = new Set((saved ?? []).filter(member => typeof member === 'string' && known.has(member)));
+    orders[id] = [...unique, ...defaults.filter(member => !unique.has(member))];
+    if (JSON.stringify(saved) !== JSON.stringify(orders[id])) repaired = true;
+  }
+  return { orders, repaired };
+}
+
+function updateLayoutControls() {
+  for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
+    const order = layoutState.orders[groupId];
+    for (const member of group.members) {
+      const controls = layoutItems.get(member.id), position = order.indexOf(member.id);
+      controls.bar.hidden = !layoutState.editing;
+      controls.handle.setAttribute('aria-label', `调整${member.label}顺序，${group.label}第 ${position + 1} / ${order.length} 位`);
+      controls.up.setAttribute('aria-disabled', String(position === 0));
+      controls.down.setAttribute('aria-disabled', String(position === order.length - 1));
+    }
+  }
+}
+
+function applyLayoutOrders(orders) {
+  const focused = document.activeElement;
+  const selection = focused?.matches('input, textarea') && typeof focused.selectionStart === 'number' ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection] : null;
+  layoutState.orders = orders;
+  applyingLayout = true;
+  try {
+    for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
+      const parent = byId(group.parent);
+      let position = parent.firstElementChild;
+      for (const id of orders[groupId]) {
+        const element = layoutItems.get(id).element;
+        if (element !== position) {
+          if (typeof parent.moveBefore === 'function') parent.moveBefore(element, position);
+          else parent.insertBefore(element, position);
+        }
+        position = element.nextElementSibling;
+      }
+    }
+    if (focused?.isConnected && document.activeElement !== focused) {
+      focused.focus({ preventScroll: true });
+      if (selection) focused.setSelectionRange(...selection);
+    }
+  } finally {
+    applyingLayout = false;
+  }
+  updateLayoutControls();
+}
+
+function syncLayoutPreferences() {
+  if (layoutState.workspaceKey || !snapshot?.workspaceKey || layoutState.gesture) return;
+  layoutState.workspaceKey = snapshot.workspaceKey;
+  let orders = defaultLayoutOrders();
+  try {
+    const saved = localStorage.getItem(`recruiting-board:layout:v1:${layoutState.workspaceKey}`);
+    if (saved !== null) {
+      try {
+        const parsed = parseLayoutOrders(JSON.parse(saved));
+        orders = parsed.orders;
+        if (parsed.repaired) layoutState.storageMessage = '本机布局记录已整理：忽略无效或重复项，并补齐缺少的模块。';
+      } catch (error) {
+        layoutState.storageMessage = '本机布局记录损坏或版本不兼容，已恢复默认顺序。';
+      }
+    }
+  } catch (error) {
+    layoutState.storageMessage = '本机布局读取失败；本页仍可排序，刷新后可能不会保留。';
+  }
+  if (!layoutState.changedBeforeLoad && !layoutState.gesture) applyLayoutOrders(orders);
+  else if (!layoutState.gesture) persistLayoutOrders();
+  renderLayoutStorageNotice();
+}
+
+function layoutPositionMessage(groupId, id) {
+  const order = layoutState.orders[groupId];
+  return `${layoutItems.get(id).label}位于${LAYOUT_GROUPS[groupId].label}第 ${order.indexOf(id) + 1} / ${order.length} 位`;
+}
+
+function keepLayoutControlVisible(element) {
+  const rect = element.getBoundingClientRect();
+  const top = Math.min(byId('layout-toolbar').getBoundingClientRect().bottom + 8, window.innerHeight / 2);
+  if (rect.top < top) window.scrollBy(0, rect.top - top);
+  else if (rect.bottom > window.innerHeight - 12) window.scrollBy(0, rect.bottom - window.innerHeight + 12);
+}
+
+function clearLayoutDrop() {
+  for (const { element } of layoutItems.values()) delete element.dataset.layoutDrop;
+}
+
+function previewLayoutDrop(gesture) {
+  clearLayoutDrop();
+  const parent = byId(LAYOUT_GROUPS[gesture.groupId].parent), bounds = parent.getBoundingClientRect();
+  gesture.order = null;
+  if (gesture.x < bounds.left || gesture.x > bounds.right || gesture.y < bounds.top || gesture.y > bounds.bottom) return;
+  const rest = gesture.before.filter(id => id !== gesture.id);
+  const visible = rest.filter(id => layoutItems.get(id).element.getClientRects().length);
+  if (!visible.length) { gesture.order = gesture.before; return; }
+  const next = visible.find(id => {
+    const rect = layoutItems.get(id).element.getBoundingClientRect();
+    return gesture.y < rect.top + rect.height / 2;
+  });
+  const index = next === undefined ? rest.length : rest.indexOf(next);
+  gesture.order = [...rest.slice(0, index), gesture.id, ...rest.slice(index)];
+  if (gesture.order.every((id, position) => id === gesture.before[position])) return;
+  layoutItems.get(next ?? visible[visible.length - 1]).element.dataset.layoutDrop = next === undefined ? 'after' : 'before';
+}
+
+function scrollLayoutDrag(timestamp) {
+  layoutScrollFrame = null;
+  const gesture = layoutState.gesture;
+  if (gesture?.kind !== 'pointer' || gesture.phase !== 'dragging') return;
+  const bounds = byId(LAYOUT_GROUPS[gesture.groupId].parent).getBoundingClientRect();
+  const top = Math.max(0, byId('layout-toolbar').getBoundingClientRect().bottom), edge = 64;
+  const bottom = window.innerHeight;
+  const inGroup = gesture.x >= bounds.left && gesture.x <= bounds.right && gesture.y >= bounds.top && gesture.y <= bounds.bottom;
+  const speed = !inGroup ? 0 : gesture.y < top + edge ? -Math.min(1, (top + edge - gesture.y) / edge) : gesture.y > bottom - edge ? Math.min(1, (gesture.y - bottom + edge) / edge) : 0;
+  const elapsed = gesture.lastFrame === null ? 16 : Math.min(32, timestamp - gesture.lastFrame);
+  gesture.lastFrame = timestamp;
+  if (speed) window.scrollBy(0, speed * elapsed * .8);
+  previewLayoutDrop(gesture);
+  layoutScrollFrame = requestAnimationFrame(scrollLayoutDrag);
+}
+
+function finishLayoutGesture(commit, returnFocus = false) {
+  const gesture = layoutState.gesture;
+  if (!gesture) return;
+  layoutState.gesture = null;
+  if (layoutScrollFrame !== null) cancelAnimationFrame(layoutScrollFrame);
+  layoutScrollFrame = null;
+  const item = layoutItems.get(gesture.id);
+  item.element.classList.remove('layout-dragging', 'layout-grabbed');
+  item.handle.setAttribute('aria-pressed', 'false');
+  delete document.documentElement.dataset.layoutDragging;
+  clearLayoutDrop();
+  if (gesture.kind === 'pointer' && item.handle.hasPointerCapture?.(gesture.pointerId)) item.handle.releasePointerCapture(gesture.pointerId);
+  if (gesture.kind === 'pointer' && gesture.phase === 'pending') {
+    syncLayoutPreferences();
+    return;
+  }
+  const order = gesture.kind === 'pointer' ? gesture.order : layoutState.orders[gesture.groupId];
+  const accepted = commit && order !== null;
+  const next = accepted ? order : gesture.before;
+  const changed = next.some((id, index) => id !== gesture.before[index]);
+  applyLayoutOrders({ ...layoutState.orders, [gesture.groupId]: next });
+  if (accepted && changed) persistLayoutOrders();
+  syncLayoutPreferences();
+  announceLayout(accepted ? `${layoutPositionMessage(gesture.groupId, gesture.id)}，${changed ? '顺序已应用' : '位置未变'}。` : `${item.label}的本次移动已取消，顺序已恢复。`);
+  if (returnFocus) item.handle.focus({ preventScroll: true });
+}
+
+function startKeyboardLayout(groupId, id) {
+  const current = layoutState.gesture;
+  if (current?.kind === 'pointer') return false;
+  if (current?.id === id) return true;
+  if (current) finishLayoutGesture(true);
+  layoutState.gesture = { kind: 'keyboard', groupId, id, before: [...layoutState.orders[groupId]] };
+  const item = layoutItems.get(id);
+  item.element.classList.add('layout-grabbed');
+  item.handle.setAttribute('aria-pressed', 'true');
+  announceLayout(`已抓起${item.label}；↑↓ 在${LAYOUT_GROUPS[groupId].label}内移动，Enter 或空格确认，Esc 取消。`);
+  return true;
+}
+
+function moveLayoutItem(groupId, id, offset, keyboard = false, trigger = null) {
+  if (!layoutState.editing) return;
+  if (keyboard) { if (!startKeyboardLayout(groupId, id)) return; }
+  else if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
+  const order = [...layoutState.orders[groupId]], index = order.indexOf(id), target = index + offset;
+  if (target < 0 || target >= order.length) { announceLayout(`${layoutItems.get(id).label}已在同级${offset < 0 ? '最前' : '最后'}。`); return; }
+  [order[index], order[target]] = [order[target], order[index]];
+  applyLayoutOrders({ ...layoutState.orders, [groupId]: order });
+  if (!keyboard) persistLayoutOrders();
+  announceLayout(`${layoutPositionMessage(groupId, id)}。${keyboard ? 'Enter 或空格确认，Esc 取消。' : '顺序已应用。'}`);
+  keepLayoutControlVisible(trigger ?? layoutItems.get(id).handle);
+}
+
+function setLayoutEditing(editing) {
+  if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
+  layoutState.editing = editing;
+  byId('edit-layout').setAttribute('aria-expanded', String(editing));
+  byId('layout-editor').hidden = !editing;
+  byId('layout-toolbar').classList.toggle('is-editing', editing);
+  byId('layout-root').classList.toggle('is-editing', editing);
+  updateLayoutControls();
+  renderLayoutStorageNotice();
+  renderCandidateSearch();
+  announceLayout(editing ? '正在调整布局。可拖动同级模块、点上移／下移，或在把手上使用上下箭头。' : '已完成布局调整。');
+  if (!editing) byId('edit-layout').focus({ preventScroll: true });
+}
+
+function layoutIcon(paths) {
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+  for (const d of paths) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d); icon.append(path);
+  }
+  return icon;
+}
+
+for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
+  for (const member of group.members) {
+    const element = byId(group.parent).querySelector(`:scope > [data-layout-item="${member.id}"]`);
+    const bar = node('div', 'layout-item-controls'); bar.hidden = true;
+    bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', `${member.label}布局操作`);
+    const handle = node('button', 'layout-drag-handle'); handle.type = 'button'; handle.id = `layout-handle-${member.id}`;
+    handle.dataset.layoutHandle = member.id;
+    handle.setAttribute('aria-describedby', 'layout-help'); handle.setAttribute('aria-controls', group.parent);
+    handle.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown Enter Space Escape'); handle.setAttribute('aria-pressed', 'false');
+    handle.title = `拖动${member.label}；也可用 ↑↓ 调整，Enter 确认，Esc 取消`;
+    handle.append(layoutIcon(['M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01']), node('span', 'layout-handle-label', member.label));
+    const up = node('button', 'layout-move-button'), down = node('button', 'layout-move-button');
+    for (const [button, direction, offset, path] of [[up, '上移', -1, 'M12 19V5M5 12l7-7 7 7'], [down, '下移', 1, 'M12 5v14M5 12l7 7 7-7']]) {
+      button.type = 'button'; button.dataset.layoutMove = offset < 0 ? 'up' : 'down';
+      button.setAttribute('aria-label', `${direction}${member.label}`); button.title = direction;
+      button.append(layoutIcon([path]));
+      button.addEventListener('click', () => moveLayoutItem(groupId, member.id, offset, false, button));
+    }
+    handle.addEventListener('keydown', event => {
+      if (!layoutState.editing || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault(); event.stopPropagation();
+        moveLayoutItem(groupId, member.id, event.key === 'ArrowUp' ? -1 : 1, true);
+      } else if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault(); event.stopPropagation();
+        if (event.repeat) return;
+        if (layoutState.gesture?.id === member.id) finishLayoutGesture(true, true);
+        else startKeyboardLayout(groupId, member.id);
+      }
+    });
+    handle.addEventListener('click', event => {
+      event.preventDefault();
+      if (!layoutState.editing || event.detail !== 0 || layoutState.gesture?.kind === 'pointer') return;
+      if (layoutState.gesture?.id === member.id) finishLayoutGesture(true, true);
+      else startKeyboardLayout(groupId, member.id);
+    });
+    handle.addEventListener('pointerdown', event => {
+      if (!layoutState.editing || event.button !== 0 || !event.isPrimary) return;
+      event.preventDefault(); event.stopPropagation();
+      if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
+      handle.focus({ preventScroll: true });
+      layoutState.gesture = { kind: 'pointer', phase: 'pending', groupId, id: member.id, pointerId: event.pointerId, before: [...layoutState.orders[groupId]], order: null, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, lastFrame: null };
+      if (typeof handle.setPointerCapture === 'function') handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('lostpointercapture', event => {
+      if (layoutState.gesture?.kind === 'pointer' && layoutState.gesture.pointerId === event.pointerId) finishLayoutGesture(false);
+    });
+    handle.addEventListener('dragstart', event => event.preventDefault());
+    bar.append(handle, up, down); element.prepend(bar);
+    layoutItems.set(member.id, { ...member, groupId, element, bar, handle, up, down });
+  }
+}
+updateLayoutControls();
+byId('edit-layout').addEventListener('click', () => setLayoutEditing(!layoutState.editing));
+byId('finish-layout').addEventListener('click', () => setLayoutEditing(false));
+byId('reset-layout').addEventListener('click', () => {
+  finishLayoutGesture(false);
+  applyLayoutOrders(defaultLayoutOrders()); persistLayoutOrders();
+  announceLayout('已恢复默认布局：确认事项、岗位与人选、任务与记录；组内顺序也已恢复。');
+});
+document.addEventListener('pointermove', event => {
+  const gesture = layoutState.gesture;
+  if (gesture?.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
+  gesture.x = event.clientX; gesture.y = event.clientY;
+  if (gesture.phase === 'pending') {
+    if (Math.hypot(gesture.x - gesture.startX, gesture.y - gesture.startY) < 6) return;
+    gesture.phase = 'dragging';
+    layoutItems.get(gesture.id).element.classList.add('layout-dragging');
+    layoutItems.get(gesture.id).handle.setAttribute('aria-pressed', 'true');
+    document.documentElement.dataset.layoutDragging = 'true';
+    announceLayout(`正在移动${layoutItems.get(gesture.id).label}，仅限${LAYOUT_GROUPS[gesture.groupId].label}内；松开应用，Esc 取消。`);
+    layoutScrollFrame = requestAnimationFrame(scrollLayoutDrag);
+  }
+  event.preventDefault(); previewLayoutDrop(gesture);
+}, { passive: false });
+document.addEventListener('pointerup', event => {
+  const gesture = layoutState.gesture;
+  if (gesture?.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
+  if (gesture.phase === 'dragging') { gesture.x = event.clientX; gesture.y = event.clientY; previewLayoutDrop(gesture); }
+  finishLayoutGesture(true, true);
+});
+document.addEventListener('pointercancel', event => {
+  if (layoutState.gesture?.kind === 'pointer' && layoutState.gesture.pointerId === event.pointerId) finishLayoutGesture(false, true);
+});
+document.addEventListener('keydown', event => {
+  if (!layoutState.editing || event.key !== 'Escape' || event.isComposing) return;
+  if (layoutState.gesture) {
+    event.preventDefault(); event.stopPropagation(); finishLayoutGesture(false, true);
+  } else if (event.target.closest('.layout-item-controls, #layout-toolbar')) {
+    event.preventDefault(); event.stopPropagation(); setLayoutEditing(false);
+  }
+}, true);
+document.addEventListener('focusin', event => {
+  const gesture = layoutState.gesture;
+  if (!applyingLayout && gesture?.kind === 'keyboard' && event.target !== layoutItems.get(gesture.id).handle) finishLayoutGesture(true);
+});
+window.addEventListener('blur', () => finishLayoutGesture(false));
+window.addEventListener('pagehide', () => finishLayoutGesture(false));
+document.addEventListener('visibilitychange', () => { if (document.hidden) finishLayoutGesture(false); });
 
 function options(select, values, selection) {
   const signature = JSON.stringify(values);
@@ -74,6 +493,7 @@ function renderPreferenceNotice() {
   const message = snapshot?.workspaceKey ? preferenceMessage : '尚未取得工作区标识，岗位偏好仅在本页保留。';
   text('role-preferences-note', message);
   byId('role-preferences-note').hidden = !message;
+  renderWorkspaceFollowing();
 }
 
 function persistRolePreferences() {
@@ -122,8 +542,69 @@ function currentRoleView(query = byId('role-query').value) {
   return selectRoles(snapshot, { ...rolePreferences, query });
 }
 
+function renderWorkspaceFollowing() {
+  const list = byId('workspace-following'), note = byId('workspace-following-note');
+  const names = rolePreferences.following;
+  const signature = JSON.stringify(names);
+  if (list.dataset.content !== signature) {
+    const previous = new Map([...list.children].map(button => [button.dataset.role, button]));
+    const buttons = names.map(name => {
+      const button = previous.get(name) ?? node('button', 'workspace-role-button', name);
+      if (!previous.has(name)) {
+        button.type = 'button'; button.dataset.role = name; button.setAttribute('aria-controls', 'role-browser');
+        button.addEventListener('click', () => chooseWorkspaceRole(name));
+      }
+      return button;
+    });
+    const focused = list.contains(document.activeElement) ? document.activeElement : null;
+    for (const button of previous.values()) if (!buttons.includes(button)) button.remove();
+    let position = list.firstElementChild;
+    for (const button of buttons) { if (button !== position) list.insertBefore(button, position); position = button.nextElementSibling; }
+    list.dataset.content = signature;
+    if (focused && document.activeElement !== focused) (focused.isConnected ? focused : byId('workspace-choose-following')).focus({ preventScroll: true });
+  }
+  for (const button of list.children) button.setAttribute('aria-pressed', String(rolePreferences.scope === 'following' && rolePreferences.role === button.dataset.role));
+  const context = snapshot?.sources.context;
+  let state = 'ready', message = '';
+  if (workspaceBlocked) { state = 'error'; message = '工作区连接已变化；关注岗位保留上次记录，请重新打开看板。'; }
+  else if (disconnected) { state = 'error'; message = snapshot ? '连接断开；关注岗位保留上次读取的配置。' : '连接失败，关注岗位未知。'; }
+  else if (!snapshot) { state = 'loading'; message = '正在读取关注岗位…'; }
+  else if (context.status !== 'ok' || context.stale) {
+    state = context.status === 'stale' || context.stale ? 'stale' : context.status === 'error' ? 'error' : 'unknown';
+    message = state === 'stale' ? '岗位配置陈旧；保留上次配置与本机关注。' : state === 'error' ? '岗位配置读取失败，关注岗位信息待核对。' : '岗位配置尚未读取，关注岗位信息未知。';
+  }
+  if (preferenceMessage) { state = 'error'; message = [message, preferenceMessage].filter(Boolean).join(' '); }
+  if (!snapshot?.workspaceKey && snapshot) { state = 'unknown'; message = [message, '尚未取得工作区标识，关注仅在本页保留。'].filter(Boolean).join(' '); }
+  if (!message && !names.length) { state = 'empty'; message = '尚未关注岗位，可通过设置或正文的“选择关注”添加。'; }
+  note.dataset.state = state;
+  text(note, message); note.hidden = !message;
+}
+
+function chooseWorkspaceRole(name) {
+  if (byId('candidate-query').value) clearCandidateSearch(false);
+  if (candidateOrigin?.source === 'stage') closeCandidate();
+  rolePreferences.scope = 'following'; rolePreferences.role = name;
+  persistRolePreferences();
+  if (snapshot) { const view = renderRoleControls(); renderStages(true, view); }
+  setWorkspaceNavTarget('roles');
+  focusWorkbenchTarget(workspaceNavTargets.roles);
+}
+
+function toggleFollowingPicker(trigger) {
+  const picker = byId('following-picker');
+  const opening = picker.hidden || !visibleWorkbenchTarget(picker);
+  if (opening && byId('candidate-query').value) clearCandidateSearch(false);
+  picker.hidden = !opening;
+  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', String(opening));
+  if (opening) {
+    followingPickerTrigger = trigger;
+    renderFollowingPicker();
+    focusWorkbenchTarget(byId('following-query'), 'nearest');
+  }
+}
+
 function renderFollowingPicker() {
-  if (byId('following-picker').hidden) return;
+  if (byId('following-picker').hidden || !snapshot) return;
   const query = byId('following-query').value.trim().toLocaleLowerCase();
   const names = [...new Set([...snapshot.roles.map(role => role.name), ...rolePreferences.following])];
   const values = names.filter(name => name.toLocaleLowerCase().includes(query));
@@ -166,11 +647,15 @@ function renderRoleControls() {
   else if (rolePreferences.role && !view.roles.some(role => role.name === rolePreferences.role)) messages.push(scopeView.roles.some(role => role.name === rolePreferences.role) ? '保留所选岗位；它不匹配当前搜索。' : `保留所选岗位；它不在${scopeLabel}范围内。`);
   text('role-options-note', messages.join(' '));
   byId('role-options-note').hidden = !messages.length;
+  const roleQuery = byId('role-query').value.trim();
+  text('role-query-note-text', roleQuery ? `已筛选岗位：${roleQuery}` : '');
+  byId('role-query-note').hidden = !roleQuery;
   const role = view.selectedRole;
   const context = snapshot.sources.context.status;
-  const note = context !== 'ok' ? `未读取岗位配置${context === 'stale' ? '；保留上次配置（陈旧）' : '；岗位状态未知'}` : rolePreferences.role ? role?.configured ? `岗位状态：${role.status || '未填写'}${role.priority ? ` · 优先级 ${role.priority}` : ''}` : '此岗位仅见于台账，未在岗位表配置。' : rolePreferences.scope === 'active' ? '统计在招与状态未知岗位的候选记录。' : rolePreferences.scope === 'following' ? '统计所关注岗位的候选记录。' : '统计全部岗位的候选记录，包含历史岗位。';
-  text('role-note', note);
+  const note = context !== 'ok' ? `未读取岗位配置${context === 'stale' ? '；保留上次配置（陈旧）' : '；岗位状态未知'}` : rolePreferences.role ? role?.configured ? `岗位状态：${role.status || '未填写'}${role.priority ? ` · 优先级 ${role.priority}` : ''}` : '仅见于台账，未配置岗位' : rolePreferences.scope === 'active' ? '在招与状态未知岗位的候选分布' : rolePreferences.scope === 'following' ? '关注岗位的候选分布' : '全部岗位的候选分布，含历史岗位';
+  text('role-note', `${note} · ${view.total === null ? '记录数未知' : `${view.total} 条候选记录`}`);
   renderFollowingPicker();
+  renderWorkspaceFollowing();
   return view;
 }
 
@@ -178,8 +663,93 @@ function closeCandidate() {
   selectedCandidateId = null; candidateOrigin = null; recordRequest++; documentRequest++;
   byId('candidate-record').hidden = true;
   byId('candidate-list').hidden = false;
+  byId('candidate-search-content').hidden = searchConfirmations !== null;
   byId('results-content').hidden = false;
   byId('stage-record-host').append(byId('candidate-record'));
+}
+
+function captureSearchPosition(trigger = null) {
+  const visible = [...byId('candidate-search-list').querySelectorAll('button')].find(button => {
+    const rect = button.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight;
+  });
+  const anchor = trigger?.closest('#candidate-search-list') ? trigger : visible;
+  return { candidateId: anchor?.dataset.candidate ?? null, top: anchor?.getBoundingClientRect().top ?? 0, scrollY: window.scrollY };
+}
+
+function restoreSearchPosition(position, fallback) {
+  const anchor = [...byId('candidate-search-list').querySelectorAll('button')].find(button => button.dataset.candidate === position.candidateId);
+  const target = anchor ?? fallback;
+  target.focus({ preventScroll: true });
+  if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - position.top);
+  else window.scrollTo(0, position.scrollY);
+  const rect = target.getBoundingClientRect();
+  if (rect.top < 0 || rect.bottom > window.innerHeight) target.scrollIntoView({ block: 'nearest' });
+}
+
+function renderCandidateSearch() {
+  const query = byId('candidate-query').value;
+  const searching = query.trim().length > 0;
+  const results = byId('candidate-search-results');
+  byId('role-blocks').hidden = searching && !layoutState.editing;
+  text('role-browser-title', searching ? '全工作区搜索结果' : '岗位与人选');
+  results.hidden = !searching;
+  byId('candidate-search-status').hidden = searchConfirmations !== null;
+  byId('search-record-host').hidden = searchConfirmations !== null;
+  byId('return-to-search').hidden = !searching || searchConfirmations === null;
+  byId('clear-candidate-search').hidden = !query.length;
+  if (!searching) return;
+  const matches = snapshot ? searchCandidates(snapshot, query) : null;
+  const shown = matches?.slice(0, candidateSearchLimit) ?? [];
+  text('candidate-search-status', matches === null ? '候选台账尚未成功读取，匹配人数未知。' : `找到 ${matches.length} 条候选记录 · 已显示 ${shown.length} 条`);
+  const stale = workspaceBlocked ? '工作区连接已变化，以下保留上次搜索记录，请重新打开看板。' : disconnected ? '连接断开，以下搜索结果来自上次读取的台账。' : snapshot?.sources.ledger.status === 'stale' ? '以下搜索结果沿用上次候选记录（陈旧）。' : '';
+  text('candidate-search-stale', stale); byId('candidate-search-stale').hidden = !stale;
+  byId('candidate-search-content').hidden = searchConfirmations !== null || candidateOrigin?.source === 'search';
+  const more = byId('show-more-candidates');
+  more.hidden = matches === null || shown.length === matches.length;
+  const list = byId('candidate-search-list');
+  const signature = JSON.stringify([matches === null, shown.map(candidate => [candidate.id, candidate.name, candidate.role, candidate.rawRole, candidateStatus(candidate)])]);
+  if (list.dataset.content === signature) return;
+  list.dataset.content = signature;
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
+  const previous = new Map([...list.children].map(item => [item.dataset.candidate, item]));
+  const items = shown.map(candidate => {
+    let item = previous.get(candidate.id);
+    if (!item) {
+      item = node('li', 'candidate-row'); item.dataset.candidate = candidate.id;
+      const heading = node('div', 'person-heading');
+      const button = node('button', 'person-name candidate-link'); button.type = 'button'; button.dataset.candidate = candidate.id;
+      button.addEventListener('click', () => { const current = snapshot?.candidates?.find(value => value.id === button.dataset.candidate); if (current) void openCandidate(current, 'search', button); });
+      heading.append(button);
+      item.append(heading, node('p', 'person-role search-role'), node('p', 'person-role search-raw-role'), node('span', 'person-status'));
+    }
+    const button = item.querySelector('button');
+    text(button, candidate.name); button.setAttribute('aria-label', `查看 ${candidate.name} 的候选资料，原岗位：${candidate.rawRole}`);
+    text(item.querySelector('.search-role'), `岗位：${candidate.role}`);
+    const rawRole = item.querySelector('.search-raw-role');
+    text(rawRole, `原岗位：${candidate.rawRole}`); rawRole.hidden = candidate.rawRole === candidate.role;
+    text(item.querySelector('.person-status'), `原状态：${candidateStatus(candidate)}`);
+    return item;
+  });
+  if (!items.length) items.push(node('li', 'empty-state', matches === null ? '等待成功读取台账后再显示匹配结果。' : '未找到匹配的人选，请尝试完整姓名或部分姓名。'));
+  for (const item of previous.values()) if (!items.includes(item)) item.remove();
+  let position = list.firstElementChild;
+  for (const item of items) { if (item !== position) list.insertBefore(item, position); position = item.nextElementSibling; }
+  if (focused && document.activeElement !== focused) (focused.isConnected ? focused : byId('candidate-query')).focus({ preventScroll: true });
+}
+
+function changeCandidateSearch() {
+  candidateSearchLimit = 20;
+  searchConfirmations = null;
+  if (candidateOrigin) closeCandidate();
+  renderCandidateSearch();
+  if (snapshot) renderRunResults(selectedRun());
+}
+
+function clearCandidateSearch(focusInput = true) {
+  byId('candidate-query').value = '';
+  changeCandidateSearch();
+  if (focusInput) byId('candidate-query').focus({ preventScroll: true });
 }
 
 function markdownView(text) {
@@ -212,17 +782,19 @@ function documentURL(candidate, document, download = false) {
 async function openCandidate(candidate, origin = 'stage', trigger = null) {
   const pending = ++recordRequest;
   documentRequest++; selectedCandidateId = candidate.id;
-  candidateOrigin = { source: origin, trigger, candidateId: candidate.id };
-  const host = { decisions: 'decision-record-host', results: 'run-record-host', activity: 'activity-record-host', stage: 'stage-record-host' }[origin];
+  candidateOrigin = { source: origin, trigger, candidateId: candidate.id, searchPosition: origin === 'search' ? captureSearchPosition(trigger) : null };
+  const host = { decisions: 'decision-record-host', results: 'run-record-host', activity: 'activity-record-host', stage: 'stage-record-host', search: 'search-record-host' }[origin];
   byId(host).append(byId('candidate-record'));
   byId('candidate-list').hidden = origin === 'stage';
+  byId('candidate-search-content').hidden = searchConfirmations !== null || origin === 'search';
   byId('results-content').hidden = origin === 'results';
   if (origin === 'decisions') byId('decisions-content').hidden = true;
   byId('candidate-record').hidden = false;
-  byId('back-to-list').textContent = { decisions: '返回本轮确认名单', results: '返回处理名单', activity: '返回近期流水', stage: '返回名单' }[origin];
+  byId('back-to-list').textContent = { decisions: '返回确认名单', results: '返回处理名单', activity: '返回近期流水', stage: '返回名单', search: '返回搜索结果' }[origin];
   const content = byId('record-content');
   content.replaceChildren(node('p', 'muted', '正在读取候选资料…'));
   byId('back-to-list').focus({ preventScroll: true });
+  if (origin === 'search') byId('back-to-list').scrollIntoView({ block: 'nearest' });
   try {
     const detail = await jsonRequest(`/api/candidates/detail?${new URLSearchParams({ candidate: candidate.id })}`);
     if (pending !== recordRequest) return;
@@ -423,14 +995,18 @@ function renderActivity(run) {
       if (!button) {
         button = node('button', 'person-name candidate-link'); button.type = 'button';
         button.addEventListener('click', () => { const current = snapshot.candidates?.find(value => value.id === button.dataset.candidate); if (current) void openCandidate(current, 'activity', button); else openRunResults('all'); });
-        const heading = node('div', 'activity-person'); heading.append(button, node('span', 'result-attention'));
-        item.append(heading, node('p', 'result-role'), node('p', 'activity-action'), node('p', 'activity-outcome'), node('p', 'activity-next'), node('time', 'result-time'));
+        const heading = node('div', 'activity-person');
+        const who = node('div', 'activity-who');
+        who.append(button, node('span', 'activity-role'));
+        heading.append(who, node('span', 'result-attention'));
+        item.append(heading, node('p', 'activity-action'), node('p', 'activity-outcome'), node('p', 'activity-next'), node('time', 'result-time'));
       }
       button.textContent = name; button.dataset.candidate = receipt.candidateId;
       button.setAttribute('aria-label', `${candidate ? '查看候选资料' : '查看本轮完整记录'}：${name}`);
       item.dataset.attention = receipt.attention;
       item.querySelector('.result-attention').textContent = { decision: '需你确认', notice: '提醒', none: '已记录' }[receipt.attention];
-      item.querySelector('.result-role').textContent = `原岗位：${rawRole}`;
+      const roleLabel = item.querySelector('.activity-role');
+      roleLabel.textContent = rawRole ?? ''; roleLabel.hidden = !rawRole;
       item.querySelector('.activity-action').textContent = receipt.action;
       item.querySelector('.activity-outcome').textContent = receipt.outcome;
       const next = item.querySelector('.activity-next'); next.textContent = receipt.nextAction ? `下一步：${receipt.nextAction}` : ''; next.hidden = !receipt.nextAction;
@@ -573,7 +1149,7 @@ function renderDecisionList(run, people) {
   if (candidateOrigin?.source === 'decisions') return;
   const active = list.contains(document.activeElement) ? document.activeElement.dataset.decisionFocus : null;
   const previous = new Map([...list.children].map(item => [item.dataset.candidate, item]));
-  const items = (state.showAllDecisions ? people : people.slice(0, 5)).map(person => {
+  const items = (state.showAllDecisions ? people : people.slice(0, DECISION_PREVIEW)).map(person => {
     const candidate = snapshot.candidates?.find(candidate => candidate.id === person.candidateId);
     const receipts = person.receipts.filter(receipt => receipt.attention === 'decision');
     const content = JSON.stringify([receipts, candidate, run.steps.map(step => [step.id, step.label])]);
@@ -599,7 +1175,7 @@ function renderDecisionList(run, people) {
     const meta = node('p', 'decision-meta', candidate?.role ?? person.rawRole);
     const request = node('div', 'decision-request'), next = node('ul', 'decision-next');
     next.append(...receipts.map(receipt => node('li', '', receipt.nextAction || '尚未记录，请查看依据')));
-    request.append(node('p', 'decision-label', '需要你决定'), next);
+    request.append(node('p', 'decision-label', '下一步需确认'), next);
     const footer = node('div', 'decision-footer');
     if (candidate) {
       const view = node('button', 'secondary-button decision-profile', '查看资料'); view.type = 'button';
@@ -633,51 +1209,107 @@ function renderDecisionList(run, people) {
   if (active) [...list.querySelectorAll('[data-decision-focus]')].find(element => element.dataset.decisionFocus === active)?.focus({ preventScroll: true });
 }
 
+function confirmationView(run) {
+  const counts = run?.resultSummary;
+  const decisions = Number.isSafeInteger(counts?.decisions) && counts.decisions >= 0 ? counts.decisions : null;
+  const historical = Boolean(run && snapshot?.runs?.some(value => value.createdAt > run.createdAt || (value.createdAt === run.createdAt && value.id < run.id)));
+  const base = { decisions, historical, round: historical ? '该任务' : '本轮' };
+  if (workspaceBlocked) return { ...base, kind: 'error', fresh: false, message: '工作区连接已变化，请重新打开看板；确认名单已停止更新。' };
+  if (disconnected) return { ...base, kind: 'error', fresh: false, message: '连接断开，当前确认事项未知；重新连接后更新。' };
+  if (!snapshot) return { ...base, kind: 'loading', fresh: false, message: '正在读取工作区…' };
+  if (!run && snapshot.runs !== null && ['ok', 'missing'].includes(snapshot.sources.runs.status)) return { ...base, kind: 'unknown', decisions: null, fresh: false, message: taskSelection.runId ? '所选任务暂不可读，确认事项未知。' : '尚无任务记录，确认事项未知。' };
+  if (snapshot.sources.runs.status !== 'ok' || snapshot.sources.runs.stale === true) return { ...base, kind: 'error', fresh: false, message: '任务源暂不可用，当前确认事项未知；等待更新。' };
+  if (!run) return { ...base, kind: 'unknown', decisions: null, fresh: false, message: '任务读取失败，确认事项未知。' };
+  if (resultsState.status === 'error') return { ...base, kind: 'error', fresh: true, message: `确认名单读取失败：${resultsState.error}。请重试。` };
+  if (counts === undefined) return { ...base, kind: 'unknown', decisions: null, fresh: true, message: '此版本未提供确认事项汇总，可在执行记录中查看已有记录。' };
+  if (counts === null) return { ...base, kind: 'unknown', decisions: null, fresh: true, message: `${base.round}尚未记录确认事项。` };
+  if (decisions === null) return { ...base, kind: 'unknown', decisions: null, fresh: true, message: `${base.round}确认事项数量未知，可在执行记录中查看已有记录。` };
+  if (decisions === 0) return { ...base, kind: 'empty', fresh: true, message: `${base.round}暂无需确认` };
+  if (!(resultsState.loadedVersion === resultVersion(run) && resultsState.status === 'ready')) return { ...base, kind: 'loading', fresh: true };
+  const people = resultsState.data.filter(person => person.receipts.some(receipt => receipt.attention === 'decision'));
+  return { ...base, kind: 'pending', fresh: true, people };
+}
+
+function renderConfirmations(run, view) {
+  const section = byId('confirmations'), heading = byId('decisions-heading'), count = byId('decisions-count');
+  const scope = byId('decisions-scope'), status = byId('decisions-status'), summary = byId('decisions-summary');
+  const summaryText = byId('decisions-summary-text'), viewButton = byId('view-decisions-records');
+  const content = byId('decisions-content'), more = byId('show-more-decisions'), retry = byId('retry-decisions');
+  const searching = byId('candidate-query').value.trim().length > 0;
+  const listHadFocus = byId('decision-list').contains(document.activeElement);
+  const counted = Number.isSafeInteger(view.decisions) && view.decisions >= 0;
+  const active = view.fresh && counted && view.decisions > 0 && ['pending', 'loading', 'error'].includes(view.kind);
+  const collapsed = searching && searchConfirmations === null && Boolean(run);
+  const people = view.people ?? [];
+  section.dataset.state = view.kind;
+  byId('assistant').dataset.confirmationState = view.kind;
+  text('decisions-heading-label', active ? `${view.round}需确认` : '确认事项');
+  count.hidden = !active || collapsed;
+  text(count, counted ? String(view.decisions) : '');
+  count.setAttribute('aria-label', `${view.round}需确认 ${counted ? view.decisions : '未知'} 人`);
+  scope.hidden = !active || collapsed;
+  const message = view.kind === 'error' ? view.message : view.kind === 'loading' ? view.message ?? `正在${resultsState.data === undefined ? '读取' : '更新'}${view.round}确认名单…` : '';
+  text(status, message);
+  status.hidden = !message || (collapsed && view.kind !== 'error');
+  status.dataset.state = view.kind === 'error' ? 'error' : view.kind;
+  retry.hidden = !(view.kind === 'error' && view.fresh);
+  const showSummary = view.kind === 'empty' || view.kind === 'unknown' || collapsed;
+  summary.hidden = !showSummary;
+  text(summaryText, view.kind === 'empty' || view.kind === 'unknown' ? view.message : collapsed ? active ? `${view.round}有 ${view.decisions} 人需确认` : `${view.round}确认事项未知` : '');
+  text(viewButton, collapsed && active ? '查看' : '查看记录');
+  viewButton.setAttribute('aria-controls', collapsed && active ? 'decisions-content' : 'execution-records');
+  viewButton.setAttribute('aria-expanded', String(collapsed && active ? false : byId('execution-records').open));
+  viewButton.hidden = !showSummary || (view.kind === 'unknown' && !run);
+  const cards = view.kind === 'pending' && (!searching || searchConfirmations !== null) && candidateOrigin?.source !== 'decisions';
+  content.hidden = !cards;
+  more.hidden = !cards || people.length <= DECISION_PREVIEW;
+  text(more, resultsState.showAllDecisions ? '收起其余人选' : `查看其余 ${Math.max(0, people.length - DECISION_PREVIEW)} 人`);
+  more.setAttribute('aria-expanded', String(resultsState.showAllDecisions));
+  if (cards) renderDecisionList(run, people);
+  else if (view.kind === 'empty' || view.kind === 'unknown') {
+    resultsState.decisionExpanded.clear(); resultsState.showAllDecisions = false;
+    byId('decision-list').replaceChildren(); delete byId('decision-list').dataset.content;
+  }
+  if (listHadFocus && content.hidden) {
+    const target = viewButton.hidden ? (heading.hidden ? status : heading) : viewButton;
+    target.focus({ preventScroll: true });
+  }
+}
+
 function renderRunResults(run) {
   const summary = byId('run-result-summary'), region = byId('run-results'), state = resultsState;
-  const historical = run && snapshot?.runs?.some(value => value.createdAt > run.createdAt || (value.createdAt === run.createdAt && value.id < run.id));
+  const historical = Boolean(run && snapshot?.runs?.some(value => value.createdAt > run.createdAt || (value.createdAt === run.createdAt && value.id < run.id)));
   const round = historical ? '该任务' : '本轮';
   const stale = workspaceBlocked || disconnected || snapshot?.sources.runs.status !== 'ok' || snapshot?.sources.runs.stale === true;
   summary.hidden = !run; region.hidden = !run || !state.open;
-  text('decisions-scope', historical ? `该任务记录 · ${shortTime(run.createdAt)}。有新任务，当前保留所选记录。` : '仅此任务 · 岗位筛选不改变本轮');
-  text('run-results-heading', `${round}处理记录`);
-  if (!run) {
-    if (state.status === 'loading') { resultsRequest++; state.status = 'idle'; state.requestedVersion = null; }
-    byId('decisions-content').hidden = true;
-    byId('retry-decisions').hidden = true;
-    byId('decisions-count').hidden = true;
-    text('decisions-status', workspaceBlocked ? '工作区连接已变化，请重新打开看板。' : disconnected ? '连接断开，确认事项未知。' : taskSelection.runId ? '所选任务暂不可读，确认事项未知。' : snapshot?.runs === null ? '任务读取失败，确认事项未知。' : '尚无任务记录，确认事项未知。');
-    byId('decisions-status').hidden = false;
-    return;
+  const scope = byId('decisions-scope');
+  const scopeSignature = JSON.stringify([run?.id, run?.label, run?.role, run?.createdAt, historical, Boolean(searchConfirmations)]);
+  if (scope.dataset.content !== scopeSignature) {
+    const children = [];
+    if (run) {
+      const task = node('p', 'decision-task');
+      const name = node('span', 'decision-task-name', `${run.label}${run.role ? ` · ${run.role}` : ''}`);
+      const created = node('time', 'decision-task-time', time(run.createdAt));
+      created.dateTime = run.createdAt;
+      task.append(name, created); children.push(task);
+    }
+    if (!historical) children.push(node('p', 'decision-task-note', '仅此任务，岗位筛选不改变本轮。'));
+    if (searchConfirmations) children.push(node('p', 'decision-task-note', '此处显示整轮确认事项，不受姓名搜索筛选。'));
+    if (historical) children.push(node('p', 'decision-task-notice', '有新任务，当前保留所选记录。'));
+    scope.replaceChildren(...children);
+    scope.dataset.content = scopeSignature;
   }
-  const counts = run.resultSummary, version = resultVersion(run);
-  if (state.status === 'loading' && state.requestedVersion !== version) { resultsRequest++; state.status = 'idle'; state.requestedVersion = null; }
-  const decisions = Number.isSafeInteger(counts?.decisions) && counts.decisions >= 0 ? counts.decisions : null;
-  const count = byId('decisions-count');
-  count.hidden = stale || decisions === null || state.status === 'error';
-  text(count, decisions === null ? '' : String(decisions));
-  count.setAttribute('aria-label', `${round}需确认 ${decisions ?? '未知'} 人`);
+  text('run-results-heading', `${round}处理记录`);
+  if (state.status === 'loading' && (!run || state.requestedVersion !== resultVersion(run))) { resultsRequest++; state.status = 'idle'; state.requestedVersion = null; }
+  const view = confirmationView(run);
+  renderConfirmations(run, view);
+  const counts = run?.resultSummary;
   text('run-result-total', counts == null ? '未记录' : `${counts.total} 人`);
-  text('run-result-decisions', decisions === null ? '未记录' : `${decisions} 人`);
+  text('run-result-decisions', view.decisions === null ? '未记录' : `${view.decisions} 人`);
   for (const id of ['show-run-results', 'show-run-decisions']) if (byId(id).getAttribute('aria-expanded') !== String(state.open)) byId(id).setAttribute('aria-expanded', String(state.open));
-  byId('result-stale-note').hidden = !stale;
+  byId('result-stale-note').hidden = !stale || !run;
   text('result-stale-note', disconnected ? '连接断开，人数与名单以最近一次成功读取为准。' : '任务源陈旧，人数与名单以最近一次成功读取为准。');
-  const current = state.loadedVersion === version && state.status === 'ready';
-  const people = current && Array.isArray(state.data) ? state.data.filter(person => person.receipts.some(receipt => receipt.attention === 'decision')) : [];
-  const decisionMessage = workspaceBlocked ? '工作区连接已变化，请重新打开看板；确认名单已停止更新。' : disconnected ? '连接断开，当前确认事项未知；重新连接后更新。' : stale ? '任务源暂不可用，当前确认事项未知；等待更新。' : counts === undefined ? '此版本未提供确认事项汇总，可在执行记录中查看已有记录。' : counts === null ? `${round}尚未记录确认事项。` : decisions === null ? `${round}确认事项数量未知，可在执行记录中查看已有记录。` : decisions === 0 ? `${round}没有需确认记录。` : state.status === 'error' ? `确认名单读取失败：${state.error}。请重试。` : !current ? `正在${state.data === undefined ? '读取' : '更新'}${round}确认名单…` : '';
-  text('decisions-status', decisionMessage); byId('decisions-status').hidden = !decisionMessage;
-  byId('decisions-status').dataset.state = stale || state.status === 'error' ? 'error' : state.status;
-  byId('retry-decisions').hidden = stale || decisions === null || decisions === 0 || state.status !== 'error';
-  byId('decisions-content').hidden = stale || decisions === null || decisions === 0 || !current || candidateOrigin?.source === 'decisions';
-  if (decisions === 0 || counts == null) {
-    state.decisionExpanded.clear(); state.showAllDecisions = false;
-    if (byId('decision-list').contains(document.activeElement)) byId('decisions-heading').focus({ preventScroll: true });
-    byId('decision-list').replaceChildren(); delete byId('decision-list').dataset.content;
-  } else if (current) renderDecisionList(run, people);
-  const more = byId('show-more-decisions');
-  more.hidden = people.length <= 5;
-  text(more, state.showAllDecisions ? '收起其余人选' : `查看其余 ${Math.max(0, people.length - 5)} 人`);
-  more.setAttribute('aria-expanded', String(state.showAllDecisions));
+  if (!run) return;
   if (state.open) {
     for (const button of byId('results-filters').querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.resultsFilter === state.filter));
     const status = byId('results-status');
@@ -690,7 +1322,7 @@ function renderRunResults(run) {
     byId('result-list').dataset.state = ['loading', 'error'].includes(state.status) ? 'stale' : 'ready';
     renderResultList(run);
   }
-  if (!stale && (state.open || decisions > 0) && state.requestedVersion !== version) void loadRunResults();
+  if (!stale && (state.open || (view.decisions ?? 0) > 0) && state.requestedVersion !== resultVersion(run)) void loadRunResults();
 }
 
 function openRunResults(filter) {
@@ -704,7 +1336,7 @@ function openRunResults(filter) {
 
 function renderRuns() {
   const runs = snapshot.runs === null ? null : [...snapshot.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  const hold = Boolean(selectedCandidateId || selectedStage || resultsState.open || resultsState.decisionExpanded.size || resultsState.showAllDecisions || byId('execution-records').open || !byId('role-manager').hidden || byId('steps-detail').open || document.activeElement === runSelect);
+  const hold = Boolean(layoutState.editing || selectedCandidateId || selectedStage || resultsState.open || resultsState.decisionExpanded.size || resultsState.showAllDecisions || byId('candidate-query').value.trim() || byId('role-query').value.trim() || byId('role-search-disclosure').open || byId('execution-records').open || !byId('following-picker').hidden || !byId('role-manager').hidden || byId('steps-detail').open || document.activeElement?.closest('.workbench-search, #workspace-nav, .search-section, #role-browser, #confirmations, .task-section'));
   const choice = selectTask(runs, taskSelection, hold);
   if (hold && taskSelection.mode === 'live' && taskSelection.runId && choice.newerRunId) choice.selection = { mode: 'pinned', runId: taskSelection.runId };
   taskSelection = choice.selection;
@@ -718,20 +1350,26 @@ function renderRuns() {
   byId('latest-run').hidden = taskSelection.mode === 'live' && !choice.newerRunId;
   const notice = [selectionMessage, choice.newerRunId ? '新任务可查看；当前记录保持选定。' : taskSelection.mode === 'pinned' ? '已固定所选任务，自动读取该任务的更新。' : document.hidden ? '后台低频读取；返回后恢复跟随。' : '自动跟随最新创建的任务。'].filter(Boolean).join(' ');
   text('selection-note', notice); byId('selection-note').hidden = false; writeTaskURL();
-  if (resultsState.runId !== selectedRunId) { closeCandidate(); resetRunResults(selectedRunId); resetActivity(selectedRunId); byId('steps-detail').open = false; }
+  if (resultsState.runId !== selectedRunId) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selectedRunId); resetActivity(selectedRunId); byId('steps-detail').open = false; }
   const transition = run ? JSON.stringify([run.status, run.steps.map(step => [step.id, step.status]), run.resultSummary?.revision ?? 0]) : null;
   if (run && displayedRun?.id === run.id && displayedRun.signature !== transition) flash(byId('task-card'));
   displayedRun = run ? { id: run.id, signature: transition } : null;
   renderRunResults(run); syncActivity(run); byId('run-activity').hidden = !run;
   text('run-id', run?.id ?? selectedRunId ?? '—'); text('run-owner', run?.ownerSessionId ?? '未绑定');
   byId('progress-area').hidden = !run; byId('workflow-name').hidden = !run;
+  text('execution-reason', run?.reason ?? '');
+  byId('execution-reason').hidden = !run?.reason || !['completed', 'cancelled'].includes(run.status);
   text('run-time', run ? `最后记录 ${time(run.updatedAt)}${snapshot.sources.runs.status === 'stale' ? ' · 陈旧记录' : ''}` : '任务更新时间未知');
   text('task-recorded', `最后记录 · ${run ? time(run.updatedAt) : '未知'}`);
   const sourceStale = snapshot.sources.runs.status === 'stale' || snapshot.sources.runs.stale === true;
-  text('task-sync', disconnected ? '连接断开 · 保留记录' : document.hidden ? '后台低频读取' : sourceStale ? '读取正常 · 任务源陈旧' : snapshot.sources.runs.status === 'ok' ? '读取正常' : snapshot.sources.runs.status === 'missing' ? '读取正常 · 尚无任务' : '任务源读取异常');
+  text('task-sync', disconnected ? '连接断开 · 保留记录' : document.hidden ? '后台低频读取' : sourceStale ? '任务源陈旧 · 保留记录' : snapshot.sources.runs.status === 'ok' ? '任务文件读取正常' : snapshot.sources.runs.status === 'missing' ? '尚无任务文件' : '任务源读取异常');
   const syncing = String(Boolean(run?.status === 'running' && taskSelection.mode === 'live' && !disconnected && !sourceStale && snapshot.sources.runs.status === 'ok' && !document.hidden && pageActive));
   if (byId('task-card').dataset.syncing !== syncing) byId('task-card').dataset.syncing = syncing;
   const status = byId('run-state');
+  text('task-heading', choice.newerRunId || taskSelection.mode === 'pinned' ? '所选任务' : '最近任务');
+  byId('task-card').dataset.state = run?.status ?? (runs === null ? 'error' : 'missing');
+  byId('task-recorded').hidden = !run || ['completed', 'cancelled'].includes(run.status);
+  byId('current-step').hidden = Boolean(run && ['completed', 'cancelled'].includes(run.status));
   if (!run) {
     const missing = selectedRunId !== null && runs !== null;
     text('run-state', runs === null ? '读取失败' : missing ? '记录已移除' : '无记录'); status.dataset.state = runs === null ? 'error' : 'missing';
@@ -747,9 +1385,9 @@ function renderRuns() {
   const current = run.steps.find(step => step.status === 'running') ?? (run.status === 'failed' ? run.steps.find(step => step.status === 'failed') : null);
   const completed = run.steps.filter(step => step.status === 'completed').length, skipped = run.steps.filter(step => step.status === 'skipped').length;
   text('task-position', current ? `${run.status === 'waiting' ? '停留步骤' : run.status === 'running' ? '当前步骤' : '最后步骤'} ${run.steps.indexOf(current) + 1} / ${run.steps.length}` : `共 ${run.steps.length} 个步骤`);
-  text('current-step', current?.label ?? (run.status === 'completed' ? '任务已完成' : '当前无执行中步骤'));
+  text('current-step', current ? `${run.status === 'waiting' ? '停留步骤' : run.status === 'running' ? '当前记录步骤' : '最后记录步骤'}：${current.label}` : run.status === 'completed' ? '任务已完成' : '当前无执行中步骤');
   const reason = run.reason ?? current?.reason ?? { waiting: '任务等待后续处理。', failed: '任务失败，保留最后记录。', cancelled: '任务已取消，保留最后记录。' }[run.status] ?? '';
-  text('task-reason', reason); byId('task-reason').hidden = !reason;
+  text('task-reason', reason); byId('task-reason').hidden = !reason || ['completed', 'cancelled'].includes(run.status);
   text('completion-count', `已完成 ${completed} / ${run.steps.length} · 已跳过 ${skipped}`);
   text('steps-summary', byId('steps-detail').open ? '收起全部步骤' : '查看全部步骤');
   const signature = JSON.stringify([run.id, run.status, run.steps]), track = byId('step-track'), steps = byId('steps');
@@ -776,7 +1414,8 @@ function renderRuns() {
 }
 
 function renderStages(announce = false, view = currentRoleView()) {
-  text('total', view.total === null ? '—' : String(view.total));
+  text('candidate-total-summary', view.total === null ? '· 记录数未知' : `· ${view.total} 条`);
+  text('stage-scope', `当前范围：${view.label}`);
   const ledgerSource = snapshot.sources.ledger.status;
   text('ledger-state', ledgerSource === 'stale' ? '以下保留上次候选记录（陈旧）。' : view.total === null ? view.selectionMissing ? '所选岗位未在当前源中，记录数未知。' : '台账尚未成功读取，记录数未知。' : `台账更新 ${time(snapshot.ledgerUpdatedAt)} · ${view.label}`);
   const unclassified = view.stages.find(stage => stage.id === 'unclassified').count;
@@ -792,6 +1431,7 @@ function renderStages(announce = false, view = currentRoleView()) {
     const button = stageButtons.get(stage.id);
     const expanded = selectedStage === stage.id;
     text(button.querySelector('.stage-number'), stage.count === null ? '—' : String(stage.count));
+    button.dataset.empty = String(stage.count === 0);
     button.setAttribute('aria-expanded', String(expanded));
     button.setAttribute('aria-label', `${stage.label}，${stage.count === null ? '候选记录数未知' : `${stage.count} 条候选记录`}，${expanded ? '收起' : '展开'}名单`);
   }
@@ -829,6 +1469,8 @@ function renderStages(announce = false, view = currentRoleView()) {
 
 function render() {
   text('workspace', snapshot.workspace);
+  text('nav-workspace', snapshot.workspace);
+  syncLayoutPreferences();
   syncRolePreferences();
   const view = renderRoleControls();
   const ordinaryCodes = ['UNKNOWN_STATUS', 'DUPLICATE_KEY', 'ROLE_ALIAS_COLLISION'];
@@ -845,7 +1487,8 @@ function render() {
   }
   const sync = byId('sync');
   text('sync', disconnected ? '连接断开' : document.hidden ? '后台低频读取' : { ok: '读取正常', partial: '有读取提示', error: '读取失败', stale: '数据源陈旧' }[snapshot.status]);
-  text('refresh-board', disconnected ? '重新连接' : '刷新');
+  const refreshLabel = disconnected ? '重新连接' : '刷新';
+  refreshButton.setAttribute('aria-label', refreshLabel); refreshButton.title = refreshLabel;
   sync.dataset.state = disconnected || ['error', 'stale'].includes(snapshot.status) ? 'error' : snapshot.status === 'partial' ? 'warning' : 'ok';
   byId('source-dot').dataset.state = sync.dataset.state;
   text('source-status', disconnected ? '本地文件 · 连接断开' : snapshot.status === 'stale' ? '本地文件 · 数据陈旧' : snapshot.status === 'error' ? '本地文件 · 读取失败' : snapshot.status === 'partial' ? '本地文件 · 有读取提示' : '本地台账 · 候选资料只读');
@@ -858,18 +1501,20 @@ function render() {
     diagnostics.dataset.content = diagnosticSignature;
     diagnostics.replaceChildren(node('p', '', `兼容配置：${configLabel}${config.updatedAt ? ` · ${time(config.updatedAt)}` : ''}`), ...snapshot.diagnostics.map(item => node('p', '', item.message)), node('p', '', '按姓名＋原岗位计数，同人不同原岗位不自动合并。'));
   }
-  renderRuns(); renderStages(false, view);
+  renderRuns(); renderStages(false, view); renderCandidateSearch();
 }
 
 byId('back-to-list').addEventListener('click', () => {
   const origin = candidateOrigin;
   closeCandidate();
   if (snapshot && !workspaceBlocked) renderRunResults(selectedRun());
-  const list = byId({ decisions: 'decision-list', results: 'result-list', activity: 'activity-list', stage: 'candidate-list' }[origin?.source ?? 'stage']);
+  if (origin?.source === 'search') renderCandidateSearch();
+  const list = byId({ decisions: 'decision-list', results: 'result-list', activity: 'activity-list', stage: 'candidate-list', search: 'candidate-search-list' }[origin?.source ?? 'stage']);
   const decisionFocus = origin?.trigger?.dataset.decisionFocus;
   const target = origin?.trigger?.isConnected ? origin.trigger : decisionFocus ? [...list.querySelectorAll('[data-decision-focus]')].find(button => button.dataset.decisionFocus === decisionFocus) : [...list.querySelectorAll('.candidate-link')].find(button => button.dataset.candidate === origin?.candidateId);
-  const fallback = origin?.source === 'decisions' ? byId('decisions-heading') : origin?.source === 'stage' ? stageButtons.get(selectedStage) : byId(resultsState.filter === 'decision' ? 'show-run-decisions' : 'show-run-results');
-  (target?.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
+  const fallback = origin?.source === 'search' ? byId('candidate-query') : origin?.source === 'decisions' ? byId('decisions-heading') : origin?.source === 'stage' ? stageButtons.get(selectedStage) : byId(resultsState.filter === 'decision' ? 'show-run-decisions' : 'show-run-results');
+  if (origin?.searchPosition) restoreSearchPosition(origin.searchPosition, fallback);
+  else (target?.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
 });
 for (const scope of ROLE_SCOPES) {
   const button = node('button', '', scope.label); button.type = 'button'; button.dataset.scope = scope.id;
@@ -883,16 +1528,55 @@ for (const scope of ROLE_SCOPES) {
   });
   byId('role-scopes').append(button);
 }
-byId('role-query').addEventListener('input', () => { if (snapshot) { const view = renderRoleControls(); renderStages(false, view); } });
-byId('choose-following').addEventListener('click', () => {
-  const picker = byId('following-picker'); picker.hidden = !picker.hidden;
-  byId('choose-following').setAttribute('aria-expanded', String(!picker.hidden));
-  if (!picker.hidden && snapshot) { renderFollowingPicker(); byId('following-query').focus({ preventScroll: true }); }
+byId('candidate-query').addEventListener('input', changeCandidateSearch);
+byId('candidate-query').addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); clearCandidateSearch(); }
 });
+byId('clear-candidate-search').addEventListener('click', clearCandidateSearch);
+byId('show-more-candidates').addEventListener('click', () => {
+  const firstNew = searchCandidates(snapshot, byId('candidate-query').value)?.[candidateSearchLimit]?.id;
+  candidateSearchLimit += 20;
+  renderCandidateSearch();
+  [...byId('candidate-search-list').querySelectorAll('button')].find(button => button.dataset.candidate === firstNew)?.focus({ preventScroll: true });
+});
+byId('role-query').addEventListener('input', () => { if (snapshot) { const view = renderRoleControls(); renderStages(false, view); } });
+byId('role-search-disclosure').addEventListener('toggle', () => {
+  byId('role-search-disclosure').querySelector('summary').setAttribute('aria-expanded', String(byId('role-search-disclosure').open));
+});
+byId('clear-role-search').addEventListener('click', () => {
+  byId('role-query').value = '';
+  if (snapshot) { const view = renderRoleControls(); renderStages(false, view); }
+  (byId('role-search-disclosure').open ? byId('role-query') : byId('role-search-disclosure').querySelector('summary')).focus({ preventScroll: true });
+});
+byId('view-decisions-records').addEventListener('click', () => {
+  const searching = byId('candidate-query').value.trim().length > 0;
+  const view = confirmationView(selectedRun());
+  if (searching && (view.decisions ?? 0) > 0 && view.fresh) {
+    searchConfirmations = candidateOrigin?.searchPosition ?? captureSearchPosition();
+    if (candidateOrigin) closeCandidate();
+    renderCandidateSearch();
+    renderRunResults(selectedRun());
+    focusWorkbenchTarget(byId('decisions-heading'), 'nearest');
+    return;
+  }
+  byId('execution-records').open = true;
+  focusWorkbenchTarget(workspaceNavTargets.tasks, 'nearest');
+});
+byId('return-to-search').addEventListener('click', () => {
+  const position = searchConfirmations;
+  searchConfirmations = null;
+  if (candidateOrigin) closeCandidate();
+  renderCandidateSearch();
+  if (snapshot) renderRunResults(selectedRun());
+  if (position) restoreSearchPosition(position, byId('candidate-query'));
+});
+for (const id of ['choose-following', 'workspace-choose-following']) byId(id).addEventListener('click', event => toggleFollowingPicker(event.currentTarget));
 byId('following-query').addEventListener('input', () => { if (snapshot) renderFollowingPicker(); });
 byId('finish-following').addEventListener('click', () => {
-  byId('following-picker').hidden = true; byId('choose-following').setAttribute('aria-expanded', 'false');
-  byId('choose-following').focus({ preventScroll: true });
+  byId('following-picker').hidden = true;
+  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'false');
+  const target = visibleWorkbenchTarget(followingPickerTrigger) ? followingPickerTrigger : byId('choose-following');
+  target.focus({ preventScroll: true });
 });
 byId('show-run-results').addEventListener('click', () => openRunResults('all'));
 byId('show-run-decisions').addEventListener('click', () => openRunResults('decision'));
@@ -961,7 +1645,7 @@ roleSelect.addEventListener('change', () => {
 });
 function chooseTask(selection, message = '') {
   const changed = taskSelection.runId !== selection.runId || selection.mode === 'live';
-  if (changed) { closeCandidate(); resetRunResults(selection.runId); resetActivity(selection.runId); byId('steps-detail').open = false; }
+  if (changed) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selection.runId); resetActivity(selection.runId); byId('steps-detail').open = false; }
   taskSelection = selection; selectionMessage = message; writeTaskURL();
   if (snapshot) renderRuns();
 }
@@ -999,13 +1683,13 @@ function blockWorkspace() {
   document.documentElement.dataset.workspaceBlocked = 'true';
   text('sync', '工作区连接已变化'); byId('sync').dataset.state = 'error';
   text('task-sync', '工作区连接已变化'); byId('task-card').dataset.syncing = 'false';
-  text('decisions-status', '工作区连接已变化，请重新打开看板；确认名单已停止更新。');
-  byId('decisions-status').hidden = false; byId('decisions-status').dataset.state = 'error';
-  byId('decisions-content').hidden = true; byId('retry-decisions').hidden = true; byId('decisions-count').hidden = true;
+  renderConfirmations(selectedRun(), confirmationView(selectedRun()));
   const alerts = byId('alerts'); alerts.hidden = false; alerts.dataset.state = 'error';
   const reopen = node('a', 'text-button', '重新打开看板'); reopen.href = '/';
   alerts.replaceChildren(node('p', '', initialWorkspace !== null && !/^[a-f0-9]{64}$/i.test(initialWorkspace) ? '工作区链接格式无效，请重新打开看板。' : '服务已指向其他工作区，请重新打开；当前保留上次记录。'), reopen);
   byId('refresh-board').disabled = true; byId('save-role').disabled = true;
+  renderCandidateSearch();
+  renderWorkspaceFollowing();
 }
 
 const snapshotController = createSnapshotController({
@@ -1024,15 +1708,15 @@ const snapshotController = createSnapshotController({
     if (snapshot) render();
     else {
       text('sync', '连接失败'); byId('sync').dataset.state = 'error';
-      text('refresh-board', '重新连接'); text('task-sync', '连接失败');
+      refreshButton.setAttribute('aria-label', '重新连接'); refreshButton.title = '重新连接'; text('task-sync', '连接失败');
       const alerts = byId('alerts'); alerts.hidden = false; alerts.dataset.state = 'error';
       if (alerts.dataset.content !== 'disconnected') { alerts.dataset.content = 'disconnected'; alerts.replaceChildren(node('p', '', '无法连接本机看板，尚无成功读取的数据。页面会继续重试。')); }
       text('run-state', '读取失败'); byId('run-state').dataset.state = 'error';
       text('current-step', '任务状态未知'); text('task-reason', '无法连接本机看板，等待恢复读取。');
       byId('task-reason').hidden = false;
-      text('decisions-status', '连接失败，确认事项未知；重新连接后更新。');
-      byId('decisions-status').hidden = false; byId('decisions-status').dataset.state = 'error';
-      byId('decisions-content').hidden = true;
+      renderConfirmations(null, confirmationView(null));
+      renderCandidateSearch();
+      renderWorkspaceFollowing();
       text('run-context', '进度未知，等待恢复读取。'); text('ledger-state', '候选记录数未知，等待恢复读取。');
       text('source-status', '本地文件 · 连接失败'); byId('source-dot').dataset.state = 'error';
     }

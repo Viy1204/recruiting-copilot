@@ -479,6 +479,20 @@ export function selectRole(snapshot, role = '') {
   };
 }
 
+/** @param {BoardSnapshot} snapshot @param {string} query @returns {Candidate[]|null} */
+export function searchCandidates(snapshot, query = '') {
+  if (snapshot.candidates === null) return null;
+  const normalize = value => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+  const search = normalize(query);
+  if (!search) return [];
+  const matches = /** @type {Candidate[][]} */ ([[], [], []]);
+  for (const candidate of snapshot.candidates) {
+    const name = normalize(candidate.name);
+    if (name.includes(search)) matches[name === search ? 0 : name.startsWith(search) ? 1 : 2].push(candidate);
+  }
+  return matches.flat();
+}
+
 /** @param {BoardSnapshot} snapshot @param {{scope?:import('./types/index.d.ts').RoleScope, following?:string[], query?:string, role?:string}} options @returns {import('./types/index.d.ts').RoleSelection} */
 export function selectRoles(snapshot, { scope = 'active', following = [], query = '', role = '' } = {}) {
   const selectedScope = ROLE_SCOPES.find(item => item.id === scope);

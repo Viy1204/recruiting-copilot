@@ -4,47 +4,198 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>招聘进展 · Recruiting Copilot</title>
+  <title>招聘工作台 · Recruiting Copilot</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <main class="app board">
-    <header class="brand-header">
-      <span class="rc-mark" aria-hidden="true"><svg viewBox="0 0 28 28"><path d="M5 22V6h5a4.5 4.5 0 0 1 0 9H5m5 0 5 7M23 7a7 7 0 1 0 0 14"/></svg></span>
-      <p class="brand-name">Recruiting Copilot</p>
-      <button id="theme" class="icon-button theme-button" type="button" aria-label="切换深色主题" aria-pressed="false" title="切换深色主题">
-        <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
-        <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.3A8.5 8.5 0 0 1 8.7 4 8.5 8.5 0 1 0 20 15.3Z"/></svg>
-      </button>
-    </header>
-    <div class="page-heading">
-      <div><h1>招聘进展</h1><p id="workspace" class="workspace">正在读取工作区</p></div>
-      <div class="sync-tools"><span id="sync" class="sync-status" role="status" aria-live="polite">正在读取</span><button id="refresh-board" class="text-button" type="button">刷新</button></div>
+    <div id="preview-toolbar" class="preview-toolbar" role="group" aria-label="开发布局预览" hidden>
+      <span class="preview-label">布局预览</span>
+      <button class="preview-mode-button" type="button" data-preview-mode="wide" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>桌面</span></button>
+      <button class="preview-mode-button" type="button" data-preview-mode="narrow" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg><span>窄侧栏</span></button>
     </div>
-    <div id="alerts" class="system-alert" role="status" aria-live="polite" hidden></div>
-    <div class="content-grid">
-      <section class="workflow-column" aria-labelledby="decisions-heading">
-        <div class="section-heading decisions-heading"><h2 id="decisions-heading" tabindex="-1">本轮需确认</h2><span id="decisions-count" class="count-badge" hidden></span></div>
-        <p id="decisions-scope" class="decisions-scope">仅此任务 · 岗位筛选不改变本轮</p>
-        <p id="decisions-status" class="decisions-status" role="status" aria-live="polite">正在读取本轮确认记录…</p>
-        <button id="retry-decisions" class="text-button" type="button" hidden>重试确认名单</button>
-        <div id="decisions-content" hidden>
-          <ul id="decision-list" class="decision-list" aria-label="所选任务的需确认名单"></ul>
-          <button id="show-more-decisions" class="text-button" type="button" aria-expanded="false" aria-controls="decision-list" hidden></button>
+    <header class="app-header">
+      <div class="app-title-row">
+        <span class="rc-mark" aria-hidden="true"><svg viewBox="0 0 28 28" focusable="false"><path d="M5 22V6h5a4.5 4.5 0 0 1 0 9H5m5 0 5 7M23 7a7 7 0 1 0 0 14"/></svg></span>
+        <div class="brand-copy">
+          <p class="brand-name">Recruiting Copilot</p>
+          <p id="workspace" class="workspace">正在读取工作区</p>
         </div>
-        <div id="decision-record-host"></div>
-        <article id="task-card" class="task-card" aria-labelledby="task-heading">
-          <div class="task-heading"><h3 id="task-heading">任务进度</h3><span id="run-state" class="status-pill">正在读取</span></div>
+      </div>
+      <div class="header-actions">
+        <button id="refresh-board" class="icon-button" type="button" aria-label="刷新" title="刷新">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+        <button id="theme" class="icon-button theme-button" type="button" aria-label="切换深色主题" aria-pressed="false" title="切换深色主题">
+          <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 15.3A8.5 8.5 0 0 1 8.7 4 8.5 8.5 0 1 0 20 15.3Z"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="workbench-frame">
+      <nav id="workspace-nav" class="workspace-nav" aria-label="工作台导航">
+        <p class="workspace-nav-label">WORKSPACE</p>
+        <div class="workspace-nav-links">
+          <button class="workspace-nav-item" type="button" data-nav-target="overview" aria-current="location" aria-controls="workbench-heading"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>招聘工作台</span></button>
+          <button class="workspace-nav-item" type="button" data-nav-target="roles" aria-controls="role-browser"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg><span>岗位与人选</span></button>
+          <button class="workspace-nav-item" type="button" data-nav-target="tasks" aria-controls="execution-records"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span>执行记录</span></button>
+        </div>
+        <section class="workspace-following" aria-labelledby="workspace-following-heading">
+          <div class="workspace-following-heading"><h2 id="workspace-following-heading">关注岗位</h2><button id="workspace-choose-following" class="icon-button" type="button" aria-label="设置关注岗位" title="设置关注岗位" aria-expanded="false" aria-controls="following-picker"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 8v8m-4-4h8"/><circle cx="12" cy="12" r="9"/></svg></button></div>
+          <div id="workspace-following" class="workspace-role-list"></div>
+          <p id="workspace-following-note" class="workspace-following-note" role="status" aria-live="polite">正在读取关注岗位…</p>
+        </section>
+        <div class="workspace-nav-bottom">
+          <span class="rc-mark" aria-hidden="true"><svg viewBox="0 0 28 28" focusable="false"><path d="M5 22V6h5a4.5 4.5 0 0 1 0 9H5m5 0 5 7M23 7a7 7 0 1 0 0 14"/></svg></span>
+          <div class="workspace-nav-copy"><p id="nav-workspace" class="workspace-nav-name">正在读取工作区</p><p class="workspace-nav-caption">本地记录</p></div>
+        </div>
+      </nav>
+      <div class="workbench-main">
+        <div class="workbench-heading"><h1 id="workbench-heading" tabindex="-1">招聘工作台</h1><span id="sync" class="sync-status" role="status" aria-live="polite">正在读取</span></div>
+        <div id="alerts" class="system-alert" role="status" aria-live="polite" hidden></div>
+        <div class="workbench-search">
+          <div class="candidate-search-card">
+            <label class="candidate-search-label" for="candidate-query">搜索人选</label>
+            <div class="candidate-search-input">
+              <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="candidate-query" class="search-input" type="search" placeholder="输入姓名或部分姓名" autocomplete="off" aria-describedby="candidate-search-hint" aria-controls="candidate-search-results">
+              <button id="clear-candidate-search" class="text-button" type="button" hidden>清空</button>
+            </div>
+            <p id="candidate-search-hint" class="muted">全部岗位、全部阶段，含历史岗位</p>
+          </div>
+        </div>
+    <div id="layout-toolbar" class="layout-toolbar">
+      <div class="layout-toolbar-heading">
+        <button id="edit-layout" class="text-button layout-edit-button" type="button" aria-expanded="false" aria-controls="layout-editor"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span>调整布局</span></button>
+      </div>
+      <div id="layout-editor" class="layout-editor" hidden>
+        <p id="layout-help" class="layout-help">同级内拖动，或点上移／下移。把手可用 ↑↓ 调整，Enter／空格确认，Esc 取消。</p>
+        <div class="layout-editor-actions"><button id="reset-layout" class="text-button" type="button">恢复默认</button><button id="finish-layout" class="primary-button" type="button">完成</button></div>
+      </div>
+      <p id="layout-storage-note" class="layout-storage-note" role="status" aria-live="polite" hidden></p>
+    </div>
+    <p id="layout-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div id="layout-root" class="board-content layout-group" data-layout-group="board">
+      <section id="assistant" class="board-group search-section layout-item" data-layout-item="assistant" data-confirmation-state="loading" aria-labelledby="decisions-heading">
+        <div class="board-group-heading assistant-heading"><h2 id="decisions-heading" class="heading-label" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span id="decisions-heading-label">本轮需确认</span></h2><span id="decisions-count" class="count-badge" hidden></span></div>
+        <div class="board-group-body">
+          <div id="confirmations" class="confirmations-section">
+            <button id="return-to-search" class="text-button" type="button" aria-controls="candidate-search-results" hidden>返回搜索结果</button>
+            <div id="decisions-scope" class="decisions-scope"></div>
+            <p id="decisions-status" class="decisions-status" role="status" aria-live="polite" tabindex="-1">正在读取本轮确认记录…</p>
+            <button id="retry-decisions" class="text-button" type="button" hidden>重试确认名单</button>
+            <div id="decisions-summary" class="decisions-summary" hidden>
+              <p id="decisions-summary-text" class="decisions-summary-text" role="status" aria-live="polite"></p>
+              <button id="view-decisions-records" class="text-button" type="button" aria-expanded="false" aria-controls="execution-records">查看记录</button>
+            </div>
+            <div id="decisions-content" hidden>
+              <ul id="decision-list" class="decision-list" aria-label="所选任务的需确认名单"></ul>
+              <button id="show-more-decisions" class="text-button" type="button" aria-expanded="false" aria-controls="decision-list" hidden></button>
+            </div>
+            <div id="decision-record-host"></div>
+          </div>
+        </div>
+      </section>
+      <section id="role-browser" class="board-group role-section layout-item" data-layout-item="roles" aria-labelledby="candidates-heading">
+        <div class="board-group-heading"><h2 id="candidates-heading" class="heading-label" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg><span id="role-browser-title">岗位与人选</span></h2></div>
+        <section id="candidate-search-results" class="board-group-body" aria-label="人选搜索结果" hidden>
+          <p id="candidate-search-status" class="candidate-search-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <p id="candidate-search-stale" class="candidate-search-stale" hidden></p>
+          <div id="candidate-search-content">
+            <ul id="candidate-search-list" class="candidate-list" aria-label="按姓名匹配的人选"></ul>
+            <button id="show-more-candidates" class="text-button" type="button" aria-controls="candidate-search-list" hidden>显示更多</button>
+          </div>
+          <div id="search-record-host"></div>
+        </section>
+        <div id="role-blocks" class="board-group-body layout-group" data-layout-group="roles">
+        <section id="role-scope" class="board-subsection layout-item" data-layout-item="role-scope" aria-labelledby="role-scope-heading">
+          <div class="subsection-heading"><h3 id="role-scope-heading" class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span>岗位范围</span></h3><button id="manage-roles" class="text-button manage-roles" type="button" aria-expanded="false" aria-controls="role-manager"><span>管理岗位</span><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg></button></div>
+        <div id="role-scope-tools" class="role-scope-tools">
+          <div class="role-scope-row">
+            <div id="role-scopes" class="role-tabs" role="group" aria-label="岗位范围"></div>
+            <button id="choose-following" class="text-button following-toggle" type="button" aria-expanded="false" aria-controls="following-picker"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>选择关注</span></button>
+          </div>
+        </div>
+        <div id="following-picker" class="following-picker" hidden>
+          <h4>选择关注岗位</h4>
+          <p class="muted">从全部岗位中选择，关注偏好只保存在本机。</p>
+          <label class="sr-only" for="following-query">查找关注岗位</label>
+          <input id="following-query" class="search-input" type="search" placeholder="搜索全部岗位" autocomplete="off">
+          <ul id="following-list" class="following-list"></ul>
+          <button id="finish-following" class="primary-button" type="button">完成</button>
+        </div>
+        <div class="role-entry">
+          <span class="role-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></span>
+          <div class="role-entry-content">
+            <div class="role-filter">
+              <label class="sr-only" for="role">岗位</label>
+              <select id="role" aria-describedby="role-note"><option value="">在招岗位汇总</option></select>
+              <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 10 5 5 5-5"/></svg>
+            </div>
+            <p id="role-note" class="scope-note">正在读取岗位配置</p>
+          </div>
+        </div>
+        <details id="role-search-disclosure" class="role-search-disclosure">
+          <summary class="role-search-summary" aria-expanded="false" aria-controls="role-query-field"><span class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>查找岗位</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <div id="role-query-field" class="role-search-field">
+            <label class="sr-only" for="role-query">搜索岗位</label>
+            <input id="role-query" class="search-input" type="search" placeholder="搜索岗位" autocomplete="off" aria-describedby="role-options-note">
+          </div>
+        </details>
+        <p id="role-query-note" class="role-query-note" role="status" aria-live="polite" hidden><span id="role-query-note-text"></span><button id="clear-role-search" class="text-button" type="button">清除筛选</button></p>
+        <p id="role-options-note" class="role-options-note" role="status" aria-live="polite" hidden></p>
+        <p id="role-preferences-note" class="role-preferences-note" role="status" hidden></p>
+        <form id="role-manager" class="role-manager" hidden>
+          <h4>调整岗位状态</h4>
+          <p class="muted">保存到本地岗位表，原文件自动备份；不修改招聘平台岗位。</p>
+          <label for="managed-role">岗位</label>
+          <select id="managed-role" required></select>
+          <label for="managed-status">状态</label>
+          <select id="managed-status" required></select>
+          <div class="control-actions"><button id="save-role" class="primary-button" type="submit">保存</button><button id="cancel-role" class="text-button" type="button">取消</button></div>
+          <p id="role-result" role="status" aria-live="polite"></p>
+        </form>
+        </section>
+        <div id="candidate-stages-block" class="board-subsection disclosure-block layout-item" data-layout-item="candidate-stages">
+        <details id="candidate-stages" class="panel-disclosure" open>
+          <summary class="panel-summary"><h3 class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>候选阶段 <span id="candidate-total-summary" class="panel-summary-meta">· — 条</span></span></h3><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <div class="stages-content">
+            <p id="stage-scope" class="stage-scope">当前范围：正在读取</p>
+            <div id="stages" class="stage-grid" role="group" aria-label="候选人阶段，选择后展开名单"></div>
+            <div id="candidate-notes" class="candidate-notes"></div>
+            <div id="candidate-detail" class="candidate-detail" role="region" aria-labelledby="detail-title" hidden>
+              <div class="detail-heading"><h4><span id="detail-title"></span><span id="detail-count" class="muted"></span></h4><button id="collapse-stage" type="button" aria-label="收起候选人名单">收起</button></div>
+              <ul id="candidate-list" class="candidate-list"></ul>
+              <div id="stage-record-host">
+                <div id="candidate-record" class="candidate-record" role="region" aria-label="候选资料" hidden>
+                  <button id="back-to-list" class="text-button" type="button">返回名单</button>
+                  <div id="record-content" aria-live="polite"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+        </div>
+        </div>
+        <p id="filter-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+      </section>
+      <section id="tasks" class="board-group task-section layout-item" data-layout-item="tasks" aria-labelledby="tasks-heading">
+        <div class="board-group-heading"><h2 id="tasks-heading" class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-3"/><rect x="8" y="1" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/></svg><span>任务与记录</span></h2></div>
+        <div id="task-blocks" class="board-group-body layout-group" data-layout-group="tasks">
+        <article id="task-card" class="task-card board-subsection layout-item" data-layout-item="task-card">
+          <div class="task-heading"><h3 class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span id="task-heading">最近任务</span></h3><span id="run-state" class="status-pill">正在读取</span></div>
           <h4 id="workflow-name" class="workflow-name" hidden></h4>
           <p id="current-step" class="current-step">正在读取任务</p>
           <p id="task-reason" class="task-reason" hidden></p>
+          <p id="task-recorded" class="task-recorded">最后记录 · 未知</p>
         </article>
+        <div id="execution-records-block" class="board-subsection disclosure-block layout-item" data-layout-item="execution-records">
         <details id="execution-records" class="panel-disclosure">
-          <summary class="panel-summary"><span>执行记录</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <summary class="panel-summary"><h3 class="heading-label"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>执行记录</span></h3><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 10 5 5 5-5"/></svg></summary>
           <div class="execution-content">
             <div class="section-heading">
-              <h3>工作区任务</h3>
+              <h4>工作区任务</h4>
               <div class="run-select-wrap">
                 <label class="sr-only" for="run">选择工作区任务</label>
                 <select id="run" disabled><option value="">正在读取进度</option></select>
@@ -59,7 +210,8 @@
               <button id="latest-run" class="text-button" type="button" hidden>回到最新</button>
             </div>
             <p id="selection-note" class="selection-note" role="status" aria-live="polite" hidden></p>
-            <div class="task-freshness"><span id="task-sync">等待读取</span><span id="task-recorded">最后记录 · 未知</span></div>
+            <div class="task-freshness"><span id="task-sync">等待读取</span></div>
+            <p id="execution-reason" class="task-reason" hidden></p>
             <div id="run-result-summary" class="run-result-summary" hidden>
               <div class="run-result-buttons">
                 <button id="show-run-results" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>查看处理名单</span><span id="run-result-total">未记录</span></button>
@@ -100,66 +252,8 @@
             </div>
           </div>
         </details>
-      </section>
-      <section class="candidates-column" aria-labelledby="candidates-heading">
-        <div class="section-heading"><h2 id="candidates-heading">岗位与人选</h2></div>
-        <p class="section-caption">按岗位查找人选与资料</p>
-        <div class="role-scope-tools">
-          <div id="role-scopes" class="segmented-control" role="group" aria-label="岗位范围"></div>
-          <button id="choose-following" class="secondary-button" type="button" aria-expanded="false" aria-controls="following-picker">选择关注</button>
         </div>
-        <div id="following-picker" class="following-picker" hidden>
-          <h3>选择关注岗位</h3>
-          <p class="muted">从全部岗位中选择，关注偏好只保存在本机。</p>
-          <label class="sr-only" for="following-query">查找关注岗位</label>
-          <input id="following-query" class="search-input" type="search" placeholder="搜索全部岗位" autocomplete="off">
-          <ul id="following-list" class="following-list"></ul>
-          <button id="finish-following" class="primary-button" type="button">完成</button>
         </div>
-        <div class="role-search">
-          <label class="sr-only" for="role-query">搜索岗位</label>
-          <input id="role-query" class="search-input" type="search" placeholder="搜索岗位" autocomplete="off" aria-describedby="role-options-note">
-        </div>
-        <div class="role-tools">
-          <div class="role-filter">
-            <label for="role">岗位</label>
-            <select id="role"><option value="">在招岗位汇总</option></select>
-            <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
-          </div>
-          <button id="manage-roles" class="secondary-button" type="button" aria-expanded="false" aria-controls="role-manager">管理</button>
-        </div>
-        <p id="role-options-note" class="role-options-note" role="status" aria-live="polite" hidden></p>
-        <p id="role-preferences-note" class="role-preferences-note" role="status" hidden></p>
-        <form id="role-manager" class="role-manager" hidden>
-          <h3>调整岗位状态</h3>
-          <p class="muted">保存到本地岗位表，原文件自动备份；不修改招聘平台岗位。</p>
-          <label for="managed-role">岗位</label>
-          <select id="managed-role" required></select>
-          <label for="managed-status">状态</label>
-          <select id="managed-status" required></select>
-          <div class="control-actions"><button id="save-role" class="primary-button" type="submit">保存</button><button id="cancel-role" class="text-button" type="button">取消</button></div>
-          <p id="role-result" role="status" aria-live="polite"></p>
-        </form>
-        <p id="role-note" class="scope-note">正在读取岗位配置</p>
-        <details id="candidate-stages" class="panel-disclosure">
-          <summary class="panel-summary"><span>候选阶段</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
-          <div class="stages-content">
-            <p class="candidate-total">当前岗位范围共 <strong id="total">—</strong> 条候选记录</p>
-            <div id="stages" class="stage-grid" role="group" aria-label="候选人阶段，选择后展开名单"></div>
-            <div id="candidate-notes" class="candidate-notes"></div>
-            <div id="candidate-detail" class="candidate-detail" role="region" aria-labelledby="detail-title" hidden>
-              <div class="detail-heading"><h3><span id="detail-title"></span><span id="detail-count" class="muted"></span></h3><button id="collapse-stage" type="button" aria-label="收起候选人名单">收起</button></div>
-              <ul id="candidate-list" class="candidate-list"></ul>
-              <div id="stage-record-host">
-                <div id="candidate-record" class="candidate-record" role="region" aria-label="候选资料" hidden>
-                  <button id="back-to-list" class="text-button" type="button">返回名单</button>
-                  <div id="record-content" aria-live="polite"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
-        <p id="filter-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
       </section>
     </div>
     <footer class="source-footer">
@@ -178,6 +272,8 @@
         <p class="source-note">候选人阶段按当前岗位范围或所选岗位统计，以姓名＋原岗位计数，原状态以台账为准。任务处理名单按本轮已写入的收据计人；岗位筛选不改变选定任务。</p>
       </details>
     </footer>
+      </div>
+    </div>
   </main>
   <template id="stage-template">
     <button class="stage-button" type="button" aria-expanded="false" aria-controls="candidate-detail">

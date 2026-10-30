@@ -152,9 +152,10 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
     }
     if (url.pathname === '/') {
       try {
-        if ([...params.keys()].some(key => key !== 'run') || params.getAll('run').length > 1) throw new Error('invalid query');
+        if ([...params.keys()].some(key => !['run', 'preview'].includes(key)) || params.getAll('run').length > 1 || params.getAll('preview').length > 1) throw new Error('invalid query');
         if (params.has('run')) assertRunId(params.get('run'));
-      } catch { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'RUN_INPUT_INVALID', message: '看板地址只接受一个安全 run 参数和一个工作区标识' } })); return; }
+        if (params.has('preview') && !['wide', 'narrow'].includes(params.get('preview'))) throw new Error('invalid preview');
+      } catch { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'RUN_INPUT_INVALID', message: '看板地址仅接受单个安全 run、工作区标识及 wide / narrow 开发预览参数' } })); return; }
     }
     const asset = assets.get(url.pathname === '/' ? '/' : request.url);
     if (!asset) { send(404, 'text/plain; charset=utf-8', '未找到资源'); return; }
