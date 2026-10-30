@@ -103,7 +103,7 @@ test('HTTP 绑定 loopback、只读白名单、Host/Origin 限制与无 CORS；�
   assert.equal((await request(port, '/api/snapshot', { headers: { Host: `localhost:${port}`, Origin: `http://127.0.0.1:${port}` } })).status, 403);
   for (const url of ['/CONTEXT.md', '/../../package.json', '/api/snapshot?file=CONTEXT.md', '/%2e%2e/CONTEXT.md', '/runtime/recruit-board/runs/a.json']) assert.equal((await request(port, url)).status, 404, url);
   const html = await request(port, '/');
-  assert.equal(html.status, 200); assert.match(html.body, /招聘进展/);
+  assert.equal(html.status, 200); assert.match(html.body, /<title>招聘工作台 · Recruiting Copilot<\/title>/);
   assert.equal((await request(port, '/model.mjs')).status, 200);
   assert.equal((await request(port, '/', { method: 'HEAD' })).body, '');
 });
@@ -122,7 +122,7 @@ test('跨站文档GET可打开完整首页链接，API及其他跨站请求仍�
   const page = await request(port, pathname, { headers });
   assert.equal(page.status, 200);
   assert.match(page.headers['content-type'], /text\/html/);
-  assert.match(page.body, /招聘进展/);
+  assert.match(page.body, /<title>招聘工作台 · Recruiting Copilot<\/title>/);
   assert.equal(page.body.includes('合成测试甲'), false);
   assert.equal((await request(port, `/api/snapshot?workspace=${key}`)).status, 200);
   for (const endpoint of ['/api/health', '/api/snapshot', '/api/session', '/api/roles', '/api/runs/results?run=linked-task', '/api/candidates/detail?candidate=bad']) {
@@ -420,12 +420,12 @@ test('首页单run与workspace链接可访问，严格拒绝重复和越界query
   const port = server.address().port;
   const key = JSON.parse((await request(port, '/api/health')).body).workspaceKey;
   const wrong = key === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64);
-  for (const query of ['?run=valid-run_1', `?workspace=${key}`, `?workspace=${key}&run=valid-run_1`]) {
+  for (const query of ['?run=valid-run_1', `?workspace=${key}`, `?workspace=${key}&run=valid-run_1`, '?preview=wide', '?preview=narrow', `?workspace=${key}&run=valid-run_1&preview=narrow`]) {
     const page = await request(port, `/${query}`);
     assert.equal(page.status, 200, query);
     assert.match(page.headers['content-type'], /text\/html/);
   }
-  for (const query of ['?run=', '?run=../bad', '?run=a&run=b', '?file=CONTEXT.md', '?run=valid&limit=3', '?workspace=bad', `?workspace=${key}&workspace=${key}`]) assert.equal((await request(port, `/${query}`)).status, 400, query);
+  for (const query of ['?run=', '?run=../bad', '?run=a&run=b', '?file=CONTEXT.md', '?run=valid&limit=3', '?workspace=bad', `?workspace=${key}&workspace=${key}`, '?preview=', '?preview=canvas', '?preview=wide&preview=narrow', '?preview=narrow&file=CONTEXT.md']) assert.equal((await request(port, `/${query}`)).status, 400, query);
   const endpoints = ['/', '/api/health', '/api/snapshot', '/api/session', '/api/roles', '/api/runs/results?run=missing', '/api/runs/activity?run=missing', '/api/candidates/detail?candidate=bad', '/api/candidates/document?candidate=bad&document=bad'];
   for (const endpoint of endpoints) {
     for (const options of [{ headers: { 'X-Workspace-Key': wrong } }, { query: true }]) {

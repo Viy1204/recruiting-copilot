@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSnapshot, candidateStatus, createRun, LEDGER_COLUMNS, MAX_RUN_RESULTS, readCandidates, readConfig, readRoles, ROLE_SCOPES,
-  runSummary, selectRole, selectRoles, selectTask, stageForStatus, summarizeRunResults, transitionRun, validateRun
+  runSummary, searchCandidates, selectRole, selectRoles, selectTask, stageForStatus, summarizeRunResults, transitionRun, validateRun
 } from '../skills/recruit-board/model.mjs';
 
 const header = `${LEDGER_COLUMNS.join(',')}\n`;
@@ -59,6 +59,76 @@ test('姓名＋岗位去重，状态冲突计一人但保留未能决定状态�
   assert.equal(ratingConflict.candidates[0].rawStatus, '初筛通过');
   assert.equal(ratingConflict.candidates[0].rating, null);
   assert.match(candidateStatus(ratingConflict.candidates[0]), /评级冲突/);
+});
+
+test('姓名搜索支持完整与部分中文、英文大小写、全角与连续空白，只匹配姓名', () => {
+  const snapshot = buildSnapshot(sources(header + [
+    row('合成张明', '合成程序岗', '已回复'), row('Alice Chen', '合成动画岗', '已排除'),
+    row('ＡＬＩＣＥ　ＷＡＮＧ', '合成程序岗', '待初筛'), row('Bob  Li', 'Alice岗位', '待确认')
+  ].join('\n')));
+  assert.deepEqual(searchCandidates(snapshot, '合成张明').map(person => person.name), ['合成张明']);
+  assert.deepEqual(searchCandidates(snapshot, '张明').map(person => person.name), ['合成张明']);
+  assert.deepEqual(searchCandidates(snapshot, '  ａｌｉｃｅ  ').map(person => person.name), ['Alice Chen', 'ＡＬＩＣＥ　ＷＡＮＧ']);
+  assert.deepEqual(searchCandidates(snapshot, ' BOB　 LI ').map(person => person.name), ['Bob  Li']);
+  assert.deepEqual(searchCandidates(snapshot, '合成程序岗'), []);
+  assert.deepEqual(searchCandidates(snapshot, '已回复'), []);
+  assert.deepEqual(searchCandidates(snapshot, '私密备注'), []);
+  for (const query of ['', ' ', '\t\n　']) assert.deepEqual(searchCandidates(snapshot, query), []);
+  assert.deepEqual(searchCandidates(snapshot), []);
+});
+
+test('姓名搜索跨全部岗位和阶段，保留同名异岗、别名和冲突记录', () => {
+  const input = sources(header + [
+    row('合成同名', '合成程序岗', '已回复'), row('合成同名', '旧程序岗', '待初筛'),
+    row('合成同名', '合成动画岗', '已排除'), row('合成同名', '台账岗位', '待确认'),
+    row('合成同名', '台账岗位', '已入职')
+  ].join('\n'));
+  input.config = { status: 'ok', text: JSON.stringify({ schemaVersion: 1, statusStages: {}, roleAliases: { 旧程序岗: '合成程序岗' } }) };
+  const snapshot = buildSnapshot(input);
+  const matches = searchCandidates(snapshot, '同名');
+  assert.deepEqual(matches.map(person => [person.rawRole, person.role, person.stage]), [
+    ['合成程序岗', '合成程序岗', 'talking'], ['旧程序岗', '合成程序岗', 'screen'],
+    ['合成动画岗', '合成动画岗', 'ended'], ['台账岗位', '台账岗位', 'unclassified']
+  ]);
+  assert.equal(new Set(matches.map(person => person.id)).size, 4);
+  assert.match(candidateStatus(matches[3]), /状态冲突：待确认 \/ 已入职/);
+});
+
+test('姓名搜索按字面包含匹配特殊字符，不把输入当作正则', () => {
+  const snapshot = buildSnapshot(sources(header + [row('合成[甲].*', '合成程序岗', '已回复'), row('合成甲', '合成程序岗', '已回复')].join('\n')));
+  for (const query of ['[甲]', '.*', '[']) assert.deepEqual(searchCandidates(snapshot, query).map(person => person.name), ['合成[甲].*']);
+  assert.deepEqual(searchCandidates(snapshot, '^合成'), []);
+});
+
+test('姓名搜索区分未知源与无匹配，陈旧快照仍返回保留的候选', () => {
+  const input = sources(); input.ledger = { status: 'missing' };
+  const missing = buildSnapshot(input);
+  assert.equal(searchCandidates(missing, '合成'), null);
+  assert.equal(searchCandidates(missing), null);
+  assert.deepEqual(searchCandidates(buildSnapshot(sources()), '合成'), []);
+  const good = buildSnapshot(sources(header + row('合成甲', '合成程序岗', '已回复')));
+  assert.deepEqual(searchCandidates(good, '不存在'), []);
+  const stale = buildSnapshot(input, good);
+  assert.equal(stale.sources.ledger.status, 'stale');
+  assert.deepEqual(searchCandidates(stale, '合成'), good.candidates);
+});
+
+test('姓名搜索完全同名优先、前缀其次、包含最后，同档稳定且不修改快照', () => {
+  const snapshot = buildSnapshot(sources(header + [
+    row('乙合成甲', '合成程序岗', '已回复'), row('合成甲乙', '合成程序岗', '已回复'),
+    row('合成甲', '合成动画岗', '已排除'), row('丙合成甲', '合成程序岗', '已回复'),
+    row('合成甲丙', '合成程序岗', '已回复'), row('合成甲', '合成程序岗', '待初筛')
+  ].join('\n')));
+  const before = structuredClone(snapshot);
+  snapshot.candidates.forEach(Object.freeze); Object.freeze(snapshot.candidates); Object.freeze(snapshot);
+  const matches = searchCandidates(snapshot, '合成甲');
+  assert.deepEqual(matches.map(person => [person.name, person.role]), [
+    ['合成甲', '合成动画岗'], ['合成甲', '合成程序岗'], ['合成甲乙', '合成程序岗'],
+    ['合成甲丙', '合成程序岗'], ['乙合成甲', '合成程序岗'], ['丙合成甲', '合成程序岗']
+  ]);
+  assert.deepEqual(snapshot, before);
+  matches.pop();
+  assert.equal(searchCandidates(snapshot, '合成甲').length, 6);
 });
 
 test('岗位仅解析指定段落里的 header 表，列顺序可变，关闭岗位保留，忽略模板占位与历史', () => {
