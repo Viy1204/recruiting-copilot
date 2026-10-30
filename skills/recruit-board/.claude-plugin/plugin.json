@@ -1,6 +1,6 @@
 {
   "name": "recruiting-board",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "展示本地招聘进展、候选阶段与资料，支持本地岗位状态管理；用 /recruiting-board 手动打开原生面板。",
   "types": "./types/index.d.ts",
   "author": {
