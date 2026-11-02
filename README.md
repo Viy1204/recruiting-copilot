@@ -10,7 +10,7 @@
 
 https://github.com/user-attachments/assets/8dbf02ed-b83d-4d2b-beaa-dd693fb5a297
 
-*三种视角看同一批人、候选人漏斗、该拍板的卡片、每一步的流程留痕，以及按姓名直达到人。[下载 mp4 母版（1080p，11 MB）](https://github.com/Viy1204/recruiting-copilot/releases/download/v0.8.0/promo.mp4)。片中的人选与数字均为演示数据。*
+*三种视角看同一批人、候选人漏斗、该拍板的卡片、每一步的流程留痕，以及按姓名直达到人。片中的人选与数字均为演示数据。*
 
 ## 从首次使用到日常招聘
 
