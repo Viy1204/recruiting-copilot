@@ -8,9 +8,9 @@
 
 ## 36 秒宣传片
 
-[![recruiting-copilot 宣传片：招聘工作台的候选人阶段总览](docs/images/promo-poster.png)](https://github.com/Viy1204/recruiting-copilot/releases/download/v0.8.0/promo.mp4)
+<video src="https://github.com/user-attachments/assets/7f968bb4-ea00-41cd-b52c-c90ec777b3e8" controls></video>
 
-*36 秒宣传片：三种视角看同一批人、候选人漏斗、该拍板的卡片、每一步的流程留痕，以及按姓名直达到人。点击封面下载 mp4（1080p，11 MB）。片中的人选与数字均为演示数据。*
+*36 秒宣传片：三种视角看同一批人、候选人漏斗、该拍板的卡片、每一步的流程留痕，以及按姓名直达到人。[下载 mp4 母版（1080p，11 MB）](https://github.com/Viy1204/recruiting-copilot/releases/download/v0.8.0/promo.mp4)。片中的人选与数字均为演示数据。*
 
 ## 从首次使用到日常招聘
 
