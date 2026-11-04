@@ -6,8 +6,9 @@ import { resolveWorkspace, workspaceKeyForRoot } from './reader.mjs';
 
 const failure = message => Object.assign(new Error(message), { code: 'CONNECT_INPUT_INVALID' });
 
-/** @param {{workspace:string, url?:string, run?:string|null}} options @returns {Promise<{status:'ready'|'unavailable'|'workspace-mismatch'|'incompatible', url:string|null, runUrl:string|null, workspaceKey:string, message:string}>} */
-export async function probeBoard({ workspace, url = 'http://127.0.0.1:4318', run = null } = {}) {
+/** @param {{workspace:string, url?:string, run?:string|null, require?:string[]}} options @returns {Promise<{status:'ready'|'unavailable'|'workspace-mismatch'|'incompatible', url:string|null, runUrl:string|null, workspaceKey:string, message:string}>} */
+export async function probeBoard({ workspace, url = 'http://127.0.0.1:4318', run = null, require: required = [] } = {}) {
+  if (!Array.isArray(required) || required.some(value => !['snapshot', 'run-results', 'run-activity', 'workspace-overview', 'run-highlights'].includes(value))) throw failure('所需能力列表无效');
   if (typeof workspace !== 'string' || !path.isAbsolute(workspace)) throw failure('必须使用 --workspace 指定已存在的绝对工作区目录');
   const match = typeof url === 'string' && /^http:\/\/(127\.0\.0\.1|localhost)(?::([1-9]\d{0,4}))?\/?$/.exec(url);
   if (!match || (match[2] && Number(match[2]) > 65535)) throw failure('看板地址必须是 http 的 127.0.0.1 或 localhost 根地址，端口为 1–65535，不能含凭据、路径、查询或片段');
@@ -43,7 +44,7 @@ export async function probeBoard({ workspace, url = 'http://127.0.0.1:4318', run
         let health;
         try { health = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); }
         catch { finish({ status: 'incompatible' }); return; }
-        if (!health || typeof health !== 'object' || Array.isArray(health) || health.service !== 'recruiting-board' || health.schemaVersion !== 1 || !Array.isArray(health.capabilities) || !['snapshot', 'run-results', 'run-activity'].every(capability => health.capabilities.includes(capability)) || typeof health.workspaceKey !== 'string' || !/^[a-f0-9]{64}$/.test(health.workspaceKey)) {
+        if (!health || typeof health !== 'object' || Array.isArray(health) || health.service !== 'recruiting-board' || health.schemaVersion !== 1 || !Array.isArray(health.capabilities) || ![...new Set(['snapshot', 'run-results', 'run-activity', ...required])].every(capability => health.capabilities.includes(capability)) || typeof health.workspaceKey !== 'string' || !/^[a-f0-9]{64}$/.test(health.workspaceKey)) {
           finish({ status: 'incompatible' }); return;
         }
         finish({ status: health.workspaceKey === workspaceKey ? 'ready' : 'workspace-mismatch' });
@@ -69,8 +70,8 @@ export async function connectCLI(args) {
   const options = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];
-    if (!['--workspace', '--url', '--run'].includes(flag) || Object.hasOwn(options, flag.slice(2)) || !value || value.startsWith('--')) throw failure('用法：connect.mjs --workspace <已存在的绝对目录> [--url <本机 HTTP 根地址>] [--run <安全 ID>]');
-    options[flag.slice(2)] = value;
+    if (!['--workspace', '--url', '--run', '--require'].includes(flag) || Object.hasOwn(options, flag.slice(2)) || !value || value.startsWith('--')) throw failure('用法：connect.mjs --workspace <已存在的绝对目录> [--url <本机 HTTP 根地址>] [--run <安全 ID>] [--require workspace-overview,run-highlights]');
+    options[flag.slice(2)] = flag === '--require' ? value.split(',') : value;
   }
   return probeBoard(options);
 }

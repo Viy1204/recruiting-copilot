@@ -395,7 +395,7 @@ test('health严格只读仅返回固定能力与规范工作区键，不触碰�
   const response = await request(port, '/api/health');
   assert.equal(response.status, 200);
   const health = JSON.parse(response.body);
-  assert.deepEqual(health, { service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity'], workspaceKey: createHash('sha256').update(await realpath(root)).digest('hex') });
+  assert.deepEqual(health, { service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity', 'workspace-overview', 'run-highlights'], workspaceKey: createHash('sha256').update(await realpath(root)).digest('hex') });
   assert.equal(reads, 0);
   assert.deepEqual(await readdir(root, { recursive: true }), before);
   assert.equal(response.headers['cache-control'], 'no-store');

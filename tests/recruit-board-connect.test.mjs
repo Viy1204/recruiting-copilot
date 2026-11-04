@@ -43,6 +43,17 @@ function assertNoLink(result, status) {
   assert.match(result.workspaceKey, /^[a-f0-9]{64}$/);
 }
 
+test('可选能力要求识别旧服务，新工作流不会把旧页面误判为支持跨轮事项', async t => {
+  const root = await workspace(t);
+  const url = await board(t, root);
+  const key = (await probeBoard({ workspace: root, url })).workspaceKey;
+  const legacy = await serve(t, (_request, response) => response.end(JSON.stringify(health(key))));
+  assert.equal((await probeBoard({ workspace: root, url: legacy.url })).status, 'ready');
+  assertNoLink(await probeBoard({ workspace: root, url: legacy.url, require: ['workspace-overview', 'run-highlights'] }), 'incompatible');
+  assert.equal((await connectCLI(['--workspace', root, '--url', url, '--require', 'workspace-overview,run-highlights'])).status, 'ready');
+  await assert.rejects(connectCLI(['--workspace', root, '--require', 'made-up']), error => error.code === 'CONNECT_INPUT_INVALID');
+});
+
 test('connect只读探测同工作区，公开链接携带稳定workspace键且runURL真实首页200', async t => {
   const root = await workspace(t);
   const url = await board(t, root);

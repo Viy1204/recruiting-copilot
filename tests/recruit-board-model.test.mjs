@@ -487,24 +487,24 @@ test('正常快照与所有进度陈旧回退仅含摘要，正文和candidateId
   }
 });
 
-test('共享岗位范围支持在招、关注、全量与未知状态，搜索仅缩小选项且不改汇总', () => {
-  assert.deepEqual(ROLE_SCOPES, [{ id: 'active', label: '在招' }, { id: 'following', label: '关注' }, { id: 'all', label: '全部' }]);
+test('共享岗位范围支持严格在招、我的关注与全量，搜索仅缩小选项且不改汇总', () => {
+  assert.deepEqual(ROLE_SCOPES, [{ id: 'active', label: '在招' }, { id: 'following', label: '我的关注' }, { id: 'all', label: '全部' }]);
   const input = sources(header + [row('合成甲', '合成程序岗', '已回复'), row('合成乙', '合成动画岗', '待确认'), row('合成丙', '无配置岗', 'offer'), row('合成丁', '无状态岗', '已约谈'), row('合成戊', '探索岗', '初筛通过'), row('合成己', '历史待核岗', '初筛通过')].join('\n'));
   input.context.text += '|  | x | 无状态岗 | P2 |\n| 探索线 | x | 探索岗 | P2 |\n| 历史待核 | x | 历史待核岗 | P2 |\n| 已下架 | x | 下架岗 | P2 |\n| 暂停 | x | 暂停岗 | P2 |\n| 待核 | x | 待核岗 | P2 |\n';
   const snapshot = buildSnapshot(input);
   const active = selectRoles(snapshot);
-  assert.deepEqual(active.roles.map(item => item.name), ['合成程序岗', '空岗位', '无状态岗', '探索岗', '历史待核岗', '无配置岗']);
-  assert.equal(active.total, 5);
+  assert.deepEqual(active.roles.map(item => item.name), ['合成程序岗', '空岗位']);
+  assert.equal(active.total, 1);
   assert.equal(active.selectedRole, null);
   assert.equal(active.outsideScope, false);
   assert.equal(active.selectionMissing, false);
-  assert.match(active.label, /状态未知/);
-  assert.equal(active.stages.find(stage => stage.id === 'interview').count, 1);
+  assert.equal(active.label, '在招');
+  assert.equal(active.stages.find(stage => stage.id === 'interview').count, 0);
   const searched = selectRoles(snapshot, { query: '探索' });
-  assert.deepEqual(searched.roles.map(item => item.name), ['探索岗']);
+  assert.deepEqual(searched.roles, []);
   assert.equal(searched.total, active.total);
   assert.deepEqual(searched.stages, active.stages);
-  assert.equal(selectRoles(snapshot, { query: '无匹配' }).total, 5);
+  assert.equal(selectRoles(snapshot, { query: '无匹配' }).total, 1);
   assert.deepEqual(selectRoles(snapshot, { query: '无匹配' }).roles, []);
   const following = selectRoles(snapshot, { scope: 'following', following: ['合成动画岗', '空岗位', '合成动画岗', '不存在'] });
   assert.deepEqual(following.roles.map(item => item.name), ['合成动画岗', '空岗位']);

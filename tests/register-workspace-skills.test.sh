@@ -16,12 +16,13 @@ make_workspace() {
   mkdir -p "$workspace/skills"
   cp -R "$PROJECT_ROOT/skills/ask-viy" "$workspace/skills/"
   cp -R "$PROJECT_ROOT/skills/resume-review" "$workspace/skills/"
+  cp -R "$PROJECT_ROOT/skills/recruit-board" "$workspace/skills/"
 }
 
 assert_registered() {
   workspace=$1
   for adapter in .agents .claude .qoder; do
-    for skill in ask-viy resume-review; do
+    for skill in ask-viy resume-review recruit-board; do
       link=$workspace/$adapter/skills/$skill
       [ -L "$link" ] || fail "missing link: $link"
       [ "$(readlink "$link")" = "../../skills/$skill" ] ||
@@ -39,8 +40,15 @@ test_clean_and_idempotent_runs() {
   second=$(sh "$REGISTER" "$sandbox/workspace")
 
   assert_registered "$sandbox/workspace"
-  case "$first" in *'created=6 unchanged=0 preserved=0'*) ;; *) fail 'wrong first-run counts' ;; esac
-  case "$second" in *'created=0 unchanged=6 preserved=0'*) ;; *) fail 'wrong second-run counts' ;; esac
+  case "$first" in *'created=9 unchanged=0 preserved=0'*) ;; *) fail 'wrong first-run counts' ;; esac
+  case "$second" in *'created=0 unchanged=9 preserved=0'*) ;; *) fail 'wrong second-run counts' ;; esac
+  for adapter in .agents .claude .qoder; do
+    board=$sandbox/workspace/$adapter/skills/recruit-board
+    [ -f "$board/scripts/server.mjs" ] || fail 'web board server was not registered'
+    [ -f "$board/scripts/actions.mjs" ] || fail 'shared board actions were not registered'
+    [ ! -e "$board/hooks/hooks.json" ] || fail 'retired native hooks were registered'
+    [ ! -e "$board/.claude-plugin/plugin.json" ] || fail 'retired standalone plugin was registered'
+  done
 }
 
 test_conflicting_destination_is_preserved() {

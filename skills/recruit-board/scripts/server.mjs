@@ -7,7 +7,8 @@ import { assertRunId } from '../model.mjs';
 import { readSnapshot, resolveWorkspace, workspaceKeyForRoot } from './reader.mjs';
 import { readCandidateDetail, readCandidateDocument } from './records.mjs';
 import { readRoleInfo, setRoleStatus } from './roles.mjs';
-import { readRunActivity, readRunResults } from './results.mjs';
+import { readRunActivity, readRunHighlights, readRunResults } from './results.mjs';
+import { readWorkspaceOverview } from './overview.mjs';
 import { actionError } from './actions.mjs';
 
 const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
@@ -46,7 +47,16 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
   const root = await resolveWorkspace(workspace);
   const workspaceKey = workspaceKeyForRoot(root);
   const csrfToken = randomBytes(32).toString('hex');
-  let previous = null, readQueue = Promise.resolve();
+  let previous = null, readQueue = Promise.resolve(), previousOverview = null, overviewQueue = Promise.resolve();
+  const nextOverview = () => {
+    const pending = overviewQueue.then(async () => {
+      const overview = await readWorkspaceOverview(root, previousOverview, now);
+      previousOverview = overview;
+      return overview;
+    });
+    overviewQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  };
   const nextSnapshot = () => {
     const pending = readQueue.then(async () => {
       const snapshot = await read(root, previous, now);
@@ -106,7 +116,7 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
     }
     if (url.pathname === '/api/health') {
       if (params.size) { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'HEALTH_INPUT_INVALID', message: '健康检查不接受其他参数' } })); return; }
-      send(200, 'application/json; charset=utf-8', JSON.stringify({ service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity'], workspaceKey })); return;
+      send(200, 'application/json; charset=utf-8', JSON.stringify({ service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity', 'workspace-overview', 'run-highlights'], workspaceKey })); return;
     }
     if (resource === '/api/session') {
       send(200, 'application/json; charset=utf-8', JSON.stringify({ csrfToken })); return;
@@ -116,11 +126,17 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
       catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
       return;
     }
-    if (['/api/runs/results', '/api/runs/activity'].includes(url.pathname)) {
+    if (url.pathname === '/api/workspace/overview') {
+      if (params.size) { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'OVERVIEW_INPUT_INVALID', message: '工作区总览不接受其他参数' } })); return; }
+      try { send(200, 'application/json; charset=utf-8', JSON.stringify(await nextOverview())); }
+      catch { send(500, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'OVERVIEW_ERROR', message: '事项总览读取失败；请保留最后可信记录' } })); }
+      return;
+    }
+    if (['/api/runs/results', '/api/runs/activity', '/api/runs/highlights'].includes(url.pathname)) {
       if ([...params.keys()].length !== 1 || params.getAll('run').length !== 1) {
         send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'RUN_INPUT_INVALID', message: '轮次请求仅接受一个 run 参数' } })); return;
       }
-      const readRun = url.pathname.endsWith('/activity') ? readRunActivity : readRunResults;
+      const readRun = url.pathname.endsWith('/activity') ? readRunActivity : url.pathname.endsWith('/highlights') ? readRunHighlights : readRunResults;
       try { send(200, 'application/json; charset=utf-8', JSON.stringify(await readRun(root, params.get('run')))); }
       catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
       return;

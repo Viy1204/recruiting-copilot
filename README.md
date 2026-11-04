@@ -4,7 +4,7 @@
 
 支持 Claude Code、Codex、WorkBuddy、Qoder、MiniMax Code、ZCode 等能读取项目文件的 AI 工具。招聘标准、候选台账和面试档案保存在你自己的工作区，换工具也能接着做。
 
-当前正式版为 **v0.8.0**。[开始使用](#开始使用) · [完整 Skill 目录](#完整-skill-目录) · [已有工作区升级](docs/releases/v0.8.0.md#升级已有工作区)
+当前正式版为 **v0.8.1**。[开始使用](#开始使用) · [完整 Skill 目录](#完整-skill-目录) · [已有工作区升级](docs/releases/v0.8.1.md#升级已有工作区)
 
 ## 从首次使用到日常招聘
 
@@ -16,7 +16,7 @@
 
 `recruit-init` 会检查依赖，在你指定的独立目录创建模板、台账与各工具的 Skill 入口，然后逐个岗位进入 `recruit-grill`。已有工作区只补缺失项，不覆盖原有招聘数据。
 
-岗位梳理一次只问一个问题，把“想招什么人”问成可以执行的标准。每个岗位产出对外 JD、对内寻源笔记、`CONTEXT.md` 中的硬规则与术语，以及首轮搜索词。硬门槛、命脉技能、排除信号和目标公司都要明确，未梳理的岗位先补标准，再做寻源。
+岗位梳理先读已有资料，把可以独立回答的关键问题放在同一轮，给出建议供你按编号确认或修改；依赖前面答案的问题再跟进。标准够用就收口，每个岗位产出对外 JD、对内寻源笔记、`CONTEXT.md` 中的硬规则与术语，以及首轮搜索词。硬门槛、命脉技能与验证方式、排除信号由你确认，目标公司和搜索词由 AI 先拟、寻源时验证；关键标准待定时先留草稿。
 
 ### 每天：寻源初筛、按授权联系，补台账和出日报
 
@@ -52,7 +52,7 @@
 #### 1. 下载固定版本并安装依赖
 
 ```bash
-git clone --branch v0.8.0 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
+git clone --branch v0.8.1 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
 ```
 
 进入源码目录。
@@ -79,7 +79,7 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 
 AI 会询问工作区位置，建立模板和各工具的 Skill 入口，再逐个岗位梳理真实要求。**本仓库是工具源码，岗位数据和候选资料放在新建的独立工作区。**
 
-已有工作区先按[升级说明](docs/releases/v0.8.0.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
+已有工作区先按[升级说明](docs/releases/v0.8.1.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
 
 #### 3. 在可见窗口中完成人工登录
 
@@ -117,14 +117,14 @@ claude plugin marketplace add "/绝对路径/recruiting-copilot"
 claude plugin install recruiting-copilot@recruiting-copilot
 ```
 
-如果已配置同名 marketplace，先核对来源再按原来源更新，见[正式版安装说明](docs/releases/v0.8.0.md#固定版本安装)。重新打开会话后，先用 `/recruiting-copilot:recruit-init` 建立招聘工作区。后续在自己的工作区使用下表的插件命令，也可以继续用自然语言。
+如果已配置同名 marketplace，先核对来源再按原来源更新，见[正式版安装说明](docs/releases/v0.8.1.md#固定版本安装)。重新打开会话后，先用 `/recruiting-copilot:recruit-init` 建立招聘工作区。后续在自己的工作区使用下表的插件命令，也可以继续用自然语言。
 
 ### DeepSeek Harness 入口
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用户在使用 Web profile 的环境中安装：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.8.0
+dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.8.1
 ```
 
 重新打开 DSH 会话后，8 个招聘 Skill 在任意工作区可用。首次仍从“帮我初始化招聘工作区”开始，之后打开新建的招聘工作区处理日常任务。
@@ -184,22 +184,22 @@ DSH 另有独立的 **招聘浏览器**，用于观察两个 CLI 的平台页面
 
 网页现在以“招聘工作台”组织任务与人选。初始化、岗位梳理、每日招聘、人才盘点、简历评估和约面试这六个流程，在进度脚本可用时记录真实步骤，并尽早打开或复用工作台。
 
-![招聘工作台宽屏布局：左侧 Workspace 导航，顶部姓名搜索，下方并列显示需确认人选、岗位阶段与任务记录](docs/images/recruit-board-overview.png)
+![v0.8.1 招聘工作台：待确认事项与近期进展分别展示，人选、岗位和事件细节清晰可读](verification/board-web-only-light.jpg)
 
-*新版网页的实际运行截图，使用合成岗位、人选和任务。宽屏显示 Workspace 与三个分区；侧栏根据实际可用宽度收为单列。点击图片可查看无损 PNG 原图。*
+*v0.8.1 实际网页，使用隔离的合成岗位、人选与任务。总览的事项和进展各自按内容定高；岗位与人选、执行记录通过导航查看。*
 
-<img src="docs/images/recruit-board-sidebar.png" alt="招聘工作台在390px侧栏宽度下自动单列显示，顶部保留搜索与确认事项" width="390">
+<img src="verification/board-web-only-mobile.jpg" alt="同一招聘工作台在320px窄屏下显示导航和带人岗背景的事项" width="320">
 
-*同一网页的 390px 窄栏截图，不含宿主外框。能否停靠在 AI 工具侧栏取决于宿主，普通浏览器也可打开。*
+*同一网页的 320px 窄屏截图，不含宿主外框。能否停靠在 AI 工具侧栏取决于宿主，普通浏览器也可打开。*
 
 - 在顶部 **搜索人选** 输入完整或部分姓名，查找全部岗位、阶段和历史岗位中的记录。结果在岗位区显示，清空后恢复原筛选。
 - 从 Workspace 定位到岗位或执行记录，直接打开关注岗位；窄栏中的正文仍保留所有入口。
-- 查看本轮需确认人选、判断依据、逐人处理记录和候选资料。历史任务选择与资料返回位置会保留。
+- 查看跨轮待回答／待核对事项，按岗位找到人选与问题；近期进展展示对象和关键细节。进展、关联事项和人选资料可以逐层返回。
 - 用 **调整布局** 重排模块，偏好按工作区保存在本机。明确无确认事项时只显示紧凑摘要。
 
 看板读取已写入工作区的数据，不连接招聘平台。读取正常不代表 AI 进程仍在运行；候选台账保持只读，岗位保存只更新本地 `CONTEXT.md` 并备份，不改变平台职位。旧工作区缺少进度脚本时，招聘流程仍可继续，并说明本轮未记录进度。
 
-完整的宽窄布局、搜索、排序、资料和手动打开图解见[招聘工作台使用说明](docs/recruit-board.md)。可选 Claude 原生面板继续使用宿主组件，本次网页布局不替换原生面板。
+完整的宽窄布局、搜索、排序、资料和手动打开图解见[招聘工作台使用说明](docs/recruit-board.md)。v0.8.1 按 [ADR 0003](docs/adr/0003-web-only-board.md) 仅维护网页看板，所有 Agent 共用同一入口。已安装的独立原生插件或开发预览不会自动删除，升级与停用步骤见[原生入口退役说明](skills/recruit-board/references/hosts.md#原生入口退役与升级)。
 
 ## 使用边界
 
@@ -213,7 +213,7 @@ DSH 另有独立的 **招聘浏览器**，用于观察两个 CLI 的平台页面
 
 | 入口 | 内容 |
 | --- | --- |
-| [v0.8.0 正式版说明](docs/releases/v0.8.0.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
+| [v0.8.1 正式版说明](docs/releases/v0.8.1.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
 | [流程总目录](skills/ask-viy/SKILL.md) | 从首次初始化到每日招聘，以及简历、人才盘点和面试的流程选择 |
 | [设计思路与理念](docs/DESIGN.md) | 为什么先梳理岗位、使用本地文件、区分内外资料并保留人工确认 |
 | [BOSS CLI 维护 fork](https://github.com/Viy1204/boss-cli) | `@viyzhu/boss-cli-fork` 的安装、命令和平台操作边界 |

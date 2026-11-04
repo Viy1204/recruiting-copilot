@@ -15,7 +15,7 @@ description: >
 
 网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `resume-review` 先 start、保存 run id 并进入真实步骤，在邮箱取数或简历解析前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；本地输入跳过 mail，单份不需汇总时写理由跳过 summary，纯评级回查不 start。
 
-在 evaluate / records 等步骤每完成一人的评估或落档核对就及时写 `result`，包括未达标结论和风险点；需用户决定的按共享协议记待确认，不等批量汇总才补录。
+在 evaluate / records 等步骤每完成一人的评估或落档核对就及时写 `result`，包括未达标结论和风险点。按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读相关未决事项和未落实决定；需用户拍板的登记独立事项并关联收据，普通薪资或经历核实留在候选跟进中。需要关注的核实结论及时记 `highlight`，不等批量汇总才补录；新事项和重点写已核实的 `context.scope:candidate` 与 `candidateId=JSON.stringify([姓名,原岗位])`，同名异岗分开，岗位通用问题另用 role context。重点按需写最多 8 项核实短文本 `details`，不复制简历正文或把待核内容写成事实；旧格式仍可读。结束 run 前写 `summary`。单人例外不改变岗位通用标准，资料同步实际完成后才记录完成。
 
 ## 标准来源（每次现读，永不缓存）
 

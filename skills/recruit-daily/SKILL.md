@@ -10,9 +10,11 @@ description: >
 
 每日主力动作：把 Boss 直聘 + 猎聘两个渠道的「查未读 → 主动寻源 → 初筛 → 打招呼 → 建档 → 出日报」串成一条流水线。
 
-网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `daily` 先 start、保存 run id 并进入真实步骤，在耗时寻源前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)，按下方完成判据结束各步，跳步写理由，等待授权记 `wait`。
+网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `daily` 先 start、保存 run id 并进入真实步骤，在耗时寻源前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)，按下方完成判据结束各步，跳步写理由，整轮无法继续而等待授权时记 `wait`。
 
-在 unread / screen / greet 等实际步骤中每处理完一人就及时写 `result`，初筛未通过、失败或跳过也写理由，未核实发送不记成功；待确认名单先记 `decision` 再按原安全边界 `wait`，用户拍板后按共享协议更新原收据消解待确认，不等日报结束才补录。
+在 unread / screen / greet 等实际步骤中每处理完一人就及时写 `result`，初筛未通过、失败或跳过也写理由，未核实发送不记成功。按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读未解决事项和待执行动作；主动任务标 `manual`，定时巡检标 `scheduled`。需要用户拍板时登记独立事项并把返回的 `decisionId` 关联收据；只暂停依赖该决定的动作，其余已授权工作继续。有价值的核实进展立即记 `highlight`；新事项和重点按共享契约写已核实的 `context`，人选使用 `scope:candidate` 与 `candidateId=JSON.stringify([姓名,原岗位])`，岗位／工作区问题分别标 scope，不凭自由文本猜关联。重点的 `details` 只记适用的核实细节，最多 8 项短文本；旧格式仍可读。收尾在结束 run 前写 `summary`，没有变化也明确记录，不能把未记录当成无变化。
+
+普通巡检的执行范围以调度任务原指令为准：只读巡检不会因发现待执行动作获得外发权限。本轮持续打招呼授权不跨轮继承；续办前核对具体授权是否仍有效、动作是否已经完成。用户拍板后更新独立事项，并分别记录标准／台账同步和实际动作结果；不需要重开已经结束的 run。
 
 **这是编排文档**：CLI 命令细节见 [`references/channels.md`](references/channels.md)，
 台账与日报格式见 [`references/ledger-and-report.md`](references/ledger-and-report.md)，

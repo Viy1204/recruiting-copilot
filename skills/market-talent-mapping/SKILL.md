@@ -18,6 +18,8 @@ description: >
 
 仅为 deep-dive 中实际深挖的代表人选逐人及时写 `result`，记录已核实的判断与风险；广度取数的大样本列表不能整批记成已评估。
 
+按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读已有岗位事项；需要用户决定的地域、标准或渠道调整登记为岗位事项，避免伪造人选收据。有依据的市场结论及时记 `highlight`；新岗位事项和重点用 `context.scope:role` 与已核实的 `role`，代表人选的独立事件用 candidate context 与姓名＋原岗位的 `candidateId`，不拿一个人代表整岗样本。`details` 只放适用且已核实的短文本，最多 8 项；旧格式仍可读。结束 run 前写 `summary`；用户确认打法后，标准资料实际同步才记完成。盘点和待执行记录都不授予联系候选人的权限。
+
 这是**编排文档**：渠道命令细节走 `boss help` / `liepin help` 与 [`references/channels-and-analysis.md`](references/channels-and-analysis.md)。本文档管顺序、判断、数据可信度、报告结构与安全。
 
 ## 铁律：先读事实源，再动手
