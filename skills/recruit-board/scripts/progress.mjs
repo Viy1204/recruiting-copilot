@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { assertRunId, createRun, transitionRun, validateRun, WORKFLOWS } from '../model.mjs';
 import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
 import { initializeDecisions, readDecision } from './decisions.mjs';
+import { readArchiveEvents } from './events.mjs';
 
 async function runsDirectory(root) {
   let directory = root;
@@ -44,7 +45,19 @@ export async function recordProgress({ workspace, id, workflow, role, ownerSessi
       const bytes = await readFile(file);
       if (bytes.length > MAX_FILE_BYTES) throw new Error('进度记录超过读取上限');
       const previous = validateRun(JSON.parse(bytes.toString('utf8')), id);
-      run = transitionRun(previous, action, now());
+      let base = previous;
+      if (['running', 'waiting'].includes(previous.status) && previous.workflow === 'interview-schedule' && ['summary', 'complete'].includes(action.type) && !action.step && previous.results?.some(result => result.stepId === 'calendar')) {
+        const events = await readArchiveEvents(root);
+        const linked = events.highlights.filter(event => event.sourceRunIds.includes(id));
+        const candidates = [...new Set(previous.results.filter(result => result.stepId === 'calendar').map(result => result.candidateId))];
+        if (candidates.some(candidateId => events.diagnostics.some(item => item.candidateId === candidateId && ['PROGRESS_EVENT_INVALID', 'PROGRESS_SOURCE_UNAVAILABLE'].includes(item.code)) || !linked.some(event => event.context.candidateId === candidateId))) throw new Error('约面任务缺少已关联档案中的进展事件，请用 events.mjs 记录真实结果并关联来源任务后再完成');
+        for (const event of linked) {
+          if (base.highlights?.some(item => item.eventKey === event.eventKey)) continue;
+          const highlight = { eventKey: event.eventKey, text: event.text, evidence: event.evidence, occurredAt: event.occurredAt, context: event.context, details: event.details, subjectKey: event.context.candidateId };
+          base = transitionRun(base, { type: 'highlight', highlight }, now());
+        }
+      }
+      run = transitionRun(base, action, now());
       if (JSON.stringify(run) === JSON.stringify(previous)) return run;
       const decisionId = action.result?.decisionId ?? action.highlight?.decisionId;
       if (decisionId) {

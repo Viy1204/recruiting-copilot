@@ -13,7 +13,7 @@ description: >
 
 网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `interview-schedule` 先 start、保存 run id 并进入真实步骤，在查忙闲等取数前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；日程要素待确认时记录 calendar 的 `wait`，降级或改期/取消仍按实际结果记录。
 
-在 calendar / invitation / records 等步骤逐人及时写 `result`，按核实情况区分“日程已创建”“仅生成话术”“邀约待发/已核实发送”和“档案台账已同步”。按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读现有事项；建会要素待确认时登记独立事项并关联收据，继续遵守下方确认规则。决定与建会、通知、档案同步分别记录；续办前先查现有日程与实际通知结果，超时不盲目重建或重发。已核实进展及时记 `highlight`；新事项和重点写 `context.scope:candidate` 与 `candidateId=JSON.stringify([姓名,原岗位])`。日程创建或改期已核实时，在 `details` 分别记录预约时段（含时区）和面试官，其他细节按需记录，合计最多 8 项短文本；预约时段不能用记录更新时间代替。仅提议的时间、未核实的建会或邀约都不记成成功；旧格式仍可读。结束 run 前写 `summary`；只暂停依赖确认的动作。
+在 calendar / invitation / records 等步骤逐人及时写 `result`，按核实情况区分“日程已创建”“仅生成话术”“邀约待发/已核实发送”和“档案台账已同步”。按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读现有事项；建会要素待确认时登记独立事项并关联收据，继续遵守下方确认规则。决定与建会、通知、档案同步分别记录；续办前先查现有日程与实际通知结果，超时不盲目重建或重发。已核实的候选进展用下方 `events.mjs record` 写入档案一次；收尾会按来源run同步任务重点，无需再手工记第二份。非档案事件仍可用 `highlight`；新事项和重点写 `context.scope:candidate` 与 `candidateId=JSON.stringify([姓名,原岗位])`。日程创建或改期已核实时，在 `details` 分别记录预约时段（含时区）和面试官，其他细节按需记录，合计最多 8 项短文本；预约时段不能用记录更新时间代替。仅提议的时间、未核实的建会或邀约都不记成成功；旧格式仍可读。结束 run 前写 `summary`；只暂停依赖确认的动作。
 
 ## 前置
 
@@ -74,11 +74,12 @@ lark-cli calendar +create --as user \
 
 - `03-interview/<姓名>.md`「面试安排」表加一行：轮次｜时间｜形式｜面试官｜状态=已约。
 - `02-sourcing/dedup-ledger.csv`：状态推进为 `已约谈`（首轮）或保持 `面试中`（后续轮）。
+- 同时按 [`档案进展事件`](../recruit-board/references/decisions.md#档案进展事件不依赖任务轮次) 用 `events.mjs record` 写入该人已关联档案的“进展记录”。记录实际安排／改期／取消／邀约／面后反馈发生的日期或含时区时刻、稳定事件ID、事实依据、预约时段、面试官和当前来源run；普通聊天无run时省略，不创建假任务。相同事件重试复用ID，更正另记事件并指明原依据。
 
 ### 完成判据
 
 日程已建且含会议链接、每位面试官都在参会人里、候选人邀约话术已交付（或经确认已代发）、
-档案排期表和台账状态都已更新——五样缺一即未完成。
+档案排期表、台账状态及档案进展事件都已更新，回读 `workspace-overview` 核对该事件及其人岗、日期、时段均可达。约面run完成时脚本校验来源档案事件；缺事件不能静默收尾。任一同步失败明确报告缺项，不称全部完成。
 
 ## 改期 / 取消
 

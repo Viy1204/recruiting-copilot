@@ -1,4 +1,4 @@
-export type Diagnostic = { code: string; source: string; level: 'info' | 'warning' | 'error'; message: string; runId?: string };
+export type Diagnostic = { code: string; source: string; level: 'info' | 'warning' | 'error'; message: string; runId?: string; candidateId?: string };
 export type RecordContext = { scope: 'candidate'; candidateId: string; role?: string } | { scope: 'role'; role: string; candidateId?: never } | { scope: 'workspace'; candidateId?: never; role?: never };
 export type RecordSubject = { candidateId: string | null; name: string | null; rawRole: string | null; role: string | null };
 export type RecordAssociation = { subjects: RecordSubject[]; associationStatus: 'resolved' | 'partial' | 'unknown' | 'workspace'; associationMessages: string[] };
@@ -19,7 +19,7 @@ export type WorkspaceDecision = DecisionItem & RecordAssociation;
 export type HighlightDetailEntry = { label: string; value: string };
 export type HighlightRevision = { revision: number; requestId: string | null; expectedRevision: number | null; requestedOccurredAt: string | null; text: string; evidence: string | null; decisionId: string | null; subjectKey: string | null; occurredAt: string; updatedAt: string; correction: string | null; context?: RecordContext; details?: HighlightDetailEntry[] };
 export type Highlight = { eventKey: string; text: string; evidence: string | null; decisionId: string | null; subjectKey: string | null; occurredAt: string; updatedAt: string; correction: string | null; previousText?: string | null; revision?: number; history?: HighlightRevision[] | null; context?: RecordContext; details?: HighlightDetailEntry[] };
-export type WorkspaceHighlight = Highlight & RecordAssociation & { runId: string; trigger: 'manual' | 'scheduled' | 'unknown'; sourceRunIds: string[] };
+export type WorkspaceHighlight = Highlight & RecordAssociation & { runId: string | null; trigger: 'manual' | 'scheduled' | 'unknown'; sourceRunIds: string[]; sourceKind?: 'archive'; sourceDocumentId?: string; sourceDocumentLabel?: string; timePrecision?: 'day' | 'instant' };
 export type WorkspaceOverview = {
   status: 'ok' | 'missing' | 'stale' | 'error'; updatedAt: string | null; revision: string | null;
   decisions: WorkspaceDecision[] | null; highlights: WorkspaceHighlight[] | null;
@@ -29,17 +29,20 @@ export type WorkspaceOverview = {
 export type WorkspaceOverviewSummary = Omit<WorkspaceOverview, 'decisions' | 'highlights'>;
 export type Candidate = { id: string; name: string; role: string; rawRole: string; rating: string | null; rawStatus: string | null; stage: string; conflict: boolean; statuses: string[] };
 export type Role = { name: string; priority: string | null; status: string | null; configured: boolean };
-export type CandidateDocument = { id: string; label: string; kind: 'markdown' | 'text' | 'pdf' | 'unsupported'; status: 'ok' | 'missing' | 'blocked' | 'error'; message: string | null; size: number | null };
+export type MaterialCategory = 'resume' | 'archive' | 'brief' | 'other';
+export type CandidateDocument = { id: string; path: string | null; label: string; category: MaterialCategory; kind: 'markdown' | 'text' | 'pdf' | 'png' | 'jpeg' | 'doc' | 'docx' | 'rtf' | 'unsupported'; status: 'ok' | 'missing' | 'blocked' | 'error'; message: string | null; size: number | null; filename: string; mimeType: string; downloadOnly: boolean };
+export type CandidateProgress = { status: 'ok' | 'missing' | 'partial' | 'error'; message: string | null; records: { documentId: string; label: string; currentStatus: string | null; conclusion: string | null; nextAction: string | null; interviews: { round: string | null; time: string | null; format: string | null; interviewers: string | null; status: string | null }[] }[] };
 export type CandidateDetail = {
   candidate: Pick<Candidate, 'id' | 'name' | 'rawRole' | 'role' | 'rawStatus' | 'rating'>;
   background: string;
   notes: string;
   sourceRound: string;
+  progress: CandidateProgress;
   documents: CandidateDocument[];
   warnings: string[];
 };
 export type DocumentContent = { document: CandidateDocument; text: string | null; absolutePath: string };
-export type RoleInfo = { contextRevision: string; roles: Role[]; allowedStatuses: string[] };
+export type RoleInfo = { contextRevision: string; roles: Role[]; allowedStatuses: string[]; unconfiguredRoles?: { name: string; count: number }[]; roleAliases?: Record<string, string>; configRevision?: string | null; configStatus?: 'ok' | 'missing' | 'error'; ledgerStatus?: 'ok' | 'missing' | 'error' };
 export type RoleSetResult = RoleInfo & { changed: boolean; role: string; status: string; backup: string | null };
 export type RunStep = { id: string; label: string; status: 'pending' | 'running' | 'completed' | 'skipped' | 'failed'; reason: string | null; updatedAt: string };
 export type RunResult = { id: string; stepId: string; candidateId: string; action: string; outcome: string; attention: 'none' | 'notice' | 'decision'; nextAction: string | null; updatedAt: string; decisionId?: string };

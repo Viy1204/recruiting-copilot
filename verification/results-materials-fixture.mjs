@@ -1,0 +1,20 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { createRun, LEDGER_COLUMNS, transitionRun } from '../skills/recruit-board/model.mjs';
+
+const root = path.resolve(process.argv[2] ?? '.audit/results-materials-workspace');
+for (const directory of ['02-sourcing', '03-interview', '_shared', 'runtime/resumes', 'runtime/recruit-board/runs', 'runtime/recruit-board/decisions']) await mkdir(path.join(root, directory), { recursive: true });
+const role = '合成渲染岗', rawRole = '合成旧岗位', candidateId = JSON.stringify(['示例甲', role]);
+await writeFile(path.join(root, 'CONTEXT.md'), `## 在招岗位与优先级\n\n| 岗位 | 优先级 | 状态 |\n|---|---|---|\n| ${role} | P0 | 在招 |\n| 合成历史岗 | P1 | 已关闭 |\n`);
+await writeFile(path.join(root, '02-sourcing/dedup-ledger.csv'), `${LEDGER_COLUMNS.join(',')}\n1,示例甲,${role},合成背景,A,已约谈,合成来源,runtime/resumes/example.pdf,用于界面验收\n2,示例乙,${rawRole},合成背景,B,已回复,合成来源,,\n`);
+await writeFile(path.join(root, '03-interview/示例甲.md'), `# 面试档案 — 示例甲\n\n## 基本信息\n\n- 姓名：示例甲\n- 应聘岗位：${role}\n- 当前状态：已约一面\n\n## 面试安排\n\n| 轮次 | 时间 | 形式 | 面试官 | 状态 |\n|---|---|---|---|---|\n| 一面 | 2026-11-06 10:30–11:30 | 现场到面 | 合成面试官 | 已约 |\n\n## 决策\n\n- 结论：待面。\n- 下一步：面后回收面试官反馈。\n`);
+await writeFile(path.join(root, '03-interview/示例乙.md'), '# 面试档案 — 示例乙\n\n- 姓名：示例乙\n- 应聘岗位：合成渲染岗｜旧资料待核对\n\n合成资料。\n');
+await writeFile(path.join(root, 'runtime/resumes/example.pdf'), '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
+await writeFile(path.join(root, 'runtime/resumes/example.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT1cAAAAASUVORK5CYII=', 'base64'));
+await writeFile(path.join(root, 'runtime/recruit-board/decisions/.initialized'), '');
+let run = createRun({ id: 'results-materials-demo', workflow: 'resume-review', trigger: 'manual', now: new Date(Date.now() - 600000).toISOString() });
+const now = new Date().toISOString();
+run = transitionRun(run, { type: 'result', result: { id: 'review', stepId: run.steps[0].id, candidateId, action: '评估简历', outcome: '经历已核实，待核对作品细节', attention: 'notice', nextAction: '继续核对作品' } }, now);
+run = transitionRun(run, { type: 'highlight', highlight: { eventKey: 'review-event', text: '经历已核实，待核对作品细节', evidence: '已读取合成简历与档案', context: { scope: 'candidate', candidateId } } }, now);
+await writeFile(path.join(root, `runtime/recruit-board/runs/${run.id}.json`), JSON.stringify(run, null, 2));
+console.log(JSON.stringify({ workspace: root, run: run.id }));

@@ -6,7 +6,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { assertRunId } from '../model.mjs';
 import { readSnapshot, resolveWorkspace, workspaceKeyForRoot } from './reader.mjs';
 import { readCandidateDetail, readCandidateDocument } from './records.mjs';
-import { readRoleInfo, setRoleStatus } from './roles.mjs';
+import { readRoleInfo, setRoleStatus, setRoleAlias } from './roles.mjs';
+import { listCandidateMaterials, setCandidateMaterials } from './materials.mjs';
 import { readRunActivity, readRunHighlights, readRunResults } from './results.mjs';
 import { readWorkspaceOverview } from './overview.mjs';
 import { actionError } from './actions.mjs';
@@ -27,19 +28,19 @@ const securityHeaders = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 };
 
-async function readRoleRequest(request) {
+async function readRoleRequest(request, fields = ['role', 'status', 'revision']) {
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers['content-type'] ?? '')) throw Object.assign(new Error('保存岗位状态必须使用 JSON'), { code: 'JSON_REQUIRED', status: 415 });
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 8192) throw Object.assign(new Error('岗位请求超过大小上限'), { code: 'REQUEST_TOO_LARGE', status: 413 });
+    if (size > 32768) throw Object.assign(new Error('保存请求超过大小上限'), { code: 'REQUEST_TOO_LARGE', status: 413 });
     chunks.push(chunk);
   }
   let value;
   try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw Object.assign(new Error('岗位请求不是有效 JSON'), { code: 'JSON_INVALID', status: 400 }); }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 3 || Object.keys(value).some(key => !['role', 'status', 'revision'].includes(key))) throw Object.assign(new Error('岗位请求仅接受 role、status 和 revision'), { code: 'ROLE_INPUT_INVALID', status: 400 });
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== fields.length || Object.keys(value).some(key => !fields.includes(key))) throw Object.assign(new Error(`保存请求仅接受 ${fields.join('、')}`), { code: 'ROLE_INPUT_INVALID', status: 400 });
   return value;
 }
 
@@ -98,16 +99,17 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
     const params = new URLSearchParams(url.searchParams);
     params.delete('workspace');
     const resource = `${url.pathname}${params.size ? `?${params}` : ''}`;
-    if (request.method === 'POST' && resource === '/api/roles/status') {
+    if (request.method === 'POST' && ['/api/roles/status', '/api/roles/alias', '/api/candidates/materials'].includes(resource)) {
       const token = request.headers['x-csrf-token'];
       if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token) || !timingSafeEqual(Buffer.from(token), Buffer.from(csrfToken)) || (!sameOrigin && request.headers['sec-fetch-site'] !== 'same-origin')) {
         send(403, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'CSRF_REJECTED', message: '请从本机看板重新打开岗位管理后保存' } })); return;
       }
       try {
-        const input = await readRoleRequest(request);
-        const result = await setRoleStatus({ workspace: root, ...input });
+        const materials = resource === '/api/candidates/materials', alias = resource === '/api/roles/alias';
+        const input = await readRoleRequest(request, materials ? ['candidateId', 'revision', 'files'] : alias ? ['role', 'target', 'revision'] : ['role', 'status', 'revision']);
+        const result = await (materials ? setCandidateMaterials : alias ? setRoleAlias : setRoleStatus)({ workspace: root, ...input });
         const { backup, ...data } = result;
-        send(200, 'application/json; charset=utf-8', JSON.stringify({ ...data, message: result.changed ? '岗位状态已保存，原配置已备份' : '岗位状态未变化' }));
+        send(200, 'application/json; charset=utf-8', JSON.stringify({ ...data, message: result.changed ? materials ? '资料关联已保存，原配置已备份' : alias ? '岗位归并已保存，原配置已备份' : '岗位状态已保存，原配置已备份' : '保存内容未变化' }));
       } catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
       return;
     }
@@ -141,6 +143,12 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
       catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
       return;
     }
+    if (url.pathname === '/api/candidates/materials') {
+      if ([...params.keys()].length !== 1 || params.getAll('candidate').length !== 1) { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'CANDIDATE_INVALID', message: '资料关联请求仅接受一个 candidate 参数' } })); return; }
+      try { send(200, 'application/json; charset=utf-8', JSON.stringify(await listCandidateMaterials(root, params.get('candidate')))); }
+      catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
+      return;
+    }
     if (['/api/candidates/detail', '/api/candidates/document'].includes(url.pathname)) {
       const allowed = url.pathname.endsWith('/detail') ? ['candidate'] : ['candidate', 'document', 'download'];
       if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1) || !params.has('candidate') || (url.pathname.endsWith('/document') && (!params.has('document') || (params.has('download') && params.get('download') !== '1')))) {
@@ -150,9 +158,10 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
         if (url.pathname.endsWith('/detail')) send(200, 'application/json; charset=utf-8', JSON.stringify(await readCandidateDetail(root, url.searchParams.get('candidate'))));
         else {
           const content = await readCandidateDocument(root, url.searchParams.get('candidate'), url.searchParams.get('document'));
-          const type = { markdown: 'text/plain; charset=utf-8', text: 'text/plain; charset=utf-8', pdf: 'application/pdf' }[content.document.kind];
-          const disposition = url.searchParams.has('download') ? 'attachment' : 'inline';
-          send(200, type, content.bytes, { 'Content-Disposition': `${disposition}; filename="document.${{ markdown: 'md', text: 'txt', pdf: 'pdf' }[content.document.kind]}"; filename*=UTF-8''${encodeURIComponent(path.basename(content.absolutePath))}` });
+          const type = content.document.mimeType ?? { markdown: 'text/plain; charset=utf-8', text: 'text/plain; charset=utf-8', pdf: 'application/pdf' }[content.document.kind];
+          const disposition = url.searchParams.has('download') || content.document.downloadOnly ? 'attachment' : 'inline';
+          const filename = path.basename(content.absolutePath);
+          send(200, type, content.bytes, { 'Content-Disposition': `${disposition}; filename="document${path.extname(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}` });
         }
       } catch (error) { send(error.status ?? 500, 'application/json; charset=utf-8', JSON.stringify(actionError(error))); }
       return;

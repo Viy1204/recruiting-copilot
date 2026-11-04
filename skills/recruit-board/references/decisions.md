@@ -211,6 +211,41 @@ node "<progress>" summary --workspace "<workspace>" --run "<run-id>" --state no_
 
 两种 summary 按真实结果择一，在 run 完成前写入。无重要变化表示已完成约定检查后得出的结论；脚本未接入、流程没跑完、结果没写入、读取失败都不是 no_change。近期重点窗口默认 7 天，不删除历史，也不限制事项保留期。更早的重点通过 `actions.mjs run-highlights --workspace "<workspace>" --run "<id>"` 或网页执行记录读取，保留该轮摘要、触发来源和正文。
 
+## 档案进展事件（不依赖任务轮次）
+
+面试安排、改期、取消、候选人确认、反馈及 Offer 等已核实状态变化，可以直接记入已关联面试档案的“进展记录”表。总览从同一份档案聚合，不要求另建 run，也不依赖再写一次 highlight。事件与旧 highlight 使用相同 eventKey 时只显示一次；两份来源保留。
+
+先用 `actions.mjs candidate` 读取原人岗的 `candidateId` 及类别为 `archive` 的 `documentId`；未关联先核实资料归属。把下面输入保存到用户工作区，使用本机脚本：
+
+```bash
+node "<board目录>/scripts/events.mjs" record --workspace "<workspace>" --input-file "<workspace>/runtime/candidate-event.json"
+```
+
+```json
+{
+  "candidateId": "[\"合成人选\",\"原岗位\"]",
+  "documentId": "已关联面试档案的资源ID",
+  "event": {
+    "eventKey": "此人此次安排的稳定ID",
+    "occurredAt": "2026-11-04T10:00:00+08:00",
+    "type": "面试已约",
+    "text": "一面已安排，候选人邀约已核实发出",
+    "evidence": "已核对日程、参会人及用户实际发送记录",
+    "slot": "2026-11-06 10:30–11:30（Asia/Shanghai）",
+    "interviewer": "已确认面试官",
+    "runId": "当前真实任务ID"
+  }
+}
+```
+
+`occurredAt` 为实际动作发生时间，包含时区；旧记录只证实日期时可传 `YYYY-MM-DD`，网页明确显示“当日，未记时分”，不编造精确时间。`slot` 是将来的预约，不作事件发生日期。普通聊天没有 run 时省略 `runId`。`slot`、`interviewer` 对不适用的事件也可省略。
+
+有来源run的约面事件在 summary／complete 时自动进入对应任务重点，复用同一个事件ID；任务与首页显示去重，执行者不需要手写第二份 highlight。没有run的事件照常只在档案和近期进展可见。
+
+相同事件 ID 与内容重试不写新记录；内容冲突拒绝覆盖。发生改期／取消或更正时另记新事件 ID，在事实与依据说明更改对象，保留原记录。写入有来源校验、锁、备份与写前冲突检测。档案事件只进入近期进展及资料，不修改台账阶段或执行平台动作。
+
+写后回读 `workspace-overview`，逐项核对事件 ID、人岗、日期、事实及来源入口。约面任务有 calendar 收据却无对应档案事件，脚本拒绝静默完成；总览发现已有排期缺少匹配时段的日期事件时，列入“进展记录待核对”。事件日期未知就说明缺失，不能使用文件修改时间制造当天进展。
+
 ## 读数、持久化与降级
 
 `workspace-overview` 的 decisions/highlights 按需读取；counts 分 open、snoozed、history、followUp。`effectiveState` 反映已到期暂缓的当前展示，state 保留已记录状态。null 计数表示未知，不显示成零；历史待核对单列，已决定未执行不混入待用户回答数量。
