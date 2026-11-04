@@ -6,8 +6,8 @@ import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs'
 
 const failure = (code, message, status) => Object.assign(new Error(message), { code, status });
 
-/** @returns {Promise<import('../types/index.d.ts').RunResults>} */
-export async function readRunResults(workspace, runId) {
+/** @returns {Promise<import('../types/index.d.ts').Run>} */
+export async function readRunRecord(workspace, runId) {
   try { assertRunId(runId); }
   catch { throw failure('RUN_INPUT_INVALID', 'runId 仅允许 1–64 位字母、数字、下划线和连字符', 400); }
   if (typeof workspace !== 'string' || !workspace.trim()) throw failure('RUN_WORKSPACE_INVALID', '必须显式指定工作区目录', 400);
@@ -37,12 +37,23 @@ export async function readRunResults(workspace, runId) {
     let run;
     try { run = validateRun(value, runId); }
     catch (error) { throw failure('RUN_INVALID', `进度记录无效：${error.message}`, 422); }
-    return { runId: run.id, updatedAt: run.updatedAt, results: run.results, revision: run.resultsRevision };
+    return run;
   } catch (error) {
     if (error.code?.startsWith('RUN_')) throw error;
     if (error.code === 'ENOENT') throw failure('RUN_NOT_FOUND', '未找到该轮次的进度记录', 404);
     throw failure('RUN_UNREADABLE', '进度记录无法安全读取，请检查工作区文件和权限', 422);
   } finally { if (handle) await handle.close(); }
+}
+
+/** @returns {Promise<import('../types/index.d.ts').RunResults>} */
+export async function readRunResults(workspace, runId) {
+  const run = await readRunRecord(workspace, runId);
+  return { runId: run.id, updatedAt: run.updatedAt, results: run.results, revision: run.resultsRevision };
+}
+
+export async function readRunHighlights(workspace, runId) {
+  const run = await readRunRecord(workspace, runId);
+  return { runId: run.id, updatedAt: run.updatedAt, trigger: run.trigger, summaryState: run.summaryState, closingSummary: run.closingSummary, highlights: run.highlights, revision: run.highlightsRevision };
 }
 
 /** @returns {Promise<import('../types/index.d.ts').RunActivity>} */

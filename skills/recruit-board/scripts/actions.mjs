@@ -3,7 +3,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readCandidateDetail, readCandidateDocument } from './records.mjs';
 import { readRoleInfo, setRoleStatus } from './roles.mjs';
-import { readRunActivity, readRunResults } from './results.mjs';
+import { readRunActivity, readRunHighlights, readRunResults } from './results.mjs';
+import { readWorkspaceOverview } from './overview.mjs';
 
 const commands = {
   candidate: ['workspace', 'candidate'],
@@ -12,7 +13,9 @@ const commands = {
   'role-info': ['workspace'],
   'role-set': ['workspace', 'role', 'status', 'revision'],
   'run-results': ['workspace', 'run'],
-  'run-activity': ['workspace', 'run']
+  'run-activity': ['workspace', 'run'],
+  'run-highlights': ['workspace', 'run'],
+  'workspace-overview': ['workspace']
 };
 const failure = message => Object.assign(new Error(message), { code: 'ACTION_INPUT_INVALID', status: 400 });
 
@@ -29,7 +32,7 @@ export async function openDocument(file) {
 export async function actionsCLI(argv) {
   const [command, ...args] = argv;
   const allowed = Object.hasOwn(commands, command) ? commands[command] : null;
-  if (!allowed) throw failure('用法：actions.mjs candidate/document/open-document/role-info/role-set/run-results/run-activity --workspace <目录>；候选使用 --candidate，附件增加 --document，岗位保存使用 --role --status --revision，轮次结果与动态使用 --run');
+  if (!allowed) throw failure('用法：actions.mjs candidate/document/open-document/role-info/role-set/run-results/run-activity/run-highlights/workspace-overview --workspace <目录>；候选使用 --candidate，附件增加 --document，岗位保存使用 --role --status --revision，轮次结果与动态使用 --run');
   const flags = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];
@@ -41,6 +44,8 @@ export async function actionsCLI(argv) {
   if (command === 'candidate') return readCandidateDetail(flags.workspace, flags.candidate);
   if (command === 'run-results') return readRunResults(flags.workspace, flags.run);
   if (command === 'run-activity') return readRunActivity(flags.workspace, flags.run);
+  if (command === 'run-highlights') return readRunHighlights(flags.workspace, flags.run);
+  if (command === 'workspace-overview') return readWorkspaceOverview(flags.workspace);
   if (command === 'role-info') return readRoleInfo(flags.workspace);
   if (command === 'role-set') return setRoleStatus(flags);
   const content = await readCandidateDocument(flags.workspace, flags.candidate, flags.document);

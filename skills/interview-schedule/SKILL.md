@@ -13,7 +13,7 @@ description: >
 
 网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `interview-schedule` 先 start、保存 run id 并进入真实步骤，在查忙闲等取数前确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；日程要素待确认时记录 calendar 的 `wait`，降级或改期/取消仍按实际结果记录。
 
-在 calendar / invitation / records 等步骤逐人及时写 `result`，按核实情况区分“日程已创建”“仅生成话术”“邀约待发/已核实发送”和“档案台账已同步”；建会要素待确认时按共享协议记录待确认，继续遵守下方确认规则。
+在 calendar / invitation / records 等步骤逐人及时写 `result`，按核实情况区分“日程已创建”“仅生成话术”“邀约待发/已核实发送”和“档案台账已同步”。按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 开工先读现有事项；建会要素待确认时登记独立事项并关联收据，继续遵守下方确认规则。决定与建会、通知、档案同步分别记录；续办前先查现有日程与实际通知结果，超时不盲目重建或重发。已核实进展及时记 `highlight`；新事项和重点写 `context.scope:candidate` 与 `candidateId=JSON.stringify([姓名,原岗位])`。日程创建或改期已核实时，在 `details` 分别记录预约时段（含时区）和面试官，其他细节按需记录，合计最多 8 项短文本；预约时段不能用记录更新时间代替。仅提议的时间、未核实的建会或邀约都不记成成功；旧格式仍可读。结束 run 前写 `summary`；只暂停依赖确认的动作。
 
 ## 前置
 

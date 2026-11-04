@@ -2,6 +2,7 @@ import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { assertRunId, buildSnapshot } from '../model.mjs';
+import { overviewSummary, readWorkspaceOverview } from './overview.mjs';
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const workspaceKeyForRoot = root => createHash('sha256').update(root).digest('hex');
@@ -54,5 +55,10 @@ export async function readSnapshot(root, previous = null, now = () => new Date()
   const [ledger, context, runFiles, config] = await Promise.all([
     readSource(root, '02-sourcing/dedup-ledger.csv'), readSource(root, 'CONTEXT.md'), readRuns(root), readSource(root, '_shared/recruit-board.config.json')
   ]);
-  return buildSnapshot({ workspace: path.basename(root), generatedAt: now(), ledger, context, runFiles, config }, previous);
+  const snapshot = buildSnapshot({ workspace: path.basename(root), generatedAt: now(), ledger, context, runFiles, config }, previous);
+  let overview = overviewSummary(await readWorkspaceOverview(root, null, now));
+  if (overview.status !== 'ok' && ['ok', 'stale'].includes(previous?.workspaceOverview?.status)) {
+    overview = { ...previous.workspaceOverview, status: 'stale', diagnostics: overview.diagnostics };
+  }
+  return { ...snapshot, workspaceOverview: overview };
 }

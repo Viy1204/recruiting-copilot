@@ -1,7 +1,10 @@
 export const SCHEMA_VERSION = 1;
 export const MAX_RUN_RESULTS = 2000;
+export const MAX_RUN_HIGHLIGHTS = 50;
+export const RUN_TRIGGERS = Object.freeze(['manual', 'scheduled', 'unknown']);
+export const SUMMARY_STATES = Object.freeze(['unrecorded', 'highlights', 'no_change']);
 export const ROLE_SCOPES = Object.freeze([
-  { id: 'active', label: '在招' }, { id: 'following', label: '关注' }, { id: 'all', label: '全部' }
+  { id: 'active', label: '在招' }, { id: 'following', label: '我的关注' }, { id: 'all', label: '全部' }
 ].map(scope => Object.freeze(scope)));
 export const LEDGER_COLUMNS = Object.freeze([
   '序号', '姓名', '应聘岗位', '现职/背景', '评级', '状态', '来源轮次', '简历路径', '备注'
@@ -196,34 +199,132 @@ function timestamp(value) {
   return value;
 }
 
+export function candidateSubject(candidateId) {
+  let identity;
+  try { identity = JSON.parse(candidateId); }
+  catch { return null; }
+  if (typeof candidateId !== 'string' || !Array.isArray(identity) || identity.length !== 2 || identity.some(item => typeof item !== 'string' || !item.trim() || item !== item.trim()) || JSON.stringify(identity) !== candidateId) return null;
+  return { candidateId, name: identity[0], rawRole: identity[1], role: identity[1] };
+}
+
+function singleLineText(value, label, max) {
+  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f\u0085\p{Zl}\p{Zp}]/u.test(value)) throw new Error(`${label} 必须为 1–${max} 字符的单行文本`);
+  return value.trim();
+}
+
+export function validateContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['scope', 'candidateId', 'role'].includes(key)) || !['candidate', 'role', 'workspace'].includes(value.scope)) throw new Error('context 的范围或字段无效');
+  if (value.scope === 'workspace') {
+    if (Object.hasOwn(value, 'candidateId') || Object.hasOwn(value, 'role')) throw new Error('工作区 context 不能包含 candidateId 或 role');
+    return { scope: 'workspace' };
+  }
+  const role = Object.hasOwn(value, 'role') ? singleLineText(value.role, 'context 岗位', 300) : undefined;
+  if (value.scope === 'role') {
+    if (role === undefined || Object.hasOwn(value, 'candidateId')) throw new Error('岗位 context 必须包含 role 且不能包含 candidateId');
+    return { scope: 'role', role };
+  }
+  if (!candidateSubject(value.candidateId)) throw new Error('context candidateId 必须是规范的姓名＋原岗位 JSON');
+  return { scope: 'candidate', candidateId: value.candidateId, ...(role === undefined ? {} : { role }) };
+}
+
+function highlightDetails(value) {
+  if (!Array.isArray(value) || value.length > 8) throw new Error('重点 details 必须为最多 8 项的数组');
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['label', 'value'].includes(key))) throw new Error('重点 details 仅接受 label 和 value');
+    return { label: singleLineText(item.label, '细节标签', 80), value: singleLineText(item.value, '细节内容', 300) };
+  });
+}
+
 function runResult(value, definition, updatedAt) {
   const fields = ['id', 'stepId', 'candidateId', 'action', 'outcome', 'attention', 'nextAction'];
   if (updatedAt === undefined) fields.push('updatedAt');
-  if (!value || typeof value !== 'object' || Array.isArray(value) || fields.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => !fields.includes(key))) throw new Error('结果记录包含无效字段');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || fields.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => ![...fields, 'decisionId'].includes(key))) throw new Error('结果记录包含无效字段');
+  if (value.decisionId !== undefined && (typeof value.decisionId !== 'string' || !/^decision-[a-f0-9]{48}$/.test(value.decisionId))) throw new Error('关联事项 ID 无效');
   if (typeof value.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value.id)) throw new Error('结果 ID 仅允许 1–64 位字母、数字、下划线和连字符');
   if (!definition.steps.some(step => step.id === value.stepId)) throw new Error('结果步骤必须属于本轮工作流');
-  let identity;
-  try { identity = JSON.parse(value.candidateId); }
-  catch { throw new Error('结果候选标识必须是规范的姓名＋原岗位 JSON'); }
-  if (typeof value.candidateId !== 'string' || !Array.isArray(identity) || identity.length !== 2 || identity.some(item => typeof item !== 'string' || !item.trim() || item !== item.trim()) || JSON.stringify(identity) !== value.candidateId) throw new Error('结果候选标识必须是规范的姓名＋原岗位 JSON');
+  if (!candidateSubject(value.candidateId)) throw new Error('结果候选标识必须是规范的姓名＋原岗位 JSON');
   const action = shortText(value.action, '结果动作', true);
   if (value.action.length > 80) throw new Error('结果动作必须为 1–80 字符的文本');
   const outcome = shortText(value.outcome, '结果结论', true);
   if (!['none', 'notice', 'decision'].includes(value.attention)) throw new Error('结果 attention 必须为 none、notice 或 decision');
   if (value.nextAction !== null && typeof value.nextAction !== 'string') throw new Error('结果下一步必须为文本或 null');
   const nextAction = shortText(value.nextAction, '结果下一步', value.attention === 'decision');
-  return { id: value.id, stepId: value.stepId, candidateId: value.candidateId, action, outcome, attention: value.attention, nextAction, updatedAt: timestamp(updatedAt ?? value.updatedAt) };
+  return { id: value.id, stepId: value.stepId, candidateId: value.candidateId, action, outcome, attention: value.attention, nextAction, updatedAt: timestamp(updatedAt ?? value.updatedAt), ...(value.decisionId ? { decisionId: value.decisionId } : {}) };
 }
 
-export function createRun({ id, workflow, role = null, ownerSessionId = null, now }) {
+const highlightContentFields = ['text', 'evidence', 'decisionId', 'subjectKey', 'correction', 'context', 'details'];
+const sameHighlightContent = (a, b, fields = highlightContentFields) => fields.every(key => JSON.stringify(a[key]) === JSON.stringify(b[key]));
+const highlightConflict = (code, message) => Object.assign(new Error(message), { code, status: 409 });
+
+function highlightRequestId(value) {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value)) throw new Error('重点 request 必须为 1–128 位字母、数字、下划线或连字符');
+  return value;
+}
+
+function runHighlight(value, now) {
+  const allowed = ['eventKey', ...highlightContentFields, 'occurredAt', ...(now === undefined ? ['updatedAt', 'previousText', 'revision', 'history'] : [])];
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('重点记录包含无效字段');
+  const eventKey = shortText(value.eventKey, '稳定事件键', true);
+  if (eventKey !== value.eventKey || eventKey.length > 200) throw new Error('稳定事件键必须为 1–200 字符且不含首尾空白');
+  if (value.decisionId != null && (typeof value.decisionId !== 'string' || !/^decision-[a-f0-9]{48}$/.test(value.decisionId))) throw new Error('关联事项 ID 无效');
+  const occurredAt = timestamp(value.occurredAt ?? now), updatedAt = timestamp(now ?? value.updatedAt);
+  if (occurredAt > updatedAt) throw new Error('重点发生时间不能晚于记录时间');
+  const highlight = {
+    eventKey, text: shortText(value.text, '重点结论', true), evidence: shortText(value.evidence, '重点依据'), decisionId: value.decisionId ?? null,
+    subjectKey: shortText(value.subjectKey, '重点对象'), occurredAt, updatedAt,
+    correction: shortText(value.correction, '更正说明'), previousText: shortText(value.previousText, '更正前结论'),
+    ...(value.context === undefined ? {} : { context: validateContext(value.context) }),
+    ...(value.details === undefined ? {} : { details: highlightDetails(value.details) })
+  };
+  if (now !== undefined) return highlight;
+  const revision = value.revision === undefined ? 1 : value.revision;
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new Error('重点事件版本必须为正安全整数');
+  let history = null;
+  if (value.history !== undefined && value.history !== null) {
+    if (!Array.isArray(value.history) || value.history.length !== revision) throw new Error('重点修订历史与事件版本不一致');
+    const requests = new Set();
+    let previousAt = null;
+    history = value.history.map((entry, index) => {
+      const fields = ['revision', 'requestId', 'expectedRevision', 'requestedOccurredAt', 'text', 'evidence', 'decisionId', 'subjectKey', 'occurredAt', 'updatedAt', 'correction'];
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry) || fields.some(key => !Object.hasOwn(entry, key)) || Object.keys(entry).some(key => ![...fields, 'context', 'details'].includes(key)) || entry.revision !== index + 1) throw new Error('重点修订记录无效');
+      const recorded = runHighlight({ eventKey, ...Object.fromEntries([...highlightContentFields, 'occurredAt'].map(key => [key, entry[key]])) }, timestamp(entry.updatedAt));
+      if (recorded.occurredAt !== occurredAt || recorded.decisionId !== highlight.decisionId || recorded.subjectKey !== highlight.subjectKey || recorded.updatedAt > updatedAt || (previousAt !== null && recorded.updatedAt < previousAt)) throw new Error('重点修订的身份或时间不一致');
+      if (index > 0 && !recorded.correction) throw new Error('重点更正历史缺少理由');
+      if (entry.requestId === null) {
+        if (index !== 0 || entry.expectedRevision !== null || entry.requestedOccurredAt !== null) throw new Error('重点修订缺少请求回执');
+      } else {
+        highlightRequestId(entry.requestId);
+        if (requests.has(entry.requestId) || entry.expectedRevision !== index) throw new Error('重点修订请求重复或版本无效');
+        if (entry.requestedOccurredAt !== null && timestamp(entry.requestedOccurredAt) !== occurredAt) throw new Error('重点发生时间不可更换');
+        requests.add(entry.requestId);
+      }
+      previousAt = recorded.updatedAt;
+      const { eventKey: ignoredKey, previousText, ...content } = recorded;
+      return { revision: entry.revision, requestId: entry.requestId, expectedRevision: entry.expectedRevision, requestedOccurredAt: entry.requestedOccurredAt, ...content };
+    });
+    const last = history.at(-1);
+    if (!sameHighlightContent(last, highlight, [...highlightContentFields, 'occurredAt', 'updatedAt'])) throw new Error('重点当前内容与最新修订不一致');
+  } else if (revision !== 1) throw new Error('重点修订历史缺失');
+  return { ...highlight, revision, history };
+}
+
+function highlightRevision(highlight, revision, requestId = null, expectedRevision = null, requestedOccurredAt = null) {
+  const { eventKey, previousText, revision: previousRevision, history, ...content } = highlight;
+  return { revision, requestId, expectedRevision, requestedOccurredAt, ...content };
+}
+
+export function createRun({ id, workflow, role = null, ownerSessionId = null, trigger = 'unknown', now }) {
   assertRunId(id);
   const definition = WORKFLOWS[workflow];
   if (!definition) throw new Error('未知工作流');
   timestamp(now);
+  if (!RUN_TRIGGERS.includes(trigger)) throw new Error('触发来源必须为 manual、scheduled 或 unknown');
   return {
     schemaVersion: 1, id, workflow, label: definition.label, role: shortText(role, '岗位'), ownerSessionId: shortText(ownerSessionId, '会话 ID'), status: 'running', reason: null,
+    trigger, summaryState: 'unrecorded', closingSummary: null,
     createdAt: now, updatedAt: now,
-    steps: definition.steps.map(step => ({ ...step, status: 'pending', reason: null, updatedAt: now })), results: [], resultsRevision: 0
+    steps: definition.steps.map(step => ({ ...step, status: 'pending', reason: null, updatedAt: now })), results: [], resultsRevision: 0,
+    highlights: [], highlightsRevision: 0
   };
 }
 
@@ -248,6 +349,28 @@ export function validateRun(value, expectedId) {
   if (value.status !== 'failed' && steps.some(step => step.status === 'failed')) throw new Error('失败步骤未对应失败轮次');
   const resultsRevision = value.resultsRevision === undefined ? 0 : value.resultsRevision;
   if (!Number.isSafeInteger(resultsRevision) || resultsRevision < 0) throw new Error('结果版本必须为非负安全整数');
+  const trigger = value.trigger === undefined ? 'unknown' : value.trigger;
+  if (!RUN_TRIGGERS.includes(trigger)) throw new Error('触发来源必须为 manual、scheduled 或 unknown');
+  const summaryState = value.summaryState === undefined ? 'unrecorded' : value.summaryState;
+  if (!SUMMARY_STATES.includes(summaryState)) throw new Error('轮次摘要状态无效');
+  const closingSummary = value.closingSummary === undefined ? null : shortText(value.closingSummary, '轮次收尾摘要');
+  const highlightsRevision = value.highlightsRevision === undefined ? 0 : value.highlightsRevision;
+  if (!Number.isSafeInteger(highlightsRevision) || highlightsRevision < 0) throw new Error('重点版本必须为非负安全整数');
+  let highlights = null;
+  if (value.highlights !== undefined && value.highlights !== null) {
+    if (!Array.isArray(value.highlights) || value.highlights.length > MAX_RUN_HIGHLIGHTS) throw new Error(`每轮重点最多 ${MAX_RUN_HIGHLIGHTS} 条`);
+    const keys = new Set();
+    highlights = value.highlights.map(item => {
+      const highlight = runHighlight(item);
+      if (highlight.updatedAt < createdAt || highlight.updatedAt > updatedAt || highlight.occurredAt > highlight.updatedAt) throw new Error('重点时间超出有效范围');
+      if (keys.has(highlight.eventKey)) throw new Error('同一轮重点的事件键重复');
+      keys.add(highlight.eventKey);
+      return highlight;
+    });
+  }
+  if (summaryState === 'no_change' && ((highlights ?? []).length || !closingSummary)) throw new Error('无重要变化必须有摘要且不能含重点');
+  if (summaryState === 'highlights' && !(highlights ?? []).length) throw new Error('有重点状态必须包含重点记录');
+  if (summaryState === 'unrecorded' && ((highlights ?? []).length || closingSummary !== null)) throw new Error('未记录状态不能包含重点或摘要');
   let results = null;
   if (value.results !== undefined && value.results !== null) {
     if (!Array.isArray(value.results) || value.results.length > MAX_RUN_RESULTS) throw new Error(`结果记录最多 ${MAX_RUN_RESULTS} 条`);
@@ -263,6 +386,7 @@ export function validateRun(value, expectedId) {
   return {
     schemaVersion: 1, id: value.id, workflow: value.workflow, label: definition.label, role: shortText(value.role, '岗位'), ownerSessionId: shortText(value.ownerSessionId, '会话 ID'),
     status: value.status, reason: shortText(value.reason, '轮次理由', ['waiting', 'failed', 'cancelled'].includes(value.status)),
+    trigger, summaryState, closingSummary, highlights, highlightsRevision,
     createdAt, updatedAt, steps, results, resultsRevision
   };
 }
@@ -270,6 +394,20 @@ export function validateRun(value, expectedId) {
 export function transitionRun(input, action, now) {
   const run = validateRun(input);
   timestamp(now);
+  let requestedHighlight;
+  if (action.type === 'highlight') {
+    requestedHighlight = runHighlight(action.highlight, now);
+    if (action.requestId !== undefined || action.expectedRevision !== undefined) {
+      highlightRequestId(action.requestId);
+      if (!Number.isSafeInteger(action.expectedRevision) || action.expectedRevision < 0) throw new Error('重点 expected-revision 必须为非负安全整数');
+      for (const highlight of run.highlights ?? []) {
+        const receipt = highlight.history?.find(entry => entry.requestId === action.requestId);
+        if (!receipt) continue;
+        if (highlight.eventKey !== requestedHighlight.eventKey || receipt.expectedRevision !== action.expectedRevision || receipt.requestedOccurredAt !== (action.highlight.occurredAt ?? null) || !sameHighlightContent(receipt, requestedHighlight)) throw highlightConflict('HIGHLIGHT_REQUEST_CONFLICT', '重点请求 ID 已用于不同内容，请使用新的 request');
+        return run;
+      }
+    }
+  }
   if (now < run.updatedAt) throw new Error('进度更新时间不能倒退');
   if (['completed', 'failed', 'cancelled'].includes(run.status)) throw new Error('轮次已经结束，请创建新的 runId');
   if (action.type === 'result') {
@@ -279,7 +417,8 @@ export function transitionRun(input, action, now) {
     if (index >= 0) {
       const previous = results[index];
       if (previous.candidateId !== result.candidateId || previous.stepId !== result.stepId) throw new Error('同一结果 ID 的候选或步骤不可变更');
-      if (['action', 'outcome', 'attention', 'nextAction'].every(key => previous[key] === result[key])) return run;
+      if (previous.decisionId && previous.decisionId !== result.decisionId) throw new Error('结果已关联的事项不可移除或改绑');
+      if (['action', 'outcome', 'attention', 'nextAction'].every(key => previous[key] === result[key]) && previous.decisionId === result.decisionId) return run;
       results[index] = result;
     } else {
       if (results.length >= MAX_RUN_RESULTS) throw new Error(`结果记录最多 ${MAX_RUN_RESULTS} 条`);
@@ -287,6 +426,42 @@ export function transitionRun(input, action, now) {
     }
     if (run.resultsRevision === Number.MAX_SAFE_INTEGER) throw new Error('结果版本已达到安全整数上限');
     return { ...run, updatedAt: now, results, resultsRevision: run.resultsRevision + 1 };
+  }
+  if (action.type === 'highlight') {
+    const highlight = requestedHighlight;
+    const highlights = [...(run.highlights ?? [])];
+    const index = highlights.findIndex(item => item.eventKey === highlight.eventKey);
+    if (index >= 0) {
+      const previous = highlights[index];
+      if (action.highlight.occurredAt != null && action.highlight.occurredAt !== previous.occurredAt) throw new Error('同一事件的发生时间不能更换');
+      if (sameHighlightContent(previous, highlight)) return run;
+      if (!highlight.correction) throw new Error('修改同一事件的重点必须提供更正说明');
+      if (action.expectedRevision === undefined || action.requestId === undefined) throw new Error('重点更正必须提供 --expected-revision 和 --request');
+      if (action.expectedRevision !== previous.revision) throw highlightConflict('HIGHLIGHT_REVISION_CONFLICT', `重点版本冲突；当前事件版本 ${previous.revision}，请重读后再更正`);
+      if (previous.subjectKey !== highlight.subjectKey || previous.decisionId !== highlight.decisionId) throw new Error('同一事件的对象和关联事项不能更换');
+      if (previous.revision === Number.MAX_SAFE_INTEGER) throw new Error('重点事件版本已达到安全整数上限');
+      const corrected = { ...highlight, occurredAt: previous.occurredAt };
+      const revision = previous.revision + 1;
+      highlights[index] = {
+        ...corrected, previousText: previous.text, revision,
+        history: [...(previous.history ?? [highlightRevision(previous, previous.revision)]), highlightRevision(corrected, revision, action.requestId, action.expectedRevision, action.highlight.occurredAt ?? null)]
+      };
+    } else {
+      if (action.expectedRevision !== undefined && action.expectedRevision !== 0) throw highlightConflict('HIGHLIGHT_REVISION_CONFLICT', '新事件的 expected-revision 必须为 0');
+      if (highlights.length >= MAX_RUN_HIGHLIGHTS) throw new Error(`每轮重点最多 ${MAX_RUN_HIGHLIGHTS} 条`);
+      highlights.push({ ...highlight, revision: 1, history: [highlightRevision(highlight, 1, action.requestId ?? null, action.expectedRevision ?? null, action.requestId ? action.highlight.occurredAt ?? null : null)] });
+    }
+    if (run.highlightsRevision === Number.MAX_SAFE_INTEGER) throw new Error('重点版本已达到安全整数上限');
+    return validateRun({ ...run, updatedAt: now, summaryState: 'highlights', closingSummary: null, highlights, highlightsRevision: run.highlightsRevision + 1 });
+  }
+  if (action.type === 'summary') {
+    if (!['highlights', 'no_change'].includes(action.summaryState)) throw new Error('轮次摘要状态必须为 highlights 或 no_change');
+    const closingSummary = shortText(action.closingSummary, '轮次收尾摘要', true);
+    if (action.summaryState === 'highlights' && !(run.highlights ?? []).length) throw new Error('标记为有重点前必须先写入至少一条重点');
+    if (action.summaryState === 'no_change' && (run.highlights ?? []).length) throw new Error('已有重点的轮次不能标记无重要变化');
+    if (run.summaryState === action.summaryState && run.closingSummary === closingSummary) return run;
+    if (run.highlightsRevision === Number.MAX_SAFE_INTEGER) throw new Error('重点版本已达到安全整数上限');
+    return { ...run, updatedAt: now, summaryState: action.summaryState, closingSummary, highlightsRevision: run.highlightsRevision + 1 };
   }
   const steps = run.steps.map(step => ({ ...step }));
   const reason = shortText(action.reason, '理由', ['wait', 'skip', 'fail', 'cancel'].includes(action.type));
@@ -334,8 +509,15 @@ export function summarizeRunResults(run) {
 
 /** @param {Run|import('./types/index.d.ts').RunSummary} run @returns {import('./types/index.d.ts').RunSummary} */
 export function runSummary(run) {
-  const { results, resultSummary, ...summary } = run;
-  return { ...summary, resultsRevision: run.resultsRevision ?? 0, resultSummary: Object.hasOwn(run, 'results') ? summarizeRunResults(run) : resultSummary ?? null };
+  const { results, resultSummary, highlights, ...summary } = run;
+  return {
+    ...summary,
+    resultsRevision: run.resultsRevision ?? 0,
+    summaryState: run.summaryState ?? 'unrecorded',
+    closingSummary: run.closingSummary ?? null,
+    highlightCount: run.highlightCount ?? (highlights?.length ?? 0),
+    resultSummary: Object.hasOwn(run, 'results') ? summarizeRunResults(run) : resultSummary ?? null
+  };
 }
 
 /**
@@ -498,16 +680,14 @@ export function selectRoles(snapshot, { scope = 'active', following = [], query 
   const selectedScope = ROLE_SCOPES.find(item => item.id === scope);
   if (!selectedScope) throw new Error('岗位范围必须为 active、following 或 all');
   const followed = new Set(following);
-  const inactiveStatuses = new Set(['已关闭', '已下架', '暂停', '待核']);
-  const scopedRoles = snapshot.roles.filter(item => scope === 'all' || (scope === 'following' ? followed.has(item.name) : !inactiveStatuses.has(item.status)));
+  const scopedRoles = snapshot.roles.filter(item => scope === 'all' || (scope === 'following' ? followed.has(item.name) : item.status === '在招'));
   const names = new Set(scopedRoles.map(item => item.name));
   const selectedRole = role ? snapshot.roles.find(item => item.name === role) ?? null : null;
   const selectionMissing = Boolean(role && !selectedRole);
   const outsideScope = Boolean(selectedRole && !names.has(selectedRole.name));
   const candidates = snapshot.candidates === null || selectionMissing ? null : snapshot.candidates.filter(candidate => role ? candidate.role === role : names.has(candidate.role));
   const search = query.trim().toLowerCase();
-  const unknownStatus = scopedRoles.some(item => !item.configured || (item.status !== '在招' && !inactiveStatuses.has(item.status)));
-  const label = role ? selectionMissing ? `${role}（岗位已不存在，人数未知）` : `${selectedRole.name}${outsideScope ? '（不在当前范围）' : ''}` : `${selectedScope.label}${scope === 'active' && unknownStatus ? '（含状态未知岗位）' : ''}`;
+  const label = role ? selectionMissing ? `${role}（岗位已不存在，人数未知）` : `${selectedRole.name}${outsideScope ? '（不在当前范围）' : ''}` : selectedScope.label;
   return {
     roles: scopedRoles.filter(item => item.name.toLowerCase().includes(search)), selectedRole, outsideScope, selectionMissing,
     candidates, total: candidates === null ? null : candidates.length,

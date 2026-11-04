@@ -61,7 +61,7 @@ await Promise.all([
 ]);
 const workspace = process.argv[2];
 if (workspace) {
-  const relatives = ['skills', '.claude/skills', '.agents/skills', '.qoder/skills'].flatMap(entry => ['model.mjs', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts', 'recruiting-board.test.ts', ...(entry === '.claude/skills' ? [] : ['hooks/register.tsx'])].map(file => `${entry}/recruit-board/${file}`));
+  const relatives = ['skills', '.claude/skills', '.agents/skills', '.qoder/skills'].flatMap(entry => ['model.mjs', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts'].map(file => `${entry}/recruit-board/${file}`));
   const hashes = Object.fromEntries(await Promise.all(relatives.map(async relative => [relative, createHash('sha256').update(await readFile(path.join(workspace, relative))).digest('hex')])));
   await writeFile(path.join(root, 'installed-before.json'), JSON.stringify({ workspace, hashes }, null, 2));
 }

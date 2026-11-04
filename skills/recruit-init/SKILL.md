@@ -14,6 +14,8 @@ description: >
 
 网页开工（默认）：目标工作区实际建立后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `init` start、保存 run id，按 [`共享进度协议`](../recruit-board/references/progress.md) 补记依赖与建目录的已观测结果，再进入当前真实步骤，尽早确认服务并打开或复用网页，同时交付本轮链接。目录未建立前不 start，不向源码仓库写 runtime；缺脚本或接入失败按共享降级继续初始化，不为看板覆盖旧 skills。
 
+工作区建立后按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 读取已有未决事项。需要用户决定且暂未处理的问题登记为工作区或岗位事项；普通安装动作不一律变成“待你确认”。初始化已核实的关键结果及时记 `highlight`；新事项和重点按共享契约填写 `context`，整个工作区用 `scope:workspace` 且不附人岗，已确认的单岗用 `scope:role` 和 `role`。`details` 只记适用的核实短文本，最多 8 项，不填虚构人选；旧格式继续可读。结束 run 前写 `summary`，未确认岗位要求保留待办而不宣称梳理完成。
+
 ## Step 1 前置依赖检查
 
 先定位本 `SKILL.md` 所在的目录，然后运行它自带的安装脚本。在本模板仓库根目录中的命令是：
@@ -78,7 +80,8 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 │                                candidate-pool.md / dedup-ledger.csv 四个模板
 └── runtime/
     ├── reports/              ← 本地日报与 review 汇总
-    └── resumes/              ← 邮件简历附件与导入去重索引
+    ├── resumes/              ← 邮件简历附件与导入去重索引
+    └── recruit-board/        ← 看板脚本按需建立；轮次与跨轮事项需要保留和备份
 ```
 
 要点：

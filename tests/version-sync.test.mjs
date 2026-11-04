@@ -15,18 +15,16 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (rel) => JSON.parse(readFileSync(path.join(repoRoot, rel), "utf8"));
 
-test("主包、主插件与可选看板插件版本号一致", () => {
+test("主包与主插件版本号一致", () => {
   const pkg = readJson("package.json");
   const plugin = readJson(path.join(".claude-plugin", "plugin.json"));
-  const board = readJson("skills/recruit-board/.claude-plugin/plugin.json");
-  assert.equal(board.version, pkg.version, "可选原生看板必须使用相同发布版本，避免安装到旧缓存");
   assert.equal(
     plugin.version,
     pkg.version,
@@ -35,11 +33,15 @@ test("主包、主插件与可选看板插件版本号一致", () => {
   );
 });
 
-test("两个清单里的插件名一致", () => {
+test("marketplace 只发布主插件，网页看板保留共享入口且不注册原生界面", () => {
   const plugin = readJson(path.join(".claude-plugin", "plugin.json"));
   const market = readJson(path.join(".claude-plugin", "marketplace.json"));
-  assert.ok(
-    market.plugins.some((p) => p.name === plugin.name),
-    `marketplace.json 里没有名为 ${plugin.name} 的条目`,
-  );
+  assert.deepEqual(market.plugins.map((entry) => [entry.name, entry.source]), [[plugin.name, "./"]]);
+  const board = path.join(repoRoot, "skills/recruit-board");
+  for (const relative of [".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/register.tsx", "recruiting-board.test.ts"]) {
+    assert.equal(existsSync(path.join(board, relative)), false, `原生入口已退役：${relative}`);
+  }
+  for (const relative of ["SKILL.md", "model.mjs", "types/index.d.ts", "public/index.html", "scripts/connect.mjs", "scripts/server.mjs", "scripts/actions.mjs", "scripts/progress.mjs", "scripts/decisions.mjs"]) {
+    assert.equal(existsSync(path.join(board, relative)), true, `网页及共享能力必须保留：${relative}`);
+  }
 });

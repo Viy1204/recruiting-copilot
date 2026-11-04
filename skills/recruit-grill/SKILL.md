@@ -12,6 +12,8 @@ description: >
 
 网页开工（默认）：确认用户招聘工作区后，按 [`../recruit-board/references/hosts.md`](../recruit-board/references/hosts.md) 统一接入；脚本可用时为 `grill` 先 start、保存 run id 并进入真实步骤，尽早确认服务并打开或复用网页，同时交付本轮链接。步骤、降级和记录命令遵循 [`共享进度协议`](../recruit-board/references/progress.md)；访谈等待用户回答时在 interview 记 `wait`，恢复后记 `step`，不把未确认标准当作已完成。
 
+按 [`跨轮事项与重点`](../recruit-board/references/decisions.md) 读取该岗位既有未决问题，复用稳定事项，避免下一轮重新提同一个决定。需要跨轮保留的标准选择登记为岗位事项，不伪造候选人收据；用户答复后记录决定，实际更新 CONTEXT／JD／对内笔记后再记资料同步完成。有价值的已确认结论及时记 `highlight`；新事项与重点用 `context.scope:role` 和已核实的 `role` 明确岗位，`details` 按需保留最多 8 项核实短文本，不将未确认建议写成既成变化；旧格式仍可读。结束 run 前写 `summary`；未确认的标准不能作为事实生效。
+
 ## 怎么问
 
 1. **先读再问**。读工作区 `CONTEXT.md`、本岗已有 JD／对内笔记和用户提供的材料。已确认且无冲突的结论直接沿用，只用几行交代已知信息和缺口；旧 JD 与 CONTEXT 冲突时指出差异，沿用现行 CONTEXT，询问是否变更。能查到的事实自己查，不把整理工作交回用户。

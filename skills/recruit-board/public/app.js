@@ -1,4 +1,4 @@
-import { candidateStatus, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } from '/model.mjs';
+import { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } from '/model.mjs';
 import { createSnapshotController } from '/live.mjs';
 
 const byId = id => document.getElementById(id);
@@ -18,10 +18,15 @@ let rolePreferences = { scope: 'active', following: [], role: '' }, preferenceKe
 let resultsRequest = 0;
 const freshResults = runId => ({ runId, open: false, filter: 'all', data: undefined, status: 'idle', error: null, requestedVersion: null, loadedVersion: null, updatedAt: null, expanded: new Set(), decisionExpanded: new Set(), showAllDecisions: false });
 let resultsState = freshResults(null);
+const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null };
+const drawerState = { page: null, group: 'all', listKind: 'decisions', itemId: null, returnFocus: null, listFocus: null, listScroll: 0, pageScroll: 0, expanded: new Set(), stack: [] };
+let roleRangeMessage = '';
 let activityRequest = 0, activityAbort = null;
+let runHighlightsRequest = 0, runHighlightsAbort = null;
 const freshActivity = runId => ({ runId, data: undefined, revision: null, requestedRevision: null, status: 'idle', error: '', retryAt: 0, ahead: null });
 let activityState = freshActivity(null);
-const scopeSummary = scope => ({ active: '在招岗位汇总', following: '关注岗位汇总', all: '全部岗位' }[scope]);
+const scopeSummary = scope => ({ active: '在招岗位汇总', following: '我的关注汇总', all: '全部岗位汇总' }[scope]);
+const unknownRole = role => !role.configured || !['在招', '已关闭', '已下架', '暂停', '待核'].includes(role.status);
 const stamp = value => {
   const date = new Date(value);
   const pad = number => String(number).padStart(2, '0');
@@ -46,7 +51,6 @@ const layoutState = { editing: false, workspaceKey: null, orders: defaultLayoutO
 const layoutItems = new Map();
 let applyingLayout = false, layoutScrollFrame = null;
 
-const workspaceNav = byId('workspace-nav');
 const workspaceNavTargets = {
   overview: byId('workbench-heading'),
   roles: byId('candidates-heading'),
@@ -54,7 +58,9 @@ const workspaceNavTargets = {
   following: byId('choose-following')
 };
 workspaceNavTargets.tasks.tabIndex = -1;
-let workspaceNavFocus = null, followingPickerTrigger = byId('choose-following');
+const navButtons = [...document.querySelectorAll('[data-nav-target]')];
+let activeView = 'overview';
+let workspaceNavFocus = null;
 
 function focusWorkbenchTarget(element, block = 'start') {
   element.focus({ preventScroll: true });
@@ -62,23 +68,29 @@ function focusWorkbenchTarget(element, block = 'start') {
 }
 
 function setWorkspaceNavTarget(target) {
-  for (const button of workspaceNav.querySelectorAll('[data-nav-target]')) {
+  activeView = target;
+  document.querySelector('.app').dataset.view = target;
+  for (const [view, id] of Object.entries({ overview: 'assistant', roles: 'role-browser', tasks: 'tasks' })) byId(id).hidden = !layoutState.editing && view !== target;
+  text('workbench-heading', { overview: '招聘工作台', roles: '岗位与人选', tasks: '执行记录' }[target]);
+  for (const button of navButtons) {
     if (button.dataset.navTarget === target) button.setAttribute('aria-current', 'location');
     else button.removeAttribute('aria-current');
   }
 }
 
 function navigateWorkspace(target) {
-  if (target === 'roles' && byId('candidate-query').value) clearCandidateSearch(false);
+  if (byId('cancel-role').disabled && activeView !== target) return;
+  if (drawerState.page) closeWorkspaceDrawer(false);
+  setWorkspaceNavTarget(target);
   if (target === 'tasks') {
     byId('execution-records').open = true;
-    if (snapshot && !workspaceBlocked) { renderRunResults(selectedRun()); syncActivity(selectedRun()); }
+    if (snapshot && !workspaceBlocked) { renderRunResults(selectedRun()); syncActivity(selectedRun()); void loadRunHighlights(); }
   }
-  setWorkspaceNavTarget(target);
+  renderWorkspaceTasks(); renderOverviewReadingNotice();
   focusWorkbenchTarget(workspaceNavTargets[target]);
 }
 
-for (const button of workspaceNav.querySelectorAll('[data-nav-target]')) button.addEventListener('click', () => navigateWorkspace(button.dataset.navTarget));
+for (const button of navButtons) button.addEventListener('click', () => navigateWorkspace(button.dataset.navTarget));
 
 function visibleWorkbenchTarget(element) {
   const style = getComputedStyle(element);
@@ -86,21 +98,21 @@ function visibleWorkbenchTarget(element) {
 }
 
 document.addEventListener('focusin', event => {
-  if (workspaceNav.contains(event.target)) workspaceNavFocus = event.target.closest('[data-nav-target]')?.dataset.navTarget ?? (event.target.closest('#workspace-choose-following') ? 'following' : 'roles');
-  else if (event.target !== document.body || visibleWorkbenchTarget(workspaceNav)) workspaceNavFocus = null;
+  const navItem = event.target.closest?.('[data-nav-target]');
+  workspaceNavFocus = navItem ? navItem.dataset.navTarget : null;
 });
-document.addEventListener('pointerdown', event => { if (!workspaceNav.contains(event.target)) workspaceNavFocus = null; }, true);
+document.addEventListener('pointerdown', event => { if (!event.target.closest?.('[data-nav-target]')) workspaceNavFocus = null; }, true);
 if (typeof ResizeObserver === 'function') {
   new ResizeObserver(() => {
-    if (!workspaceNavFocus || visibleWorkbenchTarget(workspaceNav)) return;
+    if (!workspaceNavFocus) return;
     const active = document.activeElement;
-    if (!workspaceNav.contains(active) && active !== document.body && active !== document.documentElement) { workspaceNavFocus = null; return; }
-    const target = workspaceNavTargets[workspaceNavFocus];
-    const fallback = workspaceNavFocus === 'tasks' ? byId('tasks-heading') : workspaceNavTargets.roles;
+    if (active !== document.body && active !== document.documentElement && visibleWorkbenchTarget(active)) return;
+    const target = workspaceNavFocus;
     workspaceNavFocus = null;
-    const destination = visibleWorkbenchTarget(target) ? target : fallback;
-    if (destination.matches('h1, h2, h3')) destination.tabIndex = -1;
-    focusWorkbenchTarget(destination);
+    const tab = navButtons.find(button => button.dataset.navTarget === target && visibleWorkbenchTarget(button));
+    if (tab) { tab.focus({ preventScroll: true }); return; }
+    const heading = workspaceNavTargets[target];
+    if (heading && visibleWorkbenchTarget(heading)) focusWorkbenchTarget(heading);
   }).observe(document.querySelector('.app'));
 }
 
@@ -330,6 +342,7 @@ function setLayoutEditing(editing) {
   byId('layout-editor').hidden = !editing;
   byId('layout-toolbar').classList.toggle('is-editing', editing);
   byId('layout-root').classList.toggle('is-editing', editing);
+  setWorkspaceNavTarget(activeView);
   updateLayoutControls();
   renderLayoutStorageNotice();
   renderCandidateSearch();
@@ -473,6 +486,631 @@ async function jsonRequest(url, init = {}) {
   return data;
 }
 
+const DECISION_STATES = { open: '待确认', snoozed: '已暂缓', decided: '已决定', closed: '已完成', cancelled: '已取消', invalidated: '已失效', history_review: '历史待核对' };
+const ACTION_STATES = { pending: '待执行', running: '执行中', done: '已完成', failed: '执行失败', uncertain: '结果待核实', cancelled: '已取消' };
+const DECISION_GROUPS = { open: '当前待处理', snoozed: '已暂缓', history_review: '历史待核对', followUp: '后续执行', closed: '处理历史', all: '全部事项' };
+const hasFollowUp = item => item.state === 'decided' && ['pending', 'running', 'failed', 'uncertain'].includes(item.followUp.status);
+const triggerLabel = value => ({ manual: '主动任务', scheduled: '定时巡检', unknown: '来源未记录' }[value] ?? '来源未记录');
+const runSummaryLabel = run => {
+  if ((run.highlightCount ?? 0) > 0 && !run.closingSummary) return ['running', 'waiting'].includes(run.status) ? '已记录重点，摘要待收尾' : '已记录重点，收尾摘要未记录';
+  if (run.summaryState === 'no_change') return '无重要变化';
+  if (run.summaryState === 'highlights' || (run.highlightCount ?? 0) > 0) return '已记录重点';
+  return '本轮未记录重点';
+};
+const actionLabel = action => action.kind === 'sync' ? ({ pending: '资料待同步', running: '资料同步中', done: '资料已同步', failed: '资料同步失败', uncertain: '同步结果待核实', cancelled: '同步已取消' }[action.status]) : ACTION_STATES[action.status];
+function validDisplayInfo(item) {
+  if (item.context !== undefined) {
+    try { validateContext(item.context); } catch { return false; }
+  }
+  if (item.details !== undefined && (!Array.isArray(item.details) || item.details.length > 8 || item.details.some(field => !field || typeof field.label !== 'string' || typeof field.value !== 'string'))) return false;
+  if (item.subjects !== undefined && (!Array.isArray(item.subjects) || item.subjects.some(subject => !subject || !['name', 'role', 'rawRole', 'candidateId'].every(key => subject[key] === null || typeof subject[key] === 'string')))) return false;
+  if (item.associationMessages !== undefined && (!Array.isArray(item.associationMessages) || item.associationMessages.some(message => typeof message !== 'string'))) return false;
+  return true;
+}
+const isHighlight = item => item && validDisplayInfo(item) && ['eventKey', 'text', 'occurredAt', 'updatedAt'].every(key => typeof item[key] === 'string') && (item.history == null || (Array.isArray(item.history) && item.history.every(entry => entry && Number.isSafeInteger(entry.revision) && entry.revision > 0 && ['text', 'occurredAt', 'updatedAt'].every(key => typeof entry[key] === 'string'))));
+
+function checkWorkspaceOverview(response) {
+  const count = value => value === null || (Number.isSafeInteger(value) && value >= 0);
+  const source = value => value && typeof value.runId === 'string' && typeof value.recordedAt === 'string';
+  const answer = value => value === null || (value && ['text', 'scope', 'recordedAt'].every(key => typeof value[key] === 'string'));
+  const action = value => value && typeof value.label === 'string' && Object.hasOwn(ACTION_STATES, value.status) && ['sync', 'external', 'other'].includes(value.kind);
+  const history = value => value && typeof value.at === 'string' && Object.hasOwn(DECISION_STATES, value.state) && answer(value.decision) && Array.isArray(value.actions) && value.actions.every(action) && (value.source === null || source(value.source));
+  if (!response || !['ok', 'missing', 'stale', 'error'].includes(response.status) || !response.counts || !['open', 'snoozed', 'history', 'followUp'].every(key => count(response.counts[key])) || !Array.isArray(response.diagnostics) || response.diagnostics.some(item => !item || typeof item.message !== 'string')) throw new Error('工作区事项响应格式不兼容');
+  if (response.decisions !== null && (!Array.isArray(response.decisions) || response.decisions.some(item => !item || !validDisplayInfo(item) || !['id', 'title', 'createdAt', 'updatedAt'].every(key => typeof item[key] === 'string') || (item.deadline !== null && typeof item.deadline !== 'string') || !Object.hasOwn(DECISION_STATES, item.state) || !Object.hasOwn(DECISION_STATES, item.effectiveState) || !item.identity || !['subjectKey', 'questionKey', 'scope'].every(key => typeof item.identity[key] === 'string') || !Array.isArray(item.sources) || !item.sources.every(source) || !Array.isArray(item.actions) || !item.actions.every(action) || !Array.isArray(item.history) || !item.history.every(history) || !answer(item.decision) || !item.followUp || !['none', ...Object.keys(ACTION_STATES)].includes(item.followUp.status)))) throw new Error('工作区事项内容格式不兼容');
+  if (response.highlights !== null && (!Array.isArray(response.highlights) || response.highlights.some(item => !isHighlight(item) || typeof item.runId !== 'string'))) throw new Error('近期重点响应格式不兼容');
+  return response;
+}
+
+function overviewReading() {
+  return Boolean(drawerState.page || byId('source-details').open || (activeView === 'tasks' && byId('execution-records').open) || (activeView === 'roles' && (selectedCandidateId || selectedStage || !byId('role-manager').hidden)) || layoutState.editing);
+}
+
+function overviewDataSignature(value) {
+  return JSON.stringify([value?.decisions, value?.highlights, value?.counts]);
+}
+
+function acceptWorkspaceOverview(response) {
+  const previous = overviewState.pending ?? overviewState.data;
+  const retainedDecisions = response.decisions === null && Array.isArray(previous?.decisions);
+  const retainedHighlights = response.highlights === null && Array.isArray(previous?.highlights);
+  const next = {
+    ...response,
+    decisions: retainedDecisions ? previous.decisions : response.decisions,
+    highlights: retainedHighlights ? previous.highlights : response.highlights,
+    counts: retainedDecisions ? previous.counts : response.counts,
+    updatedAt: retainedDecisions || retainedHighlights ? previous.updatedAt ?? response.updatedAt : response.updatedAt
+  };
+  overviewState.status = response.status;
+  overviewState.error = response.diagnostics.map(item => item.message).filter(Boolean).join(' ');
+  overviewState.stale = ['stale', 'error'].includes(response.status) || retainedDecisions || retainedHighlights;
+  overviewState.missing = response.status === 'missing';
+  if (response.status === 'ok') overviewState.readAt = new Date().toISOString();
+  if (overviewState.data && overviewReading() && overviewDataSignature(next) !== overviewDataSignature(overviewState.data)) overviewState.pending = next;
+  else { overviewState.data = next; overviewState.pending = null; }
+  renderWorkspaceOverview();
+  renderLinkedDecisions();
+}
+
+function workspaceDecisionGroups(data) {
+  const items = data?.decisions;
+  if (!Array.isArray(items)) return Object.fromEntries(Object.keys(DECISION_GROUPS).map(key => [key, null]));
+  const current = state => items.filter(item => item.effectiveState === state);
+  const open = current('open');
+  return { open, snoozed: current('snoozed'), history_review: current('history_review'), followUp: items.filter(hasFollowUp), closed: items.filter(item => ['decided', 'closed', 'cancelled', 'invalidated'].includes(item.effectiveState) && !hasFollowUp(item)), all: items };
+}
+
+function workspaceRunLink(runId, label = '查看来源轮次') {
+  const link = node('a', 'text-button workspace-run-link', label);
+  const url = new URL(window.location.href);
+  url.searchParams.set('run', runId);
+  if (expectedWorkspaceKey) url.searchParams.set('workspace', expectedWorkspaceKey);
+  link.href = url.href;
+  link.addEventListener('click', event => {
+    if (workspaceBlocked) { event.preventDefault(); return; }
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openWorkspaceRun(runId);
+  });
+  return link;
+}
+
+function openWorkspaceRun(runId) {
+  if (workspaceBlocked) return;
+  chooseTask({ mode: 'pinned', runId });
+  byId('execution-records').open = true;
+  navigateWorkspace('tasks');
+}
+
+function workspaceDisclosure(key, label, className, expanded = drawerState.expanded) {
+  const details = node('details', className), summary = node('summary', 'workspace-detail-summary', label);
+  details.dataset.overviewDetail = key;
+  details.open = expanded.has(key);
+  details.append(summary);
+  details.addEventListener('toggle', () => {
+    if (!details.isConnected) return;
+    if (details.open) expanded.add(key); else expanded.delete(key);
+    renderOverviewReadingNotice();
+  });
+  return details;
+}
+
+function decisionFacts(rows) {
+  const facts = node('dl', 'workspace-decision-facts');
+  for (const [label, value] of rows) {
+    const row = node('div'); row.append(node('dt', '', label), node('dd', '', value)); facts.append(row);
+  }
+  return facts;
+}
+
+function decisionActions(actions) {
+  const list = node('ul', 'workspace-action-list');
+  for (const action of actions) {
+    const item = node('li', 'workspace-action'); item.dataset.state = action.status;
+    const heading = node('div', 'workspace-action-heading');
+    heading.append(node('strong', '', action.label), node('span', 'workspace-state', actionLabel(action) ?? '状态未记录'));
+    item.append(heading, node('p', 'workspace-overview-caption', `${{ sync: '资料同步', external: '外部动作', other: '后续动作' }[action.kind]} · ${time(action.updatedAt)}`));
+    if (action.reason || ['failed', 'uncertain'].includes(action.status)) item.append(node('p', 'workspace-action-reason', `原因：${action.reason || '未记录'}`));
+    if (action.evidence) item.append(node('p', 'workspace-action-evidence', `${action.status === 'done' ? '完成依据' : '记录依据'}：${action.evidence}`));
+    if (action.verification) item.append(node('p', 'workspace-action-evidence', `核实记录：${action.verification}`));
+    list.append(item);
+  }
+  return list;
+}
+
+function decisionAnswer(answer) {
+  return decisionFacts([['已记录决定', answer.text], ['决定范围', answer.scope], ['决定时间', time(answer.recordedAt)], ...(answer.authority ? [['授权依据', answer.authority]] : []), ...(answer.expiresAt ? [['有效至', time(answer.expiresAt)]] : [])]);
+}
+
+function itemSubjects(item) {
+  let subjects = item.subjects;
+  if (!subjects && item.context?.scope === 'candidate') {
+    const subject = candidateSubject(item.context.candidateId);
+    subjects = subject ? [subject] : [];
+  } else if (!subjects && item.context?.scope === 'role') subjects = [{ candidateId: null, name: null, rawRole: item.context.role, role: item.context.role }];
+  return (subjects ?? []).map(subject => {
+    const current = subject.candidateId ? snapshot?.candidates?.find(candidate => candidate.id === subject.candidateId) : null;
+    const mapped = new Set((snapshot?.candidates ?? []).filter(candidate => candidate.rawRole === subject.rawRole).map(candidate => candidate.role));
+    const role = current?.role ?? (mapped.size === 1 ? [...mapped][0] : subject.role ?? subject.rawRole);
+    return { ...subject, role, current };
+  });
+}
+
+function subjectLine(item) {
+  const line = node('span', 'subject-line'), subjects = itemSubjects(item);
+  for (const subject of subjects) {
+    const entry = node('span');
+    if (subject.name) entry.append(node('strong', 'subject-name', subject.name), document.createTextNode(' · '));
+    entry.append(node('span', 'subject-role', subject.role || '岗位待确认'));
+    if (subject.rawRole && subject.rawRole !== subject.role) entry.title = `原岗位：${subject.rawRole}`;
+    line.append(entry);
+  }
+  if (!subjects.length) line.append(node('span', 'subject-role', item.associationStatus === 'workspace' || item.context?.scope === 'workspace' ? '工作区事项' : '岗位待确认'));
+  if ((!item.associationStatus && !item.context) || ['unknown', 'partial'].includes(item.associationStatus)) line.append(node('span', 'association-note', '关联待确认'));
+  return line;
+}
+
+function subjectLinks(item) {
+  const links = node('div', 'subject-links');
+  for (const subject of itemSubjects(item)) {
+    if (!subject.candidateId) continue;
+    if (subject.current) {
+      const button = node('button', 'text-button', `查看 ${subject.name} 的资料`); button.type = 'button';
+      button.dataset.subject = subject.candidateId;
+      button.addEventListener('click', () => openDrawerCandidate(subject.current, button));
+      links.append(button);
+    } else links.append(node('p', 'workspace-overview-caption', `${subject.name} · 当前资料不可用，保留原记录中的岗位信息。`));
+  }
+  for (const message of item.associationMessages ?? []) links.append(node('p', 'association-note', message));
+  return links;
+}
+
+function eventDetails(item) {
+  const details = node('span', 'highlight-details');
+  for (const field of item.details ?? []) {
+    const row = node('span'); row.append(node('span', 'detail-label', field.label), node('span', '', field.value)); details.append(row);
+  }
+  return details;
+}
+
+function decisionBackground(item) {
+  return item.reason || [...item.history].reverse().find(entry => entry.evidence)?.evidence || '';
+}
+
+function decisionRow(item) {
+  const row = node('li', 'workspace-decision'); row.dataset.decision = item.id;
+  const button = node('button', 'workspace-preview-row'); button.type = 'button';
+  button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
+  button.append(subjectLine(item), node('strong', 'workspace-preview-title', item.title));
+  const background = decisionBackground(item);
+  button.append(node('span', 'workspace-preview-background', background || '背景尚未记录，可查看来源核对。'));
+  const state = node('span', 'workspace-preview-meta', `${DECISION_STATES[item.effectiveState]}${hasFollowUp(item) ? ` · ${ACTION_STATES[item.followUp.status]}` : ''} · ${shortTime(item.updatedAt)}`);
+  state.dataset.state = item.effectiveState;
+  const footer = node('span', 'workspace-preview-footer');
+  footer.append(state, node('span', 'workspace-preview-action', '查看事项 ›'));
+  button.append(footer);
+  button.addEventListener('click', () => openWorkspaceDecision(item.id, button));
+  row.append(button); return row;
+}
+
+function decisionDetail(item) {
+  const body = node('div', 'workspace-decision-body'); body.dataset.decision = item.id;
+  const state = node('span', 'workspace-state', DECISION_STATES[item.effectiveState]); state.dataset.state = item.effectiveState;
+  body.append(subjectLine(item), node('h3', 'workspace-detail-title', item.title));
+  const background = decisionBackground(item);
+  body.append(node('p', 'workspace-detail-reason', background || '背景尚未记录，请结合来源核对。'), state, subjectLinks(item));
+  if (item.identity.scope && item.identity.scope !== '历史收据待核对') body.append(node('p', 'workspace-overview-caption', `适用范围：${item.identity.scope}`));
+  if (item.decision) body.append(node('h4', '', '当前决定'), node('p', 'workspace-detail-answer', item.decision.text));
+  else body.append(node('p', 'workspace-detail-answer', item.effectiveState === 'history_review' ? '历史记录尚待核对，未确认当前是否仍有效。' : '尚未记录明确决定。'));
+  if (item.deadline) body.append(node('p', 'workspace-overview-note', `截止 ${time(item.deadline)}`));
+  if (item.snoozedUntil) body.append(node('p', 'workspace-overview-note', `暂缓至 ${time(item.snoozedUntil)}${item.state === 'snoozed' && item.effectiveState === 'open' ? ' · 已到期，恢复提醒' : ''}`));
+  else if (item.effectiveState === 'snoozed') body.append(node('p', 'workspace-overview-note', '暂缓期限未指定。'));
+  if (item.blocking && ['open', 'snoozed', 'history_review'].includes(item.effectiveState)) body.append(node('p', 'workspace-overview-note', '有后续动作等待该决定。'));
+  if (item.actions.length) body.append(node('h4', '', '后续动作'), decisionActions(item.actions));
+  const evidence = [...new Set(item.history.map(entry => entry.evidence).filter(Boolean))];
+  if (evidence.length) {
+    const details = workspaceDisclosure(`evidence:${item.id}`, '依据', 'workspace-decision-evidence');
+    const list = node('ul', 'workspace-evidence-list'); list.append(...evidence.map(value => node('li', '', value)));
+    details.append(list); body.append(details);
+  }
+  const sources = workspaceDisclosure(`sources:${item.id}`, '来源与记录信息', 'workspace-decision-sources');
+  sources.append(decisionFacts([['首次提出', time(item.createdAt)], ['最近更新', time(item.updatedAt)]]));
+  if (item.decision) sources.append(decisionFacts([['决定范围', item.decision.scope], ['决定时间', time(item.decision.recordedAt)], ...(item.decision.authority ? [['授权依据', item.decision.authority]] : []), ...(item.decision.expiresAt ? [['有效至', time(item.decision.expiresAt)]] : [])]));
+  for (const source of item.sources) {
+    const row = node('div', 'workspace-source');
+    const run = snapshot?.runs?.find(value => value.id === source.runId);
+    row.append(workspaceRunLink(source.runId, run ? `${run.label} · ${shortTime(run.createdAt)}` : `来源轮次 ${source.runId}`));
+    row.append(node('span', 'workspace-overview-caption', `记录于 ${time(source.recordedAt)}`));
+    sources.append(row);
+  }
+  if (!item.sources.length) sources.append(node('p', 'workspace-overview-caption', '未关联来源轮次。'));
+  body.append(sources);
+  const history = workspaceDisclosure(`history:${item.id}`, `处理历史 · ${item.history.length} 条`, 'workspace-decision-history');
+  const entries = node('ol', 'workspace-history-list');
+  for (const entry of [...item.history].reverse()) {
+    const row = node('li', 'workspace-history-item');
+    row.append(node('p', 'workspace-history-heading', `${time(entry.at)} · ${DECISION_STATES[entry.state] ?? '状态未记录'}`));
+    if (entry.reason) row.append(node('p', '', `原因：${entry.reason}`));
+    if (entry.evidence) row.append(node('p', '', `依据：${entry.evidence}`));
+    if (entry.snoozedUntil) row.append(node('p', '', `暂缓至：${time(entry.snoozedUntil)}`));
+    if (entry.decision) row.append(decisionAnswer(entry.decision));
+    if (entry.actions.length) row.append(decisionActions(entry.actions));
+    if (entry.source) row.append(workspaceRunLink(entry.source.runId, `来源轮次 ${entry.source.runId}`));
+    entries.append(row);
+  }
+  if (!item.history.length) entries.append(node('li', 'workspace-overview-caption', '尚未记录处理历史。'));
+  history.append(entries); body.append(history);
+  return body;
+}
+
+function renderOverviewReadingNotice() {
+  const pending = overviewState.pending !== null, newer = Boolean(overviewState.pendingRunId && overviewState.pendingRunId !== taskSelection.runId);
+  byId('workspace-reading-notice').hidden = !pending && !newer;
+  text('workspace-reading-message', pending ? '事项或近期进展有更新。' : newer ? '有新的任务记录。' : '');
+  byId('workspace-apply-updates').hidden = !pending;
+  byId('workspace-return-overview').hidden = !newer;
+  byId('workspace-drawer-update').hidden = !pending;
+}
+
+function recordedRunState(run) {
+  return run.status === 'running' && !run.steps.some(step => step.status === 'running') ? '未收尾记录' : `${RUN_LABELS[run.status]}记录`;
+}
+
+function renderWorkspaceTasks() {
+  const list = byId('workspace-task-list'), runs = snapshot?.runs;
+  const recent = runs?.reduce((latest, run) => !latest || run.createdAt > latest.createdAt ? run : latest, null);
+  const run = runs?.find(item => item.id === taskSelection.runId) ?? recent;
+  const note = workspaceBlocked ? '工作区连接已变化；保留最后任务记录。' : disconnected ? '连接断开；保留最后任务记录。' : !snapshot ? '正在读取任务…' : runs === null ? '任务状态未知，尚未成功读取。' : snapshot.sources.runs.status === 'stale' ? '任务源陈旧；保留最后任务记录。' : !runs.length ? '尚无任务记录。' : '';
+  text('workspace-task-note', note); byId('workspace-task-note').hidden = !note;
+  const signature = JSON.stringify(run);
+  if (list.dataset.content === signature || (list.dataset.content && overviewReading())) return;
+  list.dataset.content = signature;
+  list.replaceChildren();
+  if (!run) return;
+  const item = node('li', 'workspace-task');
+  const heading = node('div', 'workspace-task-heading');
+  heading.append(node('span', 'workspace-overview-caption', recent?.id === run.id ? '最近记录' : '所选记录'), workspaceRunLink(run.id, `${run.label}${run.role ? ` · ${run.role}` : ''}`));
+  const meta = node('p', 'workspace-task-meta');
+  const status = node('span', 'workspace-state', recordedRunState(run)); status.dataset.state = run.status;
+  meta.append(status, node('span', 'workspace-overview-caption', ` · ${shortTime(run.updatedAt)}`));
+  item.append(heading, meta);
+  list.append(item);
+}
+
+function renderWorkspaceOverview() {
+  const state = overviewState, groups = workspaceDecisionGroups(state.data);
+  const retained = Boolean(state.data && (Array.isArray(state.data.decisions) || Array.isArray(state.data.highlights)));
+  const updated = state.data?.updatedAt ? `记录更新 ${time(state.data.updatedAt)}。` : '';
+  const readAt = state.readAt ? `最后成功读取 ${time(state.readAt)}。` : updated;
+  text('workspace-overview-recorded', `${updated}${readAt}` || '尚无成功读取记录');
+  const message = workspaceBlocked ? `工作区连接已变化，保留上次信息，请重新打开看板。` : disconnected ? `连接断开，${retained ? '保留最后成功读取的信息（陈旧）。' : '事项数量未知。'}` : state.status === 'error' || state.stale ? `${state.error || '工作区信息暂不可读。'}${retained ? ' 保留最后成功读取的信息（陈旧）。' : ' 事项数量未知。'}` : state.missing ? '事项记录尚未接入，待确认数量未知。' : !state.data ? '正在读取工作区事项…' : state.error;
+  const status = byId('workspace-overview-status');
+  text(status, message); status.hidden = !message; status.dataset.state = workspaceBlocked || disconnected || state.stale || state.status === 'error' ? 'error' : state.status;
+  text('workspace-drawer-notice', message); byId('workspace-drawer-notice').hidden = !message;
+  byId('retry-workspace-overview').hidden = workspaceBlocked || !['error', 'stale', 'missing'].includes(state.status);
+  const group = groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
+  const items = groups[group];
+  text('workspace-decisions-heading', { open: groups.open?.length ? '待你确认' : '需要处理', history_review: '待核对', followUp: '后续执行' }[group]);
+  text('workspace-decisions-count', items?.length ? `${items.length} 项` : ''); byId('workspace-decisions-count').hidden = !items?.length;
+  text('workspace-decision-caption', group === 'history_review' ? `当前没有待回答事项；另有 ${items.length} 条历史待核对。` : '');
+  byId('workspace-decision-caption').hidden = group !== 'history_review';
+  const empty = byId('workspace-decision-empty');
+  text(empty, items === null ? '' : !items.length ? '当前没有待回答事项。' : ''); empty.hidden = items === null || Boolean(items.length);
+  updatePreviewList(byId('workspace-decision-list'), items?.slice(0, 3) ?? [], 'decision', decisionRow);
+  text('workspace-all-decisions', `全部事项 · ${groups.all === null ? '未知' : groups.all.length}`);
+  for (const [id, key] of [['workspace-snoozed-link', 'snoozed'], ['workspace-followup-link', 'followUp']]) {
+    byId(id).hidden = !groups[key]?.length || group === key;
+    text(id, `${DECISION_GROUPS[key]} · ${groups[key]?.length ?? 0}`);
+  }
+  renderWorkspaceHighlights(); renderOverviewReadingNotice(); renderWorkspaceDrawer();
+}
+
+function updatePreviewList(list, items, key, makeRow) {
+  const signature = JSON.stringify(items.map(item => [item, itemSubjects(item).map(subject => [subject.role, Boolean(subject.current)])]));
+  if (list.dataset.content === signature) return;
+  const previous = new Map([...list.children].map(item => [item.dataset[key], item]));
+  const rows = items.map(item => {
+    const id = key === 'decision' ? item.id : item.eventKey;
+    const content = JSON.stringify([item, itemSubjects(item).map(subject => [subject.role, Boolean(subject.current)])]), existing = previous.get(id);
+    if (existing?.dataset.content === content) return existing;
+    const row = makeRow(item); row.dataset.content = content; return row;
+  });
+  for (const item of [...list.children]) if (!rows.includes(item)) item.remove();
+  let position = list.firstElementChild;
+  for (const row of rows) { if (row !== position) list.insertBefore(row, position); position = row.nextElementSibling; }
+  list.dataset.content = signature;
+}
+
+function highlightEvidence(highlight, expanded = drawerState.expanded) {
+  const history = Array.isArray(highlight.history) ? highlight.history : [];
+  if (!highlight.evidence && !history.length) return null;
+  const details = workspaceDisclosure(`highlight:${highlight.eventKey}`, '查看依据', 'workspace-highlight-evidence', expanded);
+  details.append(node('p', '', highlight.evidence || '当前依据未记录。'), node('p', 'workspace-overview-caption', `事件时间 ${time(highlight.occurredAt)}`));
+  if (history.length) {
+    const changes = workspaceDisclosure(`highlight-history:${highlight.eventKey}`, `更正历史 · ${history.length} 版`, 'workspace-highlight-history', expanded);
+    const list = node('ol', 'workspace-history-list');
+    for (const entry of [...history].reverse()) {
+      const item = node('li', 'workspace-history-item');
+      item.append(
+        node('p', 'workspace-history-heading', `第 ${entry.revision} 版${entry.revision === highlight.revision ? ' · 当前记录' : ''}`),
+        node('p', '', entry.text),
+        eventDetails(entry),
+        node('p', '', `依据：${entry.evidence || '未记录'}`),
+        node('p', 'workspace-overview-caption', `事件时间 ${time(entry.occurredAt)}`),
+        node('p', 'workspace-overview-caption', `记录时间 ${time(entry.updatedAt)}`),
+        node('p', '', entry.correction ? `更正原因：${entry.correction}` : entry.revision === 1 ? '首次记录' : '更正原因：未记录')
+      );
+      list.append(item);
+    }
+    changes.append(list); details.append(changes);
+  }
+  return details;
+}
+
+function highlightRow(highlight) {
+  const row = node('li', 'workspace-highlight'); row.dataset.event = highlight.eventKey;
+  const button = node('button', 'workspace-preview-row'); button.type = 'button';
+  button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
+  button.append(subjectLine(highlight), node('strong', 'workspace-preview-title', highlight.text), eventDetails(highlight));
+  const footer = node('span', 'workspace-preview-footer');
+  footer.append(node('span', 'workspace-preview-meta', `更新于 ${shortTime(highlight.updatedAt)}${highlight.correction ? ' · 已更正' : ''}`), node('span', 'workspace-preview-action', '查看进展 ›'));
+  button.append(footer);
+  button.addEventListener('click', () => openWorkspaceHighlight(highlight.eventKey, button));
+  row.append(button); return row;
+}
+
+function renderWorkspaceHighlights() {
+  const highlights = overviewState.data?.highlights;
+  const message = !Array.isArray(highlights) ? '近期进展尚未成功读取。' : highlights.length ? '' : '最近 7 天暂无已记录进展，可查看执行记录。';
+  text('workspace-highlights-status', message); byId('workspace-highlights-status').hidden = !message;
+  updatePreviewList(byId('workspace-highlight-list'), highlights?.slice(0, 3) ?? [], 'event', highlightRow);
+  byId('workspace-show-highlights').hidden = !highlights || highlights.length <= 3;
+  text('workspace-show-highlights', `全部近期进展 · ${highlights?.length ?? 0}`);
+}
+
+function highlightDetail(highlight) {
+  const body = node('div', 'workspace-highlight-detail'); body.dataset.event = highlight.eventKey;
+  body.append(subjectLine(highlight), node('h3', 'workspace-detail-title', highlight.text), eventDetails(highlight));
+  if (highlight.evidence) body.append(node('p', 'workspace-detail-reason', highlight.evidence));
+  body.append(node('p', 'workspace-overview-caption', `${triggerLabel(highlight.trigger)} · 更新于 ${time(highlight.updatedAt)}`), subjectLinks(highlight));
+  if (highlight.correction) body.append(node('p', 'workspace-highlight-correction', `更正：${highlight.correction}`));
+  if (highlight.decisionId) {
+    const button = node('button', 'text-button', '查看关联事项'); button.type = 'button'; button.dataset.linkedItem = highlight.decisionId;
+    button.addEventListener('click', () => openWorkspaceDecision(highlight.decisionId, button)); body.append(button);
+  }
+  const evidence = highlightEvidence(highlight);
+  if (evidence) body.append(evidence);
+  const sources = workspaceDisclosure(`highlight-sources:${highlight.eventKey}`, '来源记录', 'workspace-highlight-sources');
+  for (const runId of new Set([highlight.runId, ...(highlight.sourceRunIds ?? [])])) sources.append(workspaceRunLink(runId));
+  body.append(sources); return body;
+}
+
+function applyWorkspaceUpdates() {
+  if (overviewState.pending) { overviewState.data = overviewState.pending; overviewState.pending = null; }
+}
+
+function showWorkspaceDrawer(trigger) {
+  const dialog = byId('workspace-drawer');
+  if (dialog.open) return;
+  drawerState.returnFocus = trigger ?? document.activeElement;
+  drawerState.pageScroll = window.scrollY;
+  document.documentElement.classList.add('drawer-open');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else {
+    dialog.setAttribute('open', '');
+    byId('workspace-drawer-backdrop').hidden = false;
+    document.querySelector('.app').setAttribute('inert', '');
+  }
+}
+
+function openWorkspaceList(kind = 'decisions', group = drawerState.group, trigger = document.activeElement) {
+  const changed = drawerState.listKind !== kind || drawerState.group !== group;
+  if (changed) { drawerState.listScroll = 0; drawerState.listFocus = null; }
+  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  drawerState.stack = [];
+  drawerState.page = 'list'; drawerState.listKind = kind; drawerState.group = group;
+  showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
+  byId('workspace-drawer-content').scrollTop = drawerState.listScroll;
+  (kind === 'decisions' ? byId('workspace-drawer-filter') : byId('workspace-drawer-title')).focus({ preventScroll: true });
+  renderOverviewReadingNotice();
+}
+
+function saveDrawerPage(trigger) {
+  if (!drawerState.page) return;
+  drawerState.stack.push({ page: drawerState.page, itemId: drawerState.itemId, scroll: byId('workspace-drawer-content').scrollTop, expanded: new Set(drawerState.expanded), trigger });
+}
+
+function openDrawerCandidate(candidate, trigger) {
+  saveDrawerPage(trigger);
+  drawerState.page = 'candidate'; drawerState.itemId = candidate.id;
+  renderWorkspaceDrawer();
+  byId('workspace-drawer-content').scrollTop = 0;
+  void openCandidate(candidate, 'drawer', trigger);
+}
+
+function returnDrawerPage() {
+  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  const previous = drawerState.stack.pop();
+  drawerState.page = previous?.page ?? 'list';
+  drawerState.itemId = previous?.itemId ?? null;
+  drawerState.expanded = previous?.expanded ?? new Set();
+  delete byId('workspace-drawer-detail').dataset.content;
+  renderWorkspaceDrawer();
+  byId('workspace-drawer-content').scrollTop = previous?.scroll ?? drawerState.listScroll;
+  let target = previous?.trigger ?? drawerState.listFocus;
+  if (target && !target.isConnected) {
+    if (target.dataset.subject) target = [...byId('workspace-drawer-detail').querySelectorAll('[data-subject]')].find(button => button.dataset.subject === target.dataset.subject);
+    else if (target.dataset.linkedItem) target = byId('workspace-drawer-detail').querySelector('[data-linked-item]');
+    else {
+      const row = target.closest('[data-decision], [data-event]');
+      target = [...byId('workspace-drawer-list').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event))?.querySelector('button');
+    }
+  }
+  (target?.isConnected ? target : byId('workspace-drawer-title')).focus({ preventScroll: true });
+}
+
+function openWorkspaceDetail(kind, id, trigger) {
+  if (drawerState.page !== kind || drawerState.itemId !== id) saveDrawerPage(trigger);
+  if (drawerState.page === 'list') {
+    drawerState.listScroll = byId('workspace-drawer-content').scrollTop;
+    drawerState.listFocus = trigger ?? document.activeElement;
+  } else if (!drawerState.page) {
+    drawerState.listKind = kind === 'decision' ? 'decisions' : 'highlights';
+  }
+  if (drawerState.page !== kind || drawerState.itemId !== id) {
+    drawerState.expanded.clear();
+    delete byId('workspace-drawer-detail').dataset.content;
+  }
+  drawerState.page = kind; drawerState.itemId = id;
+  showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
+  byId('workspace-drawer-content').scrollTop = 0;
+  byId('workspace-drawer-title').focus({ preventScroll: true });
+  renderOverviewReadingNotice();
+}
+
+function openWorkspaceDecision(id, trigger = document.activeElement) {
+  openWorkspaceDetail('decision', id, trigger);
+}
+
+function openWorkspaceHighlight(id, trigger = document.activeElement) {
+  openWorkspaceDetail('highlight', id, trigger);
+}
+
+function renderDecisionRoleGroups(list, items) {
+  const groups = new Map();
+  for (const item of items) {
+    const roles = [...new Set(itemSubjects(item).map(subject => subject.role).filter(Boolean))].sort();
+    const label = roles.length ? roles.join(' / ') : item.associationStatus === 'workspace' || item.context?.scope === 'workspace' ? '工作区事项' : '岗位待确认';
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(item);
+  }
+  const signature = JSON.stringify([...groups]);
+  if (list.dataset.content === signature) return;
+  const entries = [];
+  for (const [label, decisions] of groups) {
+    const group = node('li', 'decision-role-group'); group.dataset.roleGroup = label;
+    const heading = node('div', 'decision-role-heading');
+    heading.append(node('h3', '', label), node('span', '', `${decisions.length} 项`));
+    const rows = node('ul', 'workspace-decision-list'); rows.setAttribute('aria-label', `${label}的事项`);
+    rows.append(...decisions.map(decisionRow)); group.append(heading, rows); entries.push(group);
+  }
+  list.replaceChildren(...entries); list.dataset.content = signature;
+}
+
+function renderWorkspaceDrawer() {
+  if (!drawerState.page) return;
+  const state = drawerState, listView = byId('workspace-drawer-list-view'), detail = byId('workspace-drawer-detail');
+  const listing = state.page === 'list', following = state.page === 'following', candidate = state.page === 'candidate';
+  listView.hidden = !listing; detail.hidden = listing || following || candidate;
+  byId('following-picker').hidden = !following; byId('drawer-record-host').hidden = !candidate;
+  byId('workspace-drawer-back').hidden = listing || following;
+  text('workspace-drawer-back', { decision: '返回事项', highlight: '返回进展', list: '返回列表' }[state.stack.at(-1)?.page] ?? (state.listKind === 'highlights' ? '返回进展列表' : '返回事项列表'));
+  text('workspace-drawer-title', following ? '选择关注岗位' : candidate ? '人选资料' : listing ? state.listKind === 'decisions' ? '全部事项' : '近期进展' : state.page === 'decision' ? '事项详情' : '进展详情');
+  text('workspace-drawer-footer', following ? '个人关注与招聘状态分别保存。' : candidate ? '资料来自当前工作区。' : '在聊天中说明事项与决定；这里保留记录。');
+  if (following) { renderFollowingPicker(); return; }
+  if (candidate) return;
+  if (listing) {
+    const groups = workspaceDecisionGroups(overviewState.data), filter = byId('workspace-drawer-filter');
+    filter.hidden = state.listKind !== 'decisions';
+    options(filter, Object.entries(DECISION_GROUPS).map(([key, label]) => [key, `${label} · ${groups[key] === null ? '未知' : groups[key].length}`]), state.group);
+    const items = state.listKind === 'decisions' ? groups[state.group] : overviewState.data?.highlights ?? null;
+    text('workspace-drawer-empty', items === null ? '尚未成功读取，数量未知。' : !items.length ? '此分组暂无记录。' : ''); byId('workspace-drawer-empty').hidden = Boolean(items?.length);
+    const list = byId('workspace-drawer-list'), kind = state.listKind === 'decisions' ? 'decision' : 'event';
+    if (list.dataset.kind !== kind) { list.replaceChildren(); delete list.dataset.content; list.dataset.kind = kind; }
+    if (kind === 'decision') renderDecisionRoleGroups(list, items ?? []);
+    else updatePreviewList(list, items ?? [], kind, highlightRow);
+    return;
+  }
+  const item = state.page === 'decision' ? overviewState.data?.decisions?.find(value => value.id === state.itemId) : overviewState.data?.highlights?.find(value => value.eventKey === state.itemId);
+  const signature = JSON.stringify([state.page, state.itemId, item, item && itemSubjects(item).map(subject => [subject.role, Boolean(subject.current)])]);
+  if (detail.dataset.content !== signature) {
+    const scroll = byId('workspace-drawer-content').scrollTop;
+    detail.replaceChildren(item ? state.page === 'decision' ? decisionDetail(item) : highlightDetail(item) : node('p', 'workspace-overview-note', '暂未读到关联记录；请刷新后再查看。'));
+    detail.dataset.content = signature;
+    byId('workspace-drawer-content').scrollTop = scroll;
+  }
+}
+
+function closeWorkspaceDrawer(restoreFocus = true) {
+  if (!drawerState.page) return;
+  const dialog = byId('workspace-drawer');
+  if (drawerState.page === 'list') drawerState.listScroll = byId('workspace-drawer-content').scrollTop;
+  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  drawerState.page = null; drawerState.stack = [];
+  byId('following-picker').hidden = true;
+  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'false');
+  if (dialog.open && typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
+  byId('workspace-drawer-backdrop').hidden = true;
+  document.querySelector('.app').removeAttribute('inert');
+  document.documentElement.classList.remove('drawer-open');
+  if (restoreFocus) {
+    let target = drawerState.returnFocus;
+    if (target && !target.isConnected) {
+      const row = target.closest('[data-decision], [data-event]');
+      const replacement = [...byId('assistant').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event));
+      target = replacement?.querySelector('button');
+    }
+    (target?.isConnected && !target.closest('[hidden]') && visibleWorkbenchTarget(target) ? target : workspaceNavTargets[activeView]).focus({ preventScroll: true });
+    if (window.scrollY !== drawerState.pageScroll) window.scrollTo(0, drawerState.pageScroll);
+  }
+  renderWorkspaceTasks(); renderOverviewReadingNotice();
+}
+
+byId('workspace-drawer-filter').addEventListener('change', event => {
+  drawerState.group = event.target.value; drawerState.listScroll = 0; drawerState.listFocus = null;
+  renderWorkspaceDrawer(); byId('workspace-drawer-content').scrollTop = 0;
+});
+byId('workspace-drawer-back').addEventListener('click', returnDrawerPage);
+byId('workspace-drawer-close').addEventListener('click', () => closeWorkspaceDrawer());
+byId('workspace-drawer-backdrop').addEventListener('click', () => closeWorkspaceDrawer());
+byId('workspace-drawer').addEventListener('cancel', event => { event.preventDefault(); closeWorkspaceDrawer(); });
+byId('workspace-drawer').addEventListener('close', () => closeWorkspaceDrawer());
+byId('workspace-drawer').addEventListener('click', event => {
+  if (event.target !== event.currentTarget) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeWorkspaceDrawer();
+});
+byId('workspace-drawer').addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); closeWorkspaceDrawer(); return; }
+  if (event.key !== 'Tab') return;
+  const available = [...event.currentTarget.querySelectorAll('button, a[href], input, select, summary, [tabindex="0"]')].filter(element => {
+    if (element.disabled || element.closest('[hidden]')) return false;
+    for (let parent = element.parentElement; parent && parent !== event.currentTarget; parent = parent.parentElement) {
+      if (parent.matches('details:not([open])') && !parent.querySelector(':scope > summary')?.contains(element)) return false;
+    }
+    return true;
+  });
+  const first = available[0], last = available.at(-1), active = document.activeElement;
+  if (!first) { event.preventDefault(); event.currentTarget.focus(); }
+  else if (event.shiftKey && (active === first || !available.includes(active))) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && (active === last || !available.includes(active))) { event.preventDefault(); first.focus(); }
+});
+
+function renderLinkedDecisions() {
+  const data = overviewState.pending ?? overviewState.data;
+  for (const element of document.querySelectorAll('[data-linked-decision]')) {
+    const item = data?.decisions?.find(value => value.id === element.dataset.linkedDecision);
+    const status = item ? `${DECISION_STATES[item.effectiveState]}${hasFollowUp(item) ? ` · 后续${ACTION_STATES[item.followUp.status]}` : ''}` : '当前状态尚未读取';
+    text(element.querySelector('p'), `关联事项现在：${status}${overviewState.stale || disconnected || workspaceBlocked ? '（最后读取记录）' : ''}`);
+  }
+}
+
+byId('workspace-all-decisions').addEventListener('click', event => openWorkspaceList('decisions', 'all', event.currentTarget));
+byId('workspace-followup-link').addEventListener('click', event => openWorkspaceList('decisions', 'followUp', event.currentTarget));
+byId('workspace-snoozed-link').addEventListener('click', event => openWorkspaceList('decisions', 'snoozed', event.currentTarget));
+byId('workspace-show-highlights').addEventListener('click', event => openWorkspaceList('highlights', drawerState.group, event.currentTarget));
+byId('workspace-highlight-history').addEventListener('click', () => navigateWorkspace('tasks'));
+for (const id of ['workspace-apply-updates', 'workspace-drawer-update']) byId(id).addEventListener('click', () => {
+  applyWorkspaceUpdates(); renderWorkspaceOverview(); renderLinkedDecisions();
+  if (drawerState.page) byId('workspace-drawer-title').focus({ preventScroll: true });
+});
+byId('workspace-return-overview').addEventListener('click', () => {
+  const runId = overviewState.pendingRunId;
+  overviewState.pendingRunId = null;
+  if (runId) openWorkspaceRun(runId);
+  renderOverviewReadingNotice();
+});
+
 function readTaskURL() {
   const id = new URL(window.location.href).searchParams.get('run');
   selectionMessage = id !== null && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id) ? '任务链接格式无效，已恢复实时跟随；也可从列表选择任务。' : '';
@@ -488,6 +1126,8 @@ function writeTaskURL() {
 }
 
 taskSelection = readTaskURL();
+setWorkspaceNavTarget(taskSelection.mode === 'pinned' ? 'tasks' : 'overview');
+if (activeView === 'tasks') byId('execution-records').open = true;
 
 function renderPreferenceNotice() {
   const message = snapshot?.workspaceKey ? preferenceMessage : '尚未取得工作区标识，岗位偏好仅在本页保留。';
@@ -583,7 +1223,7 @@ function renderWorkspaceFollowing() {
 function chooseWorkspaceRole(name) {
   if (byId('candidate-query').value) clearCandidateSearch(false);
   if (candidateOrigin?.source === 'stage') closeCandidate();
-  rolePreferences.scope = 'following'; rolePreferences.role = name;
+  rolePreferences.scope = 'following'; rolePreferences.role = name; roleRangeMessage = '';
   persistRolePreferences();
   if (snapshot) { const view = renderRoleControls(); renderStages(true, view); }
   setWorkspaceNavTarget('roles');
@@ -591,16 +1231,11 @@ function chooseWorkspaceRole(name) {
 }
 
 function toggleFollowingPicker(trigger) {
-  const picker = byId('following-picker');
-  const opening = picker.hidden || !visibleWorkbenchTarget(picker);
-  if (opening && byId('candidate-query').value) clearCandidateSearch(false);
-  picker.hidden = !opening;
-  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', String(opening));
-  if (opening) {
-    followingPickerTrigger = trigger;
-    renderFollowingPicker();
-    focusWorkbenchTarget(byId('following-query'), 'nearest');
-  }
+  if (drawerState.page === 'following') { closeWorkspaceDrawer(); return; }
+  drawerState.page = 'following'; drawerState.stack = [];
+  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'true');
+  showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
+  byId('following-query').focus({ preventScroll: true });
 }
 
 function renderFollowingPicker() {
@@ -609,7 +1244,7 @@ function renderFollowingPicker() {
   const names = [...new Set([...snapshot.roles.map(role => role.name), ...rolePreferences.following])];
   const values = names.filter(name => name.toLocaleLowerCase().includes(query));
   const list = byId('following-list');
-  const signature = JSON.stringify([values, rolePreferences.following]);
+  const signature = JSON.stringify([values, rolePreferences.following, snapshot.roles]);
   if (list.dataset.content === signature) return;
   list.dataset.content = signature;
   const items = values.map(name => {
@@ -618,12 +1253,17 @@ function renderFollowingPicker() {
     checkbox.dataset.role = name;
     checkbox.addEventListener('change', () => {
       rolePreferences.following = checkbox.checked ? [...rolePreferences.following, name] : rolePreferences.following.filter(value => value !== name);
-      list.dataset.content = JSON.stringify([values, rolePreferences.following]);
+      list.dataset.content = JSON.stringify([values, rolePreferences.following, snapshot.roles]);
+      if (rolePreferences.scope === 'following' && rolePreferences.role && !rolePreferences.following.includes(rolePreferences.role)) {
+        roleRangeMessage = `已取消关注“${rolePreferences.role}”，显示我的关注汇总。`;
+        rolePreferences.role = '';
+      }
       persistRolePreferences();
       renderRoleControls(); renderStages(true);
     });
     const title = node('span', '', name);
-    if (!snapshot.roles.some(role => role.name === name)) title.append(node('span', 'muted', ' · 未在当前源中'));
+    const role = snapshot.roles.find(role => role.name === name);
+    title.append(node('span', 'following-role-state', role ? role.status || '状态待确认' : '未在当前源中'));
     label.append(checkbox, title); item.append(label); return item;
   });
   if (!items.length) items.push(node('li', 'picker-empty', names.length ? '没有匹配的岗位。' : '当前没有可选择的岗位。'));
@@ -632,6 +1272,32 @@ function renderFollowingPicker() {
 
 function renderRoleControls() {
   const view = currentRoleView(), scopeView = byId('role-query').value.trim() ? currentRoleView('') : view;
+  text('role-range-message', roleRangeMessage); byId('role-range-message').hidden = !roleRangeMessage;
+  const unknown = snapshot.roles.filter(unknownRole);
+  text('unknown-roles-link', `另有 ${unknown.length} 个岗位状态待确认`);
+  byId('unknown-roles-link').hidden = !unknown.length;
+  const roleCountsKnown = !disconnected && !workspaceBlocked && snapshot.sources.context.status === 'ok' && snapshot.sources.ledger.status === 'ok' && !['stale', 'error'].includes(snapshot.sources.config?.status);
+  const allActive = roleCountsKnown && snapshot.roles.length > 0 && snapshot.roles.every(role => role.status === '在招');
+  text('role-all-active', allActive ? '当前全部岗位均在招' : ''); byId('role-all-active').hidden = !allActive;
+  for (const button of byId('role-scopes').querySelectorAll('button')) {
+    const count = selectRoles(snapshot, { scope: button.dataset.scope, following: rolePreferences.following }).roles.length;
+    text(button, `${ROLE_SCOPES.find(scope => scope.id === button.dataset.scope).label} · ${roleCountsKnown ? count : '未知'}`);
+  }
+  const unknownList = byId('unknown-role-list');
+  const unknownSignature = JSON.stringify(unknown);
+  if (unknownList.dataset.content !== unknownSignature) {
+    unknownList.replaceChildren(...unknown.map(role => {
+      const row = node('li'), button = node('button', 'text-button', role.name); button.type = 'button';
+      button.addEventListener('click', () => {
+        rolePreferences.scope = 'all'; rolePreferences.role = role.name; byId('role-query').value = '';
+        persistRolePreferences(); renderRoleControls(); renderStages(true);
+        roleSelect.focus({ preventScroll: true });
+      });
+      row.append(button, node('span', 'scope-note', role.configured ? `状态待确认${role.status ? ` · 原值：${role.status}` : ''}` : '仅见于台账，尚未配置岗位'));
+      return row;
+    }));
+    unknownList.dataset.content = unknownSignature;
+  }
   const scopeLabel = ROLE_SCOPES.find(scope => scope.id === rolePreferences.scope).label;
   for (const button of byId('role-scopes').querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.scope === rolePreferences.scope));
   const values = [['', scopeSummary(rolePreferences.scope)], ...view.roles.map(role => [role.name, `${role.name} · ${role.status || '状态未知'}`])];
@@ -652,7 +1318,7 @@ function renderRoleControls() {
   byId('role-query-note').hidden = !roleQuery;
   const role = view.selectedRole;
   const context = snapshot.sources.context.status;
-  const note = context !== 'ok' ? `未读取岗位配置${context === 'stale' ? '；保留上次配置（陈旧）' : '；岗位状态未知'}` : rolePreferences.role ? role?.configured ? `岗位状态：${role.status || '未填写'}${role.priority ? ` · 优先级 ${role.priority}` : ''}` : '仅见于台账，未配置岗位' : rolePreferences.scope === 'active' ? '在招与状态未知岗位的候选分布' : rolePreferences.scope === 'following' ? '关注岗位的候选分布' : '全部岗位的候选分布，含历史岗位';
+  const note = context !== 'ok' ? `未读取岗位配置${context === 'stale' ? '；保留上次配置（陈旧）' : '；岗位状态未知'}` : rolePreferences.role ? role?.configured ? `岗位状态：${role.status || '未填写'}${role.priority ? ` · 优先级 ${role.priority}` : ''}` : '仅见于台账，未配置岗位' : rolePreferences.scope === 'active' ? '明确在招岗位的候选分布' : rolePreferences.scope === 'following' ? '关注岗位的候选分布' : '全部岗位的候选分布，含历史岗位';
   text('role-note', `${note} · ${view.total === null ? '记录数未知' : `${view.total} 条候选记录`}`);
   renderFollowingPicker();
   renderWorkspaceFollowing();
@@ -739,6 +1405,7 @@ function renderCandidateSearch() {
 }
 
 function changeCandidateSearch() {
+  setWorkspaceNavTarget('roles');
   candidateSearchLimit = 20;
   searchConfirmations = null;
   if (candidateOrigin) closeCandidate();
@@ -783,17 +1450,18 @@ async function openCandidate(candidate, origin = 'stage', trigger = null) {
   const pending = ++recordRequest;
   documentRequest++; selectedCandidateId = candidate.id;
   candidateOrigin = { source: origin, trigger, candidateId: candidate.id, searchPosition: origin === 'search' ? captureSearchPosition(trigger) : null };
-  const host = { decisions: 'decision-record-host', results: 'run-record-host', activity: 'activity-record-host', stage: 'stage-record-host', search: 'search-record-host' }[origin];
+  const host = { decisions: 'decision-record-host', results: 'run-record-host', activity: 'activity-record-host', stage: 'stage-record-host', search: 'search-record-host', drawer: 'drawer-record-host' }[origin];
   byId(host).append(byId('candidate-record'));
   byId('candidate-list').hidden = origin === 'stage';
   byId('candidate-search-content').hidden = searchConfirmations !== null || origin === 'search';
   byId('results-content').hidden = origin === 'results';
   if (origin === 'decisions') byId('decisions-content').hidden = true;
   byId('candidate-record').hidden = false;
-  byId('back-to-list').textContent = { decisions: '返回确认名单', results: '返回处理名单', activity: '返回近期流水', stage: '返回名单', search: '返回搜索结果' }[origin];
+  byId('back-to-list').textContent = { decisions: '返回确认名单', results: '返回处理名单', activity: '返回近期流水', stage: '返回名单', search: '返回搜索结果', drawer: '返回事项或进展' }[origin];
+  byId('back-to-list').hidden = origin === 'drawer';
   const content = byId('record-content');
   content.replaceChildren(node('p', 'muted', '正在读取候选资料…'));
-  byId('back-to-list').focus({ preventScroll: true });
+  byId(origin === 'drawer' ? 'workspace-drawer-title' : 'back-to-list').focus({ preventScroll: true });
   if (origin === 'search') byId('back-to-list').scrollIntoView({ block: 'nearest' });
   try {
     const detail = await jsonRequest(`/api/candidates/detail?${new URLSearchParams({ candidate: candidate.id })}`);
@@ -1095,6 +1763,12 @@ function receiptView(receipt, run, showNext = true) {
   if (showNext) view.append(node('p', 'result-next', `下一步：${receipt.nextAction ?? '未记录'}`));
   const timestamp = node('time', 'result-time', time(receipt.updatedAt)); timestamp.dateTime = receipt.updatedAt;
   view.append(timestamp);
+  if (receipt.decisionId) {
+    const linked = node('div', 'linked-decision'); linked.dataset.linkedDecision = receipt.decisionId;
+    const button = node('button', 'text-button', '查看关联事项'); button.type = 'button';
+    button.addEventListener('click', () => openWorkspaceDecision(receipt.decisionId));
+    linked.append(node('p', '', '关联事项现在：正在读取'), button); view.append(linked);
+  }
   return view;
 }
 
@@ -1230,26 +1904,115 @@ function confirmationView(run) {
   return { ...base, kind: 'pending', fresh: true, people };
 }
 
+const freshRunHighlights = runId => ({ runId, data: undefined, revision: null, status: 'idle', error: '', readAt: null, pending: null, expanded: new Set() });
+let runHighlightsState = freshRunHighlights(null);
+
+function resetRunHighlights(runId) {
+  runHighlightsRequest++; runHighlightsAbort?.abort();
+  runHighlightsState = freshRunHighlights(runId);
+}
+
+async function loadRunHighlights() {
+  const run = selectedRun();
+  if (!run || !byId('execution-records').open || document.hidden || !pageActive || disconnected || workspaceBlocked || !expectedWorkspaceKey) return;
+  if (runHighlightsState.runId !== run.id) resetRunHighlights(run.id);
+  if (runHighlightsState.status === 'loading') return;
+  const pending = ++runHighlightsRequest, workspaceKey = expectedWorkspaceKey;
+  runHighlightsAbort = new AbortController();
+  runHighlightsState.status = 'loading';
+  renderRunHighlights(run);
+  try {
+    const response = await fetch(`/api/runs/highlights?${new URLSearchParams({ run: run.id })}`, { cache: 'no-store', signal: AbortSignal.any([runHighlightsAbort.signal, AbortSignal.timeout(10000)]), headers: workspaceHeaders() });
+    if (response.status === 409) { blockWorkspace(); return; }
+    const raw = await response.text();
+    let payload = null;
+    try { payload = raw ? JSON.parse(raw) : null; } catch { throw new Error('本轮重点响应格式不兼容'); }
+    if (!response.ok) {
+      if (payload?.error?.code === 'WORKSPACE_MISMATCH') blockWorkspace();
+      throw new Error(payload?.error?.message ?? (response.status === 404 ? '本机看板尚未提供本轮重点接口' : '本轮重点读取失败'));
+    }
+    if (!payload || payload.runId !== run.id || (payload.highlights !== null && (!Array.isArray(payload.highlights) || !payload.highlights.every(isHighlight)))) throw new Error('本轮重点响应格式不兼容');
+    if (pending !== runHighlightsRequest || workspaceKey !== expectedWorkspaceKey || workspaceBlocked || selectedRun()?.id !== run.id) return;
+    const state = runHighlightsState;
+    const reading = state.expanded.size > 0 || byId('run-highlight-list').contains(document.activeElement);
+    if (state.data !== undefined && reading && JSON.stringify(state.data) !== JSON.stringify(payload.highlights)) state.pending = { highlights: payload.highlights };
+    else { state.data = payload.highlights; state.pending = null; }
+    state.revision = payload.revision ?? null; state.status = 'ready'; state.error = ''; state.readAt = new Date().toISOString();
+    state.trigger = payload.trigger; state.summaryState = payload.summaryState; state.closingSummary = payload.closingSummary;
+  } catch (error) {
+    if (pending !== runHighlightsRequest || workspaceBlocked || selectedRun()?.id !== run.id) return;
+    runHighlightsState.status = 'error'; runHighlightsState.error = error.message;
+  }
+  if (pending === runHighlightsRequest) { renderRunHighlights(selectedRun()); renderLinkedDecisions(); }
+}
+
+function renderRunHighlights(run) {
+  const section = byId('run-highlights'), list = byId('run-highlight-list'), status = byId('run-highlights-status'), retry = byId('retry-run-highlights');
+  section.hidden = !run;
+  if (!run) return;
+  const state = runHighlightsState, retained = state.data !== undefined;
+  const stale = workspaceBlocked || disconnected || state.status === 'error';
+  const readAt = stale && state.readAt ? ` 最后读取 ${time(state.readAt)}。` : '';
+  const summary = state.summaryState ?? run.summaryState;
+  const message = workspaceBlocked || disconnected ? retained ? '连接中断，以下保留最后成功读取的本轮重点。' : '连接中断，本轮重点未知。' : state.status === 'loading' ? (retained ? '正在更新本轮重点；以下保留上次记录。' : '正在读取本轮重点…') : state.status === 'error' ? `本轮重点读取失败：${state.error}${retained ? '；以下保留上次记录。' : '；可重试。'}` : !retained ? '展开执行记录后读取本轮重点。' : state.data === null ? '此任务未记录重点（尚未接入重点记录）。' : state.data.length ? `本轮记录 ${state.data.length} 条重点 · ${triggerLabel(state.trigger ?? run.trigger)}` : summary === 'no_change' ? '本轮明确记录无重要变化。' : '本轮尚未写入重点。';
+  text(status, `${message}${readAt}${state.pending ? ' 本轮重点已有更新，当前依据保持原位。' : ''}`); status.hidden = false;
+  status.dataset.state = stale ? 'error' : state.status;
+  retry.hidden = workspaceBlocked || state.status !== 'error';
+  byId('apply-run-highlights').hidden = state.pending === null;
+  const signature = JSON.stringify([run.id, state.data]);
+  if (list.dataset.content === signature) return;
+  const previous = new Map([...list.children].map(item => [`${item.dataset.run}:${item.dataset.event}`, item]));
+  const items = (state.data ?? []).map(highlight => {
+    const content = JSON.stringify(highlight), existing = previous.get(`${run.id}:${highlight.eventKey}`);
+    if (existing?.dataset.content === content) return existing;
+    const item = node('li', 'workspace-highlight'); item.dataset.run = run.id; item.dataset.event = highlight.eventKey; item.dataset.content = content;
+    item.append(subjectLine(highlight), node('p', 'workspace-highlight-text', highlight.text), eventDetails(highlight));
+    const meta = node('p', 'workspace-overview-caption', `事件时间 ${time(highlight.occurredAt)}`);
+    if (highlight.correction) meta.append(node('span', 'workspace-highlight-correction', ` · 更正：${highlight.correction}`));
+    item.append(meta);
+    const evidence = highlightEvidence(highlight, state.expanded);
+    if (evidence) item.append(evidence);
+    if (highlight.decisionId) {
+      const linked = node('div', 'linked-decision'); linked.dataset.linkedDecision = highlight.decisionId;
+      const button = node('button', 'text-button', '查看关联事项'); button.type = 'button';
+      button.addEventListener('click', () => openWorkspaceDecision(highlight.decisionId));
+      linked.append(node('p', '', '关联事项现在：正在读取'), button); item.append(linked);
+    }
+    return item;
+  });
+  for (const item of [...list.children]) if (!items.includes(item)) item.remove();
+  let position = list.firstElementChild;
+  for (const item of items) { if (item !== position) list.insertBefore(item, position); position = item.nextElementSibling; }
+  list.dataset.content = signature;
+}
+
+byId('retry-run-highlights').addEventListener('click', () => { void loadRunHighlights(); });
+byId('apply-run-highlights').addEventListener('click', () => {
+  if (runHighlightsState.pending === null) return;
+  runHighlightsState.data = runHighlightsState.pending.highlights; runHighlightsState.pending = null;
+  renderRunHighlights(selectedRun()); renderLinkedDecisions();
+});
+
 function renderConfirmations(run, view) {
   const section = byId('confirmations'), heading = byId('decisions-heading'), count = byId('decisions-count');
   const scope = byId('decisions-scope'), status = byId('decisions-status'), summary = byId('decisions-summary');
   const summaryText = byId('decisions-summary-text'), viewButton = byId('view-decisions-records');
   const content = byId('decisions-content'), more = byId('show-more-decisions'), retry = byId('retry-decisions');
-  const searching = byId('candidate-query').value.trim().length > 0;
+  const searching = activeView === 'roles' && byId('candidate-query').value.trim().length > 0;
   const listHadFocus = byId('decision-list').contains(document.activeElement);
   const counted = Number.isSafeInteger(view.decisions) && view.decisions >= 0;
-  const active = view.fresh && counted && view.decisions > 0 && ['pending', 'loading', 'error'].includes(view.kind);
+  const retained = resultsState.runId === run?.id && ['error', 'loading'].includes(view.kind) && Array.isArray(resultsState.data);
+  const active = (view.fresh || retained) && counted && view.decisions > 0 && ['pending', 'loading', 'error'].includes(view.kind);
   const collapsed = searching && searchConfirmations === null && Boolean(run);
-  const people = view.people ?? [];
+  const people = view.people ?? (retained ? resultsState.data.filter(person => person.receipts.some(receipt => receipt.attention === 'decision')) : []);
   section.dataset.state = view.kind;
-  byId('assistant').dataset.confirmationState = view.kind;
-  text('decisions-heading-label', active ? `${view.round}需确认` : '确认事项');
+  text('decisions-heading-label', active ? `${view.round}当时的确认记录` : '当时的确认记录');
   count.hidden = !active || collapsed;
   text(count, counted ? String(view.decisions) : '');
   count.setAttribute('aria-label', `${view.round}需确认 ${counted ? view.decisions : '未知'} 人`);
   scope.hidden = !active || collapsed;
   const message = view.kind === 'error' ? view.message : view.kind === 'loading' ? view.message ?? `正在${resultsState.data === undefined ? '读取' : '更新'}${view.round}确认名单…` : '';
-  text(status, message);
+  text(status, `${message}${retained ? ` 以下保留最后成功读取的确认记录${resultsState.updatedAt ? ` · 收据更新 ${time(resultsState.updatedAt)}` : ''}。` : ''}`);
   status.hidden = !message || (collapsed && view.kind !== 'error');
   status.dataset.state = view.kind === 'error' ? 'error' : view.kind;
   retry.hidden = !(view.kind === 'error' && view.fresh);
@@ -1260,7 +2023,7 @@ function renderConfirmations(run, view) {
   viewButton.setAttribute('aria-controls', collapsed && active ? 'decisions-content' : 'execution-records');
   viewButton.setAttribute('aria-expanded', String(collapsed && active ? false : byId('execution-records').open));
   viewButton.hidden = !showSummary || (view.kind === 'unknown' && !run);
-  const cards = view.kind === 'pending' && (!searching || searchConfirmations !== null) && candidateOrigin?.source !== 'decisions';
+  const cards = (view.kind === 'pending' || retained) && (!searching || searchConfirmations !== null) && candidateOrigin?.source !== 'decisions';
   content.hidden = !cards;
   more.hidden = !cards || people.length <= DECISION_PREVIEW;
   text(more, resultsState.showAllDecisions ? '收起其余人选' : `查看其余 ${Math.max(0, people.length - DECISION_PREVIEW)} 人`);
@@ -1303,6 +2066,9 @@ function renderRunResults(run) {
   if (state.status === 'loading' && (!run || state.requestedVersion !== resultVersion(run))) { resultsRequest++; state.status = 'idle'; state.requestedVersion = null; }
   const view = confirmationView(run);
   renderConfirmations(run, view);
+  renderLinkedDecisions();
+  text('run-summary-state', run ? `${triggerLabel(run.trigger)} · ${runSummaryLabel(run)}` : '任务来源与重点状态尚未读取。');
+  text('run-closing-summary', run?.closingSummary ?? ''); byId('run-closing-summary').hidden = !run?.closingSummary;
   const counts = run?.resultSummary;
   text('run-result-total', counts == null ? '未记录' : `${counts.total} 人`);
   text('run-result-decisions', view.decisions === null ? '未记录' : `${view.decisions} 人`);
@@ -1321,8 +2087,9 @@ function renderRunResults(run) {
     byId('result-list').hidden = !Array.isArray(state.data);
     byId('result-list').dataset.state = ['loading', 'error'].includes(state.status) ? 'stale' : 'ready';
     renderResultList(run);
+    renderLinkedDecisions();
   }
-  if (!stale && (state.open || (view.decisions ?? 0) > 0) && state.requestedVersion !== resultVersion(run)) void loadRunResults();
+  if (!stale && (state.open || (byId('execution-records').open && (view.decisions ?? 0) > 0)) && state.requestedVersion !== resultVersion(run)) void loadRunResults();
 }
 
 function openRunResults(filter) {
@@ -1334,15 +2101,29 @@ function openRunResults(filter) {
   renderRunResults(run);
 }
 
+function runObjectLabel(run) {
+  if (run.role) return run.role;
+  const linked = [...(overviewState.data?.highlights ?? []).filter(item => item.runId === run.id || item.sourceRunIds?.includes(run.id)), ...(overviewState.data?.decisions ?? []).filter(item => item.sources.some(source => source.runId === run.id))];
+  const subjects = linked.flatMap(itemSubjects), people = [...new Set(subjects.map(subject => subject.name).filter(Boolean))], roles = [...new Set(subjects.map(subject => subject.role).filter(Boolean))];
+  if (people.length === 1) return people[0];
+  return roles.length === 1 ? roles[0] : roles.length > 1 ? `已记录 ${roles.length} 个岗位` : '';
+}
+
 function renderRuns() {
   const runs = snapshot.runs === null ? null : [...snapshot.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  const hold = Boolean(layoutState.editing || selectedCandidateId || selectedStage || resultsState.open || resultsState.decisionExpanded.size || resultsState.showAllDecisions || byId('candidate-query').value.trim() || byId('role-query').value.trim() || byId('role-search-disclosure').open || byId('execution-records').open || !byId('following-picker').hidden || !byId('role-manager').hidden || byId('steps-detail').open || document.activeElement?.closest('.workbench-search, #workspace-nav, .search-section, #role-browser, #confirmations, .task-section'));
+  const hold = Boolean(overviewReading() || byId('candidate-query').value.trim() || (activeView === 'roles' && (byId('role-query').value.trim() || byId('role-search-disclosure').open || !byId('following-picker').hidden)) || (activeView === 'tasks' && (resultsState.open || resultsState.decisionExpanded.size || resultsState.showAllDecisions || byId('steps-detail').open)));
   const choice = selectTask(runs, taskSelection, hold);
   if (hold && taskSelection.mode === 'live' && taskSelection.runId && choice.newerRunId) choice.selection = { mode: 'pinned', runId: taskSelection.runId };
   taskSelection = choice.selection;
   const run = choice.run, selectedRunId = taskSelection.runId;
-  const labels = (runs ?? []).map(value => `${value.label}${value.role ? ` · ${value.role}` : ''}`);
-  const values = (runs ?? []).map((value, index) => [value.id, `${labels[index]} · ${shortTime(value.createdAt)}${labels.filter(label => label === labels[index]).length > 1 ? ` · ${value.id}` : ''}`]);
+  const labels = (runs ?? []).map(value => [value.label, shortTime(value.createdAt), runObjectLabel(value)].filter(Boolean).join(' · '));
+  const totals = new Map(), seen = new Map();
+  for (const label of labels) totals.set(label, (totals.get(label) ?? 0) + 1);
+  const values = (runs ?? []).map((value, index) => {
+    const label = labels[index], ordinal = (seen.get(label) ?? 0) + 1;
+    seen.set(label, ordinal);
+    return [value.id, `${label}${totals.get(label) > 1 ? ` · 第 ${ordinal} 次` : ''}`];
+  });
   if (selectedRunId && !run) values.unshift([selectedRunId, runs === null ? '所选任务暂不可读' : '所选任务记录已移除']);
   if (!values.length) values.push(['', runs === null ? '进度读取失败' : '尚无任务进度记录']);
   options(runSelect, values, selectedRunId ?? ''); runSelect.disabled = !runs?.length;
@@ -1350,11 +2131,13 @@ function renderRuns() {
   byId('latest-run').hidden = taskSelection.mode === 'live' && !choice.newerRunId;
   const notice = [selectionMessage, choice.newerRunId ? '新任务可查看；当前记录保持选定。' : taskSelection.mode === 'pinned' ? '已固定所选任务，自动读取该任务的更新。' : document.hidden ? '后台低频读取；返回后恢复跟随。' : '自动跟随最新创建的任务。'].filter(Boolean).join(' ');
   text('selection-note', notice); byId('selection-note').hidden = false; writeTaskURL();
-  if (resultsState.runId !== selectedRunId) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selectedRunId); resetActivity(selectedRunId); byId('steps-detail').open = false; }
+  if (resultsState.runId !== selectedRunId) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selectedRunId); resetActivity(selectedRunId); resetRunHighlights(selectedRunId); byId('steps-detail').open = false; }
   const transition = run ? JSON.stringify([run.status, run.steps.map(step => [step.id, step.status]), run.resultSummary?.revision ?? 0]) : null;
   if (run && displayedRun?.id === run.id && displayedRun.signature !== transition) flash(byId('task-card'));
   displayedRun = run ? { id: run.id, signature: transition } : null;
   renderRunResults(run); syncActivity(run); byId('run-activity').hidden = !run;
+  renderRunHighlights(run);
+  if (byId('execution-records').open && run && (runHighlightsState.status === 'idle' || (runHighlightsState.status === 'ready' && run.highlightsRevision !== undefined && runHighlightsState.revision !== run.highlightsRevision))) void loadRunHighlights();
   text('run-id', run?.id ?? selectedRunId ?? '—'); text('run-owner', run?.ownerSessionId ?? '未绑定');
   byId('progress-area').hidden = !run; byId('workflow-name').hidden = !run;
   text('execution-reason', run?.reason ?? '');
@@ -1502,6 +2285,7 @@ function render() {
     diagnostics.replaceChildren(node('p', '', `兼容配置：${configLabel}${config.updatedAt ? ` · ${time(config.updatedAt)}` : ''}`), ...snapshot.diagnostics.map(item => node('p', '', item.message)), node('p', '', '按姓名＋原岗位计数，同人不同原岗位不自动合并。'));
   }
   renderRuns(); renderStages(false, view); renderCandidateSearch();
+  renderWorkspaceTasks(); renderWorkspaceOverview(); renderLinkedDecisions();
 }
 
 byId('back-to-list').addEventListener('click', () => {
@@ -1522,12 +2306,30 @@ for (const scope of ROLE_SCOPES) {
   button.addEventListener('click', () => {
     if (rolePreferences.scope === scope.id) return;
     if (candidateOrigin?.source === 'stage') closeCandidate();
-    rolePreferences.scope = scope.id; rolePreferences.role = '';
+    const previousRole = rolePreferences.role;
+    const available = snapshot ? selectRoles(snapshot, { scope: scope.id, following: rolePreferences.following }).roles : [];
+    rolePreferences.scope = scope.id;
+    roleRangeMessage = '';
+    if (previousRole && !available.some(role => role.name === previousRole)) {
+      rolePreferences.role = '';
+      roleRangeMessage = `“${previousRole}”不在${scope.label}范围，已显示${scope.label}汇总。`;
+    }
+    byId('unknown-roles').hidden = true;
     persistRolePreferences();
     if (snapshot) { const view = renderRoleControls(); renderStages(true, view); }
   });
   byId('role-scopes').append(button);
 }
+byId('unknown-roles-link').addEventListener('click', () => {
+  if (candidateOrigin?.source === 'stage') closeCandidate();
+  rolePreferences.scope = 'all'; rolePreferences.role = ''; roleRangeMessage = '';
+  byId('role-query').value = ''; byId('unknown-roles').hidden = false;
+  persistRolePreferences(); renderRoleControls(); renderStages(true);
+  focusWorkbenchTarget(byId('unknown-roles'), 'nearest');
+});
+byId('close-unknown-roles').addEventListener('click', () => {
+  byId('unknown-roles').hidden = true; byId('unknown-roles-link').focus({ preventScroll: true });
+});
 byId('candidate-query').addEventListener('input', changeCandidateSearch);
 byId('candidate-query').addEventListener('keydown', event => {
   if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); clearCandidateSearch(); }
@@ -1572,12 +2374,7 @@ byId('return-to-search').addEventListener('click', () => {
 });
 for (const id of ['choose-following', 'workspace-choose-following']) byId(id).addEventListener('click', event => toggleFollowingPicker(event.currentTarget));
 byId('following-query').addEventListener('input', () => { if (snapshot) renderFollowingPicker(); });
-byId('finish-following').addEventListener('click', () => {
-  byId('following-picker').hidden = true;
-  for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'false');
-  const target = visibleWorkbenchTarget(followingPickerTrigger) ? followingPickerTrigger : byId('choose-following');
-  target.focus({ preventScroll: true });
-});
+byId('finish-following').addEventListener('click', () => closeWorkspaceDrawer());
 byId('show-run-results').addEventListener('click', () => openRunResults('all'));
 byId('show-run-decisions').addEventListener('click', () => openRunResults('decision'));
 for (const button of byId('results-filters').querySelectorAll('button')) button.addEventListener('click', () => {
@@ -1597,10 +2394,13 @@ byId('show-more-decisions').addEventListener('click', () => {
 });
 byId('execution-records').addEventListener('toggle', () => {
   if (!byId('execution-records').open) {
-    if (['results', 'activity'].includes(candidateOrigin?.source)) closeCandidate();
+    if (['results', 'activity', 'decisions'].includes(candidateOrigin?.source)) closeCandidate();
     resultsState.open = false; byId('steps-detail').open = false;
   }
-  if (snapshot && !workspaceBlocked) { renderRunResults(selectedRun()); syncActivity(selectedRun()); }
+  if (snapshot && !workspaceBlocked) {
+    renderRunResults(selectedRun()); syncActivity(selectedRun());
+    if (byId('execution-records').open) void loadRunHighlights();
+  }
 });
 byId('candidate-stages').addEventListener('toggle', () => {
   if (byId('candidate-stages').open) return;
@@ -1640,12 +2440,12 @@ byId('role-manager').addEventListener('submit', async event => {
 });
 roleSelect.addEventListener('change', () => {
   if (candidateOrigin?.source === 'stage') closeCandidate();
-  rolePreferences.role = roleSelect.value; persistRolePreferences();
+  rolePreferences.role = roleSelect.value; roleRangeMessage = ''; persistRolePreferences();
   if (snapshot) { const view = renderRoleControls(); renderStages(true, view); }
 });
 function chooseTask(selection, message = '') {
   const changed = taskSelection.runId !== selection.runId || selection.mode === 'live';
-  if (changed) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selection.runId); resetActivity(selection.runId); byId('steps-detail').open = false; }
+  if (changed) { if (candidateOrigin?.source !== 'search') closeCandidate(); resetRunResults(selection.runId); resetActivity(selection.runId); resetRunHighlights(selection.runId); byId('steps-detail').open = false; }
   taskSelection = selection; selectionMessage = message; writeTaskURL();
   if (snapshot) renderRuns();
 }
@@ -1655,7 +2455,12 @@ for (const id of ['follow-live', 'latest-run']) byId(id).addEventListener('click
   chooseTask({ mode: 'live', runId: null });
   if (id === 'latest-run') byId('follow-live').focus({ preventScroll: true });
 });
-window.addEventListener('popstate', () => { const selection = readTaskURL(); chooseTask(selection, selectionMessage); });
+window.addEventListener('popstate', () => {
+  const selection = readTaskURL();
+  chooseTask(selection, selectionMessage);
+  navigateWorkspace(selection.mode === 'pinned' ? 'tasks' : 'overview');
+  renderCandidateSearch();
+});
 byId('steps-detail').addEventListener('toggle', () => { byId('steps-summary').textContent = byId('steps-detail').open ? '收起全部步骤' : '查看全部步骤'; });
 byId('collapse-stage').addEventListener('click', () => {
   if (candidateOrigin?.source === 'stage') closeCandidate();
@@ -1677,7 +2482,8 @@ setTheme(window.matchMedia('(prefers-color-scheme: dark)').matches);
 themeButton.addEventListener('click', () => setTheme(document.documentElement.dataset.theme !== 'dark'));
 
 function blockWorkspace() {
-  workspaceBlocked = true; snapshotController.suspend(); activityRequest++; activityAbort?.abort();
+  workspaceBlocked = true; snapshotController.suspend(); overviewController.suspend(); activityRequest++; activityAbort?.abort();
+  runHighlightsRequest++; runHighlightsAbort?.abort();
   resultsRequest++; recordRequest++; documentRequest++; roleRequest++;
   text('activity-status', '工作区连接已变化，以下保留上次读取的动态。'); byId('activity-status').hidden = false;
   document.documentElement.dataset.workspaceBlocked = 'true';
@@ -1690,7 +2496,37 @@ function blockWorkspace() {
   byId('refresh-board').disabled = true; byId('save-role').disabled = true;
   renderCandidateSearch();
   renderWorkspaceFollowing();
+  renderWorkspaceTasks(); renderWorkspaceOverview(); renderRunHighlights(selectedRun()); renderLinkedDecisions();
 }
+
+const overviewController = createSnapshotController({
+  isVisible: () => !document.hidden,
+  load: async signal => {
+    if (!expectedWorkspaceKey) throw new Error('尚未取得工作区标识，等待连接后读取事项。');
+    const key = expectedWorkspaceKey;
+    const response = await fetch('/api/workspace/overview', { cache: 'no-store', signal, headers: workspaceHeaders() });
+    if (response.status === 409) { blockWorkspace(); throw new Error('服务已指向其他工作区，请重新打开'); }
+    if (response.status === 404) throw new Error('本机看板尚未提供工作区事项接口；事项数量未知。');
+    const raw = await response.text();
+    let payload = null;
+    try { payload = raw ? JSON.parse(raw) : null; } catch { payload = null; }
+    if (!response.ok) {
+      if (payload?.error?.code === 'WORKSPACE_MISMATCH') blockWorkspace();
+      throw new Error(payload?.error?.message ?? '工作区事项读取失败，请重试。');
+    }
+    if (!payload) throw new Error('工作区事项响应格式不兼容');
+    if (payload.workspaceKey && payload.workspaceKey !== key) { blockWorkspace(); throw new Error('工作区连接已变化'); }
+    if (key !== expectedWorkspaceKey) throw new Error('工作区连接已变化');
+    return checkWorkspaceOverview(payload);
+  },
+  onSnapshot: acceptWorkspaceOverview,
+  onError: error => {
+    if (workspaceBlocked) return;
+    overviewState.status = 'error'; overviewState.error = error.message; overviewState.stale = true;
+    renderWorkspaceOverview(); renderLinkedDecisions();
+  }
+});
+byId('retry-workspace-overview').addEventListener('click', () => { void overviewController.refresh({ invalidate: true }); });
 
 const snapshotController = createSnapshotController({
   isVisible: () => !document.hidden,
@@ -1701,7 +2537,13 @@ const snapshotController = createSnapshotController({
     if (!expectedWorkspaceKey && next.workspaceKey) expectedWorkspaceKey = next.workspaceKey;
     return next;
   },
-  onSnapshot: next => { snapshot = next; disconnected = false; render(); },
+  onSnapshot: next => {
+    const first = snapshot === null;
+    const latest = next.runs?.reduce((current, run) => !current || run.createdAt > current.createdAt ? run : current, null);
+    if (!first && latest && !snapshot.runs?.some(run => run.id === latest.id) && taskSelection.runId && latest.id !== taskSelection.runId) overviewState.pendingRunId = latest.id;
+    snapshot = next; disconnected = false; render();
+    if (first && expectedWorkspaceKey && !workspaceBlocked) void overviewController.resume();
+  },
   onError: () => {
     if (workspaceBlocked) return;
     disconnected = true;
@@ -1717,18 +2559,23 @@ const snapshotController = createSnapshotController({
       renderConfirmations(null, confirmationView(null));
       renderCandidateSearch();
       renderWorkspaceFollowing();
+      renderWorkspaceTasks(); renderWorkspaceOverview();
       text('run-context', '进度未知，等待恢复读取。'); text('ledger-state', '候选记录数未知，等待恢复读取。');
       text('source-status', '本地文件 · 连接失败'); byId('source-dot').dataset.state = 'error';
     }
   }
 });
 byId('retry-activity').addEventListener('click', () => { void loadActivity(true); });
-byId('refresh-board').addEventListener('click', () => { void snapshotController.refresh({ invalidate: true }); });
+byId('refresh-board').addEventListener('click', () => {
+  void snapshotController.refresh({ invalidate: true });
+  if (expectedWorkspaceKey && !workspaceBlocked) void overviewController.refresh({ invalidate: true });
+});
 function resumeReading() {
   pageActive = true; document.documentElement.dataset.pageVisible = String(!document.hidden);
   if (workspaceBlocked) return;
   if (snapshot) renderRuns();
   void snapshotController.resume();
+  if (expectedWorkspaceKey) void overviewController.resume();
 }
 document.addEventListener('visibilitychange', () => {
   document.documentElement.dataset.pageVisible = String(!document.hidden);
@@ -1738,8 +2585,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', resumeReading);
 window.addEventListener('pageshow', resumeReading);
 window.addEventListener('pagehide', () => {
-  pageActive = false; document.documentElement.dataset.pageVisible = 'false'; snapshotController.suspend();
+  pageActive = false; document.documentElement.dataset.pageVisible = 'false'; snapshotController.suspend(); overviewController.suspend();
   activityRequest++; activityAbort?.abort(); activityState.status = 'idle'; activityState.requestedRevision = null;
+  runHighlightsRequest++; runHighlightsAbort?.abort(); if (runHighlightsState.status === 'loading') runHighlightsState.status = 'idle';
   resultsRequest++; if (resultsState.status === 'loading') { resultsState.status = 'idle'; resultsState.requestedVersion = null; }
 });
 if (workspaceBlocked) blockWorkspace(); else resumeReading();
