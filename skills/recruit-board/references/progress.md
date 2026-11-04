@@ -84,7 +84,7 @@ node "<progress>" result --workspace "<workspace>" --run "<id>" --result "<稳�
 | 入口 | workflow | 按现有流程记录 |
 |---|---|---|
 | recruit-init | init | dependencies → workspace → register → roles → handoff；roles 调用的 grill 单独开子轮次；用户留待梳理的岗位写原因跳过，不伪称已梳理 |
-| recruit-grill | grill | context → interview → jd → context-update → keywords；逐问等待留在 interview，不把用户未确认的标准当完成 |
+| recruit-grill | grill | context → interview → jd → context-update → keywords；每轮批量提问后等待留在 interview，不把用户未确认的标准当完成 |
 | recruit-daily | daily | unread → priorities → sourcing → screen → greet → ledger → report → card → keywords；按原流程完成判据，不通过进度记录扩大对外授权 |
 | resume-review | resume-review | context → mail → parse → evaluate → records → ledger → summary；parse 包括输入与他人初评；summary 包括批量与邮箱汇总；只回查评级时不新建评估 run |
 | interview-schedule | interview-schedule | details → interviewers → availability → calendar → invitation → records；建会确认留在 calendar 等待；改期/取消复用这组阶段；无飞书阶段按降级结果完成或有理由跳过 |
