@@ -572,6 +572,16 @@ details[open] > summary .chevron { transform: rotate(180deg); }
 .record-facts > div:last-child { border-bottom: 0; }
 .record-facts dt { color: var(--muted); font-size: var(--fs-meta); line-height: 1.7; overflow-wrap: anywhere; }
 .record-facts dd { margin: 0; white-space: pre-wrap; }
+.candidate-progress { margin: 16px 0; padding: 0 0 16px; border-bottom: 1px solid var(--line); }
+#record-content .candidate-progress h4 { margin-top: 0; }
+.candidate-progress-entry + .candidate-progress-entry { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.candidate-progress-status { font-weight: 600; }
+.candidate-interviews { list-style: none; padding: 0; margin: 12px 0; }
+.candidate-interview { padding: 12px; border-left: 2px solid var(--accent); background: var(--subtle); }
+.candidate-interview + .candidate-interview { margin-top: 10px; }
+.candidate-interview .record-facts { margin: 8px 0 0; }
+.candidate-progress-conclusion, .candidate-progress-next { margin-top: 8px; white-space: pre-wrap; }
+.candidate-progress-entry > .text-button { margin-top: 4px; padding-left: 0; font-size: var(--fs-meta); }
 .record-warnings { margin: 12px 0; font-size: var(--fs-meta); }
 .record-warnings:empty { display: none; }
 .record-warnings p + p { margin-top: 6px; }
@@ -584,6 +594,12 @@ details[open] > summary .chevron { transform: rotate(180deg); }
 .document-row { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px; background: var(--subtle); overflow-wrap: anywhere; }
 .document-row > p:first-child { font-weight: 600; }
 .document-row > .muted { margin-top: 4px; font-size: var(--fs-meta); }
+.material-picker { margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+.material-picker > h4, .material-picker > p, .material-picker > input { margin-bottom: 10px; }
+.material-options { max-height: 380px; overflow-y: auto; margin: 12px 0; }
+.material-choice { display: flex; align-items: center; gap: 10px; }
+.material-choice input { width: 18px; height: 18px; flex: 0 0 auto; }
+.material-select { display: block; width: 100%; min-height: 44px; margin: 6px 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--r-xs); background: var(--surface); }
 .document-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
 .document-actions .text-button { font-size: var(--fs-meta); }
 [data-workspace-blocked="true"] .document-actions a { pointer-events: none; color: var(--muted); }

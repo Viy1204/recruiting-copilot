@@ -7,6 +7,7 @@ import { boardDirectory } from './storage.mjs';
 import { listDecisions } from './decisions.mjs';
 import { resolveWorkspace } from './reader.mjs';
 import { readRunRecord } from './results.mjs';
+import { readArchiveEvents } from './events.mjs';
 
 const diagnostic = (code, source, message) => ({ code, source, level: 'error', message });
 const unknownCounts = () => ({ open: null, snoozed: null, history: null, followUp: null });
@@ -94,10 +95,6 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
     runStatus = 'error';
     diagnostics.push(diagnostic('HIGHLIGHT_RUN_MISSING', 'runs', '近期重点的来源轮次缺失，保留最后可信记录'));
   }
-  if (runStatus === 'missing' && decisionStatus === 'ok') {
-    runStatus = 'error';
-    diagnostics.push(diagnostic('HIGHLIGHTS_UNREADABLE', 'runs', '已接入的轮次目录缺失，近期重点未知'));
-  }
   for (const item of decisions ?? []) {
     for (const source of item.sources) {
       const run = runs.get(source.runId);
@@ -106,8 +103,31 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
       }
     }
   }
-  if (runStatus === 'ok') {
+  let archiveStatus = 'ok', archiveHighlights = [];
+  try {
+    const archiveEvents = await readArchiveEvents(root);
+    archiveHighlights = archiveEvents.highlights;
+    diagnostics.push(...archiveEvents.diagnostics);
+    if (archiveEvents.diagnostics.some(item => item.level === 'error')) archiveStatus = 'error';
+  } catch (error) {
+    archiveStatus = 'error';
+    diagnostics.push(diagnostic('PROGRESS_SOURCE_UNAVAILABLE', 'candidate-progress', '候选进展档案无法读取，近期进展可能不完整'));
+  }
+  if (runStatus === 'missing' && decisionStatus === 'ok' && !archiveHighlights.length) {
+    runStatus = 'error';
+    diagnostics.push(diagnostic('HIGHLIGHTS_UNREADABLE', 'runs', '已接入的轮次目录缺失，近期重点未知'));
+  }
+  const previousArchive = previous?.highlights?.filter(item => item.sourceKind === 'archive') ?? [];
+  for (const item of previousArchive) {
+    if (!archiveHighlights.some(current => current.eventKey === item.eventKey && current.context.candidateId === item.context.candidateId)) {
+      archiveStatus = 'error';
+      diagnostics.push(diagnostic('PROGRESS_SOURCE_UNAVAILABLE', 'candidate-progress', '曾成功读取的候选进展来源缺失或已变化，保留最后可信记录'));
+      archiveHighlights.push(item);
+    }
+  }
+  if (runStatus === 'ok' || archiveHighlights.length > 0) {
     const byEvent = new Map();
+    if (runStatus !== 'ok') for (const item of previous?.highlights ?? []) if (item.sourceKind !== 'archive') byEvent.set(item.eventKey, item);
     for (const run of [...runs.values()].sort((a, b) => a.id.localeCompare(b.id))) {
       for (const highlight of run.highlights ?? []) {
         const previous = byEvent.get(highlight.eventKey);
@@ -116,20 +136,38 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
         else previous.sourceRunIds = sourceRunIds;
       }
     }
+    for (const item of archiveHighlights) {
+      if (item.occurredAt > time) {
+        diagnostics.push(diagnostic('PROGRESS_EVENT_FUTURE', 'candidate-progress', '档案进展的发生时间在未来，未作为已发生事件显示'));
+        continue;
+      }
+      const recorded = byEvent.get(item.eventKey);
+      const previousId = recorded?.context?.candidateId;
+      if (previousId && previousId !== item.context.candidateId) {
+        diagnostics.push(diagnostic('PROGRESS_EVENT_CONFLICT', 'candidate-progress', '进展事件ID对应不同人选，未合并冲突记录'));
+        archiveStatus = 'error';
+        const separate = `${item.eventKey}:${createHash('sha256').update(item.context.candidateId).digest('hex').slice(0, 12)}`;
+        byEvent.set(separate, { ...item, eventKey: separate });
+        continue;
+      }
+      const sourceRunIds = [...new Set([...(recorded?.sourceRunIds ?? []), ...item.sourceRunIds])];
+      const value = recorded && recorded.correction && recorded.updatedAt > item.updatedAt ? { ...item, ...recorded, context: item.context, details: recorded.details?.length ? recorded.details : item.details, sourceKind: 'archive', sourceDocumentId: item.sourceDocumentId, sourceDocumentLabel: item.sourceDocumentLabel, timePrecision: 'instant' } : { ...item, trigger: recorded?.trigger ?? item.trigger };
+      byEvent.set(item.eventKey, { ...value, runId: recorded?.runId ?? item.runId, sourceRunIds });
+    }
     const cutoff = new Date(Date.parse(time) - 7 * 86400000).toISOString();
-    highlights = [...byEvent.values()].filter(item => item.updatedAt >= cutoff).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.eventKey.localeCompare(b.eventKey));
+    highlights = [...byEvent.values()].filter(item => item.timePrecision === 'day' ? item.updatedAt.slice(0, 10) >= cutoff.slice(0, 10) : item.updatedAt >= cutoff).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.eventKey.localeCompare(b.eventKey));
   }
   if (previous?.decisions && decisions && previous.decisions.some(item => !decisions.some(current => current.id === item.id))) {
     decisionStatus = 'error';
     diagnostics.push(diagnostic('DECISION_REMOVED', 'decisions', '曾成功读取的事项缺失，保留最后可信记录'));
   }
-  let stale = false, retainedDecisions = false;
+  let stale = archiveStatus === 'error' && previousArchive.length > 0, retainedDecisions = false;
   if (decisionStatus !== 'ok' && previous?.decisions !== null && previous?.decisions !== undefined) {
     decisions = previous.decisions.map(item => ({ ...item, effectiveState: item.state === 'snoozed' && item.snoozedUntil !== null && item.snoozedUntil <= time ? 'open' : item.state }));
     stale = true; retainedDecisions = true;
   }
   if ((runStatus === 'error' || runStatus === 'missing') && previous?.highlights?.length) {
-    highlights = previous.highlights;
+    highlights ??= previous.highlights;
     stale = true;
   }
   const counts = decisionStatus === 'ok' || retainedDecisions ? {
@@ -145,8 +183,8 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
   const previousHighlights = new Map((previous?.highlights ?? []).map(item => [item.eventKey, item]));
   highlights = highlights?.map(item => associate(item, runs, byDecision.get(item.decisionId), previousHighlights.get(item.eventKey))) ?? null;
   decisions?.sort((a, b) => decisionPriority(a, time) - decisionPriority(b, time) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const status = stale ? 'stale' : decisionStatus === 'error' || runStatus === 'error' || diagnostics.some(item => item.code === 'DECISION_SOURCE_UNAVAILABLE') ? 'error' : decisionStatus === 'missing' ? 'missing' : 'ok';
-  const updatedAt = stale ? previous.updatedAt : [...(decisions ?? []).map(item => item.updatedAt), ...[...runs.values()].map(run => run.updatedAt)].sort().at(-1) ?? null;
+  const status = stale ? 'stale' : decisionStatus === 'error' || runStatus === 'error' || archiveStatus === 'error' || diagnostics.some(item => item.code === 'DECISION_SOURCE_UNAVAILABLE') ? 'error' : decisionStatus === 'missing' ? 'missing' : 'ok';
+  const updatedAt = stale ? previous.updatedAt : [...(decisions ?? []).map(item => item.updatedAt), ...[...runs.values()].map(run => run.updatedAt), ...archiveHighlights.map(item => item.updatedAt)].sort().at(-1) ?? null;
   const revision = createHash('sha256').update(JSON.stringify({ status, decisions, highlights, counts, diagnostics })).digest('hex');
   return { status, updatedAt, revision, decisions, highlights, counts, diagnostics };
 }

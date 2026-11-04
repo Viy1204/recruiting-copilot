@@ -109,6 +109,7 @@
           <section class="workspace-highlights" aria-labelledby="workspace-highlights-heading">
             <div class="board-group-heading"><h2 id="workspace-highlights-heading">近期进展</h2><span class="workspace-overview-caption">最近 7 天</span></div>
             <p id="workspace-highlights-status" class="workspace-overview-note" hidden></p>
+            <details id="progress-coverage" class="result-history" hidden><summary id="progress-coverage-summary" class="result-history-summary">进展记录待核对</summary><ul id="progress-coverage-list" class="document-list"></ul></details>
             <ul id="workspace-highlight-list" class="workspace-highlight-list" aria-label="近期已记录重点"></ul>
             <div class="workspace-decision-entries">
               <button id="workspace-show-highlights" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer" hidden>全部近期进展</button>
@@ -177,6 +178,12 @@
           <div class="control-actions"><button id="save-role" class="primary-button" type="submit">保存</button><button id="cancel-role" class="text-button" type="button">取消</button></div>
           <p id="role-result" role="status" aria-live="polite"></p>
         </form>
+        <section id="role-alias-manager" class="role-manager" aria-labelledby="role-alias-heading" hidden>
+          <h4 id="role-alias-heading">历史岗位归并</h4>
+          <p class="muted">将台账旧名称关联到正式岗位，沿用其状态；原台账记录保留。</p>
+          <ul id="role-alias-list" class="document-list"></ul>
+          <p id="role-alias-result" role="status" aria-live="polite"></p>
+        </section>
         </section>
         <div id="candidate-stages-block" class="board-subsection disclosure-block layout-item" data-layout-item="candidate-stages">
         <details id="candidate-stages" class="panel-disclosure" open>
@@ -235,14 +242,15 @@
             <p id="execution-reason" class="task-reason" hidden></p>
             <div id="run-result-summary" class="run-result-summary" hidden>
               <div class="run-result-buttons">
-                <button id="show-run-results" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>查看处理名单</span><span id="run-result-total">未记录</span></button>
-                <button id="show-run-decisions" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>查看确认记录</span><span id="run-result-decisions">未记录</span></button>
+                <button id="show-run-results" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="run-results"><span>处理人选</span><span id="run-result-total">未记录</span></button>
+                <button id="show-run-decisions" class="text-button result-summary-button" type="button" aria-expanded="false" aria-controls="confirmations"><span>待回答事项</span><span id="run-result-decisions">未记录</span></button>
               </div>
+              <p id="run-confirmation-note" class="workspace-overview-note" hidden></p>
               <p id="result-stale-note" class="result-stale-note" hidden></p>
             </div>
             <section id="confirmations" class="confirmations-section historical-confirmations" aria-labelledby="decisions-heading">
               <div class="subsection-heading"><h4 id="decisions-heading" tabindex="-1"><span id="decisions-heading-label">当时的确认记录</span></h4><span id="decisions-count" class="count-badge" hidden></span></div>
-              <p class="workspace-overview-caption">保留当时收据；关联事项的当前状态另行标注。</p>
+              <p class="workspace-overview-caption">仅限此任务关联的事项，聊天决定会同步当前状态。</p>
               <button id="return-to-search" class="text-button" type="button" aria-controls="candidate-search-results" hidden>返回搜索结果</button>
               <div id="decisions-scope" class="decisions-scope"></div>
               <p id="decisions-status" class="decisions-status" role="status" aria-live="polite" tabindex="-1">正在读取本轮确认记录…</p>
@@ -255,28 +263,29 @@
                 <ul id="decision-list" class="decision-list" aria-label="所选任务当时的确认名单"></ul>
                 <button id="show-more-decisions" class="text-button" type="button" aria-expanded="false" aria-controls="decision-list" hidden></button>
               </div>
+              <details id="confirmation-history" class="result-history" hidden><summary>确认与处理历史</summary><ul id="confirmation-history-list" class="decision-list"></ul></details>
               <div id="decision-record-host"></div>
             </section>
             <p id="run-summary-state" class="workspace-overview-note"></p>
             <p id="run-closing-summary" class="run-closing-summary" hidden></p>
             <section id="run-highlights" class="run-highlights" aria-labelledby="run-highlights-heading" hidden>
-              <h4 id="run-highlights-heading">本轮重点</h4>
+              <h4 id="run-highlights-heading">其他记录</h4>
               <p id="run-highlights-status" class="workspace-overview-note" role="status" aria-live="polite"></p>
               <button id="retry-run-highlights" class="text-button" type="button" hidden>重试本轮重点</button>
               <button id="apply-run-highlights" class="text-button" type="button" hidden>显示更新后的本轮重点</button>
               <ul id="run-highlight-list" class="workspace-highlight-list" aria-label="所选任务的重点记录"></ul>
             </section>
             <section id="run-results" class="run-results" aria-labelledby="run-results-heading" hidden>
-              <div class="results-heading"><h4 id="run-results-heading">本轮处理记录</h4><button id="collapse-results" class="text-button" type="button">收起</button></div>
+              <div class="results-heading"><h4 id="run-results-heading" tabindex="-1">人选处理结果</h4><button id="collapse-results" class="text-button" type="button">收起</button></div>
               <p id="results-status" class="results-status" role="status" aria-live="polite"></p>
               <button id="retry-results" class="text-button" type="button" hidden>重试读取</button>
               <div id="results-content">
-                <div id="results-filters" class="results-filters" role="group" aria-label="处理记录筛选">
+                <div id="results-filters" class="results-filters" role="group" aria-label="处理记录筛选" hidden>
                   <button type="button" data-results-filter="all" aria-pressed="true">全部</button>
                   <button type="button" data-results-filter="decision" aria-pressed="false">需确认</button>
                   <button type="button" data-results-filter="notice" aria-pressed="false">提醒</button>
                 </div>
-                <p class="results-caption">仅限所选任务，按姓名＋原岗位计人，需确认的记录优先。</p>
+                <p class="results-caption">每人一条最新结论，展开查看处理经过与依据。</p>
                 <ul id="result-list" class="result-list" aria-label="所选任务的候选人处理记录"></ul>
               </div>
               <div id="run-record-host"></div>

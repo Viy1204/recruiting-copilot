@@ -353,15 +353,16 @@ test('历史收据保留当时结论，关联事项进入同一抽屉显示当�
   await p.selectRun('old-round'); await p.click('#show-run-results');
   assert.match(p.$('#result-list').textContent, /当时尚未作出决定/);
   assert.match(p.$('#result-list').textContent, /关联事项现在：已完成/);
+  await p.click('#result-list .result-history > summary');
   await p.click('#result-list [data-linked-decision] button');
   assert.equal(p.$('#workspace-drawer').open, true);
   assert.match(p.$('#workspace-drawer-detail').textContent, /已完成/);
   await p.click('#workspace-drawer-close'); p.assertView('tasks');
   assert.equal(p.window.document.activeElement, p.$('#result-list [data-linked-decision] button'));
   data.overrides.set('/api/snapshot', () => { throw new Error('合成断连'); }); await p.refresh();
-  assert.equal(p.$('#decisions-content').hidden, false);
-  assert.match(p.$('#decision-list').textContent, /当时尚未作出决定/);
-  assert.match(p.$('#decisions-status').textContent, /最后成功读取/);
+  assert.equal(p.$('#show-run-decisions').hidden, false);
+  assert.match(p.$('#result-list').textContent, /当时尚未作出决定/);
+  assert.match(p.$('#decisions-status').textContent, /未知/);
 });
 
 test('旧轮次未接入与明确无变化分开显示，所有外部文本安全呈现', async t => {
@@ -448,7 +449,7 @@ test('截图状态open0/history10/closed4进入即见三条待核对，全部历
   assert.equal(p.$('#workspace-decision-list .workspace-preview-scope'), null);
   assert.match(p.$('#workspace-decision-caption').textContent, /没有待回答事项.*10 条历史待核对/);
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 14');
-  assert.equal(p.all('#assistant select, #assistant details').length, 0);
+  assert.equal(p.all('#assistant select, #assistant details').filter(visible).length, 0);
   assert.equal(p.$('#workspace-followup-link').hidden, true); assert.equal(p.$('#workspace-snoozed-link').hidden, true);
   assert.equal(p.$('#workspace-overview-status').hidden, true); assert.equal(p.$('#workspace-reading-notice').hidden, true);
   assert.equal(p.all('#workspace-task-list > li').length, 1);

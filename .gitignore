@@ -2,4 +2,5 @@
 *.tgz
 recruiting-copilot-*.zip
 .audit/
+node_modules/
 .claude/launch.json

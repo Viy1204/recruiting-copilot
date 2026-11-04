@@ -48,5 +48,8 @@
     "client": {
       "platform": "web"
     }
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }

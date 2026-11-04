@@ -62,7 +62,7 @@ description: >
    - 他人意见与交叉判断（如有）
    - **评级** ⭐~⭐⭐⭐（与台账同一套语义）+ 一句话结论先行 + 建议动作（约面 / 观望 / 婉拒待确认）
 4. **落档案**：单份深评或批量中的"约面"级候选，按 `_shared/templates/interview-record.md` 写入
-   `03-interview/<姓名>.md`（已存在则更新对应节，不重建）。
+   `03-interview/<姓名>.md`（已存在则更新对应节，不重建）。本地或平台缓存中的原始文件在身份核实后用 `recruit-board/scripts/materials.mjs` 归档到工作区，保留来源、内容 hash 和原件；邮箱已下载文件可直接复用。将原始简历、面试档案和 brief 分类别明确关联到原人岗 ID，格式与接口见看板 `references/configuration.md`，不把 brief 当简历。
 5. **更新台账** `02-sourcing/dedup-ledger.csv`：增记/更新（去重键=姓名+应聘岗位，来源轮次记
    `YYYYMMDD猎头` / `YYYYMMDD内推` / `YYYYMMDD猎聘邮件` / `YYYYMMDDBOSS邮件` 等）。简历路径填本地相对路径。台账是唯一事实源。
 6. **批量场景出汇总**：≥2 份时额外产出一份汇总（按岗位分组，每人一行：姓名｜评级｜一句话结论｜建议动作）。
