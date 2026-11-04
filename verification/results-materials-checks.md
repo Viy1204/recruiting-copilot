@@ -12,11 +12,12 @@
 
 ## 自动验证
 
-- `npm test`：214 项通过，0 失败（含候选详情、档案进展补漏、重复导入和完成校验回归）。
+- `npm test`：215 项通过，0 失败（含候选详情、档案进展补漏、重复导入和完成校验回归）。
 - `node --test verification/rounds-web-behavior.mjs`：24 项通过，0 失败。
 - `git diff --check`：通过。
 - Windows 文件 symlink 因账户权限未执行；已有目录 junction 跨区测试通过。
-- 提交前按锁文件执行 `npm ci` 后复验，214 项 Node、24 项网页测试通过；WSL Linux 安装器与工作区技能注册回归通过。
+- 提交前按锁文件执行 `npm ci` 后复验，215 项 Node、24 项网页测试通过；WSL Linux 安装器与工作区技能注册回归通过。
+- GitHub 首轮检查暴露 POSIX 绝对路径被 `win32.isAbsolute` 误判，已修正本机路径判断，并追加绝对路径读取与外区隔离回归。修复后 WSL 原生 Node 22 的 Node 回归 214 项通过、1 项因本机端口 80 无权限跳过、0 失败；24 项网页回归通过。
 - CI 增加 `npm ci` 并执行网页行为回归，在 Node 22／24 检查相同公共行为。
 
 ## 浏览器交互

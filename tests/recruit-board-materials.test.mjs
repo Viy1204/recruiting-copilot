@@ -252,6 +252,18 @@ test('资料目录、配置或控制目录的外部链接不能用于列出或�
   }
 });
 
+test('资料读取接受本机绝对路径，外区和Windows盘符路径保持隔离', async t => {
+  const root = await fixture(t, [row('合成甲', '合成岗位', path.join('runtime', 'resumes', 'original.txt'))]);
+  const file = path.join(root, 'runtime/resumes/original.txt');
+  await writeFile(file, '本机简历原件');
+  await writeFile(path.join(root, '02-sourcing/dedup-ledger.csv'), `${LEDGER_COLUMNS.join(',')}\n${row('合成甲', '合成岗位', file)}\n`);
+  const detail = await readCandidateDetail(root, candidateId);
+  assert.equal(detail.documents[0].status, 'ok');
+  assert.equal((await readCandidateDocument(root, candidateId, detail.documents[0].id)).text, '本机简历原件');
+  await writeFile(path.join(root, '02-sourcing/dedup-ledger.csv'), `${LEDGER_COLUMNS.join(',')}\n${row('合成甲', '合成岗位', 'Z:/outside/resume.txt')}\n`);
+  assert.equal((await readCandidateDetail(root, candidateId)).documents[0].status, 'blocked');
+});
+
 test('本地外部导入保留原件、hash、来源和相对路径，重复或同内容异名不重复归档', async t => {
   const root = await fixture(t);
   const outside = await mkdtemp(path.join(tmpdir(), 'recruit-materials-import-'));

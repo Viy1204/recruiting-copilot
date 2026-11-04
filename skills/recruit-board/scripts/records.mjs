@@ -41,7 +41,7 @@ function resolveReference(root, value, base) {
     file = fileURLToPath(url);
   } else {
     if (/^[a-z][a-z\d+.-]*:/i.test(raw) && !/^[a-z]:[\\/]/i.test(raw)) throw failure('DOCUMENT_PATH_BLOCKED', '不打开外部链接或执行协议', 403);
-    if (process.platform !== 'win32' && path.win32.isAbsolute(raw)) throw failure('DOCUMENT_PATH_BLOCKED', '文件路径不属于当前本机工作区', 403);
+    if (process.platform !== 'win32' && path.win32.isAbsolute(raw) && !path.isAbsolute(raw)) throw failure('DOCUMENT_PATH_BLOCKED', '文件路径不属于当前本机工作区', 403);
     file = path.resolve(base, raw.replace(/[\\/]/g, path.sep));
   }
   if (!insideWorkspace(root, file)) throw failure('DOCUMENT_OUTSIDE_WORKSPACE', '文件位于工作区外，未开放读取', 403);
