@@ -20,13 +20,15 @@ export type HighlightDetailEntry = { label: string; value: string };
 export type HighlightRevision = { revision: number; requestId: string | null; expectedRevision: number | null; requestedOccurredAt: string | null; text: string; evidence: string | null; decisionId: string | null; subjectKey: string | null; occurredAt: string; updatedAt: string; correction: string | null; context?: RecordContext; details?: HighlightDetailEntry[] };
 export type Highlight = { eventKey: string; text: string; evidence: string | null; decisionId: string | null; subjectKey: string | null; occurredAt: string; updatedAt: string; correction: string | null; previousText?: string | null; revision?: number; history?: HighlightRevision[] | null; context?: RecordContext; details?: HighlightDetailEntry[] };
 export type WorkspaceHighlight = Highlight & RecordAssociation & { runId: string | null; trigger: 'manual' | 'scheduled' | 'unknown'; sourceRunIds: string[]; sourceKind?: 'archive'; sourceDocumentId?: string; sourceDocumentLabel?: string; timePrecision?: 'day' | 'instant' };
+export type CandidateActivity = { candidateId: string; at: string; precision: 'day' | 'instant'; sourceKind: 'archive' | 'result' };
 export type WorkspaceOverview = {
   status: 'ok' | 'missing' | 'stale' | 'error'; updatedAt: string | null; revision: string | null;
   decisions: WorkspaceDecision[] | null; highlights: WorkspaceHighlight[] | null;
+  candidateActivity?: CandidateActivity[] | null;
   counts: { open: number | null; snoozed: number | null; history: number | null; followUp: number | null };
   diagnostics: Diagnostic[];
 };
-export type WorkspaceOverviewSummary = Omit<WorkspaceOverview, 'decisions' | 'highlights'>;
+export type WorkspaceOverviewSummary = Omit<WorkspaceOverview, 'decisions' | 'highlights' | 'candidateActivity'>;
 export type Candidate = { id: string; name: string; role: string; rawRole: string; rating: string | null; rawStatus: string | null; stage: string; conflict: boolean; statuses: string[] };
 export type Role = { name: string; priority: string | null; status: string | null; configured: boolean };
 export type MaterialCategory = 'resume' | 'archive' | 'brief' | 'other';

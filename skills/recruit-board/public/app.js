@@ -6,10 +6,9 @@ const roleSelect = byId('role'), runSelect = byId('run'), refreshButton = byId('
 const initialURL = new URL(window.location.href), initialWorkspace = initialURL.searchParams.get('workspace');
 let expectedWorkspaceKey = /^[a-f0-9]{64}$/i.test(initialWorkspace ?? '') ? initialWorkspace.toLowerCase() : null;
 let workspaceBlocked = initialWorkspace !== null && expectedWorkspaceKey === null;
-let snapshot = null, taskSelection = { mode: 'live', runId: null }, selectedStage = null, disconnected = false;
+let snapshot = null, taskSelection = { mode: 'live', runId: null }, selectedStage = 'all', disconnected = false;
 let selectionMessage = '', displayedRun = null, pageActive = true;
-let candidateSearchLimit = 20;
-let searchConfirmations = null;
+let candidateSearchLimit = 20, candidateStageLimit = 20, appliedCandidateActivity;
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const text = (target, value) => { const element = typeof target === 'string' ? byId(target) : target; if (element.textContent !== value) element.textContent = value; };
 let selectedCandidateId = null, candidateOrigin = null, recordRequest = 0, documentRequest = 0, roleRequest = 0, roleInfo = null, csrfToken = null;
@@ -17,7 +16,7 @@ let rolePreferences = { scope: 'active', following: [], role: '' }, preferenceKe
 let resultsRequest = 0;
 const freshResults = runId => ({ runId, open: true, filter: 'all', data: undefined, status: 'idle', error: null, requestedVersion: null, loadedVersion: null, updatedAt: null, expanded: new Set() });
 let resultsState = freshResults(null);
-const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null };
+const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null, filter: 'auto' };
 const drawerState = { page: null, group: 'all', listKind: 'decisions', itemId: null, returnFocus: null, listFocus: null, listScroll: 0, pageScroll: 0, expanded: new Set(), stack: [] };
 let roleRangeMessage = '';
 let runHighlightsRequest = 0, runHighlightsAbort = null;
@@ -68,6 +67,8 @@ function setWorkspaceNavTarget(target) {
   document.querySelector('.app').dataset.view = target;
   for (const [view, id] of Object.entries({ overview: 'assistant', roles: 'role-browser', tasks: 'tasks' })) byId(id).hidden = !layoutState.editing && view !== target;
   text('workbench-heading', { overview: '招聘工作台', roles: '岗位与人选', tasks: '执行记录' }[target]);
+  text('breadcrumb-view', { overview: '总览', roles: '岗位与人选', tasks: '执行记录' }[target]);
+  text('workbench-subtitle', { overview: '先看需要你关注的事', roles: '按岗位查看阶段，点击人选查看跟进与资料', tasks: '查看每轮结论、下一步与处理经过' }[target]);
   for (const button of navButtons) {
     if (button.dataset.navTarget === target) button.setAttribute('aria-current', 'location');
     else button.removeAttribute('aria-current');
@@ -511,7 +512,9 @@ function checkWorkspaceOverview(response) {
   const answer = value => value === null || (value && ['text', 'scope', 'recordedAt'].every(key => typeof value[key] === 'string'));
   const action = value => value && typeof value.label === 'string' && Object.hasOwn(ACTION_STATES, value.status) && ['sync', 'external', 'other'].includes(value.kind);
   const history = value => value && typeof value.at === 'string' && Object.hasOwn(DECISION_STATES, value.state) && answer(value.decision) && Array.isArray(value.actions) && value.actions.every(action) && (value.source === null || source(value.source));
+  const activity = value => value && typeof value.candidateId === 'string' && typeof value.at === 'string' && Number.isFinite(Date.parse(value.at)) && ['day', 'instant'].includes(value.precision) && ['archive', 'result'].includes(value.sourceKind);
   if (!response || !['ok', 'missing', 'stale', 'error'].includes(response.status) || !response.counts || !['open', 'snoozed', 'history', 'followUp'].every(key => count(response.counts[key])) || !Array.isArray(response.diagnostics) || response.diagnostics.some(item => !item || typeof item.message !== 'string')) throw new Error('工作区事项响应格式不兼容');
+  if (response.candidateActivity !== undefined && response.candidateActivity !== null && (!Array.isArray(response.candidateActivity) || response.candidateActivity.some(item => !activity(item)))) throw new Error('人选活动时间响应格式不兼容');
   if (response.decisions !== null && (!Array.isArray(response.decisions) || response.decisions.some(item => !item || !validDisplayInfo(item) || !['id', 'title', 'createdAt', 'updatedAt'].every(key => typeof item[key] === 'string') || (item.deadline !== null && typeof item.deadline !== 'string') || !Object.hasOwn(DECISION_STATES, item.state) || !Object.hasOwn(DECISION_STATES, item.effectiveState) || !item.identity || !['subjectKey', 'questionKey', 'scope'].every(key => typeof item.identity[key] === 'string') || !Array.isArray(item.sources) || !item.sources.every(source) || !Array.isArray(item.actions) || !item.actions.every(action) || !Array.isArray(item.history) || !item.history.every(history) || !answer(item.decision) || !item.followUp || !['none', ...Object.keys(ACTION_STATES)].includes(item.followUp.status)))) throw new Error('工作区事项内容格式不兼容');
   if (response.highlights !== null && (!Array.isArray(response.highlights) || response.highlights.some(item => !isHighlight(item) || (typeof item.runId !== 'string' && !(item.runId === null && item.sourceKind === 'archive' && typeof item.sourceDocumentId === 'string'))))) throw new Error('近期重点响应格式不兼容');
   return response;
@@ -522,27 +525,30 @@ function overviewReading() {
 }
 
 function overviewDataSignature(value) {
-  return JSON.stringify([value?.decisions, value?.highlights, value?.counts]);
+  return JSON.stringify([value?.decisions, value?.highlights, value?.candidateActivity, value?.counts]);
 }
 
 function acceptWorkspaceOverview(response) {
   const previous = overviewState.pending ?? overviewState.data;
   const retainedDecisions = response.decisions === null && Array.isArray(previous?.decisions);
   const retainedHighlights = response.highlights === null && Array.isArray(previous?.highlights);
+  const retainedActivity = response.candidateActivity == null && Array.isArray(previous?.candidateActivity);
   const next = {
     ...response,
     decisions: retainedDecisions ? previous.decisions : response.decisions,
     highlights: retainedHighlights ? previous.highlights : response.highlights,
+    candidateActivity: retainedActivity ? previous.candidateActivity : response.candidateActivity,
     counts: retainedDecisions ? previous.counts : response.counts,
-    updatedAt: retainedDecisions || retainedHighlights ? previous.updatedAt ?? response.updatedAt : response.updatedAt
+    updatedAt: retainedDecisions || retainedHighlights || retainedActivity ? previous.updatedAt ?? response.updatedAt : response.updatedAt
   };
   overviewState.status = response.status;
   overviewState.error = [...new Set(response.diagnostics.map(item => item.message).filter(Boolean))].join(' ');
-  overviewState.stale = ['stale', 'error'].includes(response.status) || retainedDecisions || retainedHighlights;
+  overviewState.stale = ['stale', 'error'].includes(response.status) || retainedDecisions || retainedHighlights || retainedActivity;
   overviewState.missing = response.status === 'missing';
   if (response.status === 'ok') overviewState.readAt = new Date().toISOString();
   if (overviewState.data && overviewReading() && overviewDataSignature(next) !== overviewDataSignature(overviewState.data)) overviewState.pending = next;
   else { overviewState.data = next; overviewState.pending = null; }
+  renderCandidateOrdering();
   renderWorkspaceOverview();
   renderLinkedDecisions();
   if (snapshot) renderRunResults(selectedRun());
@@ -677,13 +683,26 @@ function decisionRow(item) {
   const row = node('li', 'workspace-decision'); row.dataset.decision = item.id;
   const button = node('button', 'workspace-preview-row'); button.type = 'button';
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
-  button.append(subjectLine(item), node('strong', 'workspace-preview-title', item.title));
+  const heading = node('span', 'workspace-preview-subject'), avatar = node('span', 'subject-avatar'); avatar.setAttribute('aria-hidden', 'true');
+  const subjects = itemSubjects(item);
+  if (subjects.length === 1 && subjects[0].name) avatar.textContent = Array.from(subjects[0].name)[0];
+  else avatar.append(layoutIcon(['M3 7h18v14H3zM8 7V3h8v4M8 7v14M16 7v14']));
+  heading.append(avatar, subjectLine(item), layoutIcon(['m9 6 6 6-6 6']));
+  button.append(heading, node('strong', 'workspace-preview-title', item.title));
   const background = decisionBackground(item);
   button.append(node('span', 'workspace-preview-background', background || '背景尚未记录，可查看来源核对。'));
-  const state = node('span', 'workspace-preview-meta', `${DECISION_STATES[item.effectiveState]}${hasFollowUp(item) ? ` · ${ACTION_STATES[item.followUp.status]}` : ''} · ${shortTime(item.updatedAt)}`);
-  state.dataset.state = item.effectiveState;
-  const footer = node('span', 'workspace-preview-footer');
-  footer.append(state, node('span', 'workspace-preview-action', '查看事项 ›'));
+  const state = node('span', 'workspace-preview-state', DECISION_STATES[item.effectiveState]); state.dataset.state = item.effectiveState;
+  const footer = node('span', 'workspace-preview-footer'); footer.append(state);
+  if (hasFollowUp(item)) {
+    const action = node('span', 'workspace-preview-state', ACTION_STATES[item.followUp.status]); action.dataset.state = item.followUp.status;
+    footer.append(action);
+  }
+  if (item.deadline && item.effectiveState === 'open') {
+    const due = new Date(item.deadline).getTime() <= Date.now();
+    const deadline = node('span', 'workspace-preview-deadline', `${due ? '已到期' : '截止'} ${shortTime(item.deadline)}`);
+    deadline.dataset.due = String(due); footer.append(deadline);
+  } else if (item.blocking && item.effectiveState === 'open') footer.append(node('span', 'workspace-preview-deadline', '有后续动作等待'));
+  footer.append(node('span', 'workspace-preview-meta', `更新于 ${shortTime(item.updatedAt)}`));
   button.append(footer);
   button.addEventListener('click', () => openWorkspaceDecision(item.id, button));
   row.append(button); return row;
@@ -744,6 +763,7 @@ function renderOverviewReadingNotice() {
   byId('workspace-reading-notice').hidden = !pending && !newer;
   text('workspace-reading-message', pending ? '事项或近期进展有更新。' : newer ? '有新的任务记录。' : '');
   byId('workspace-apply-updates').hidden = !pending;
+  byId('candidate-reading-notice').hidden = !pending;
   byId('workspace-return-overview').hidden = !newer;
   byId('workspace-drawer-update').hidden = !pending;
 }
@@ -756,7 +776,7 @@ function renderWorkspaceTasks() {
   const list = byId('workspace-task-list'), runs = snapshot?.runs;
   const recent = runs?.reduce((latest, run) => !latest || run.createdAt > latest.createdAt ? run : latest, null);
   const run = runs?.find(item => item.id === taskSelection.runId) ?? recent;
-  const note = workspaceBlocked ? '工作区连接已变化；保留最后任务记录。' : disconnected ? '连接断开；保留最后任务记录。' : !snapshot ? '正在读取任务…' : runs === null ? '任务状态未知，尚未成功读取。' : snapshot.sources.runs.status === 'stale' ? '任务源陈旧；保留最后任务记录。' : !runs.length ? '尚无任务记录。' : '';
+  const note = workspaceBlocked ? '工作区连接已变化；保留最后任务记录。' : disconnected ? '连接断开；保留最后任务记录。' : !snapshot ? '正在读取任务…' : runs === null ? '任务状态未知，尚未成功读取。' : snapshot.sources.runs.status === 'stale' ? '任务源陈旧；保留最后任务记录。' : !runs.length ? '尚无任务进度记录。' : '';
   text('workspace-task-note', note); byId('workspace-task-note').hidden = !note;
   const signature = JSON.stringify(run);
   if (list.dataset.content === signature || (list.dataset.content && overviewReading())) return;
@@ -765,11 +785,13 @@ function renderWorkspaceTasks() {
   if (!run) return;
   const item = node('li', 'workspace-task');
   const heading = node('div', 'workspace-task-heading');
-  heading.append(node('span', 'workspace-overview-caption', recent?.id === run.id ? '最近记录' : '所选记录'), workspaceRunLink(run.id, `${run.label}${run.role ? ` · ${run.role}` : ''}`));
+  const label = [...runSelect.options].find(option => option.value === run.id)?.textContent ?? [run.label, shortTime(run.createdAt), runObjectLabel(run)].filter(Boolean).join(' · ');
+  heading.append(node('span', 'workspace-overview-caption', recent?.id === run.id ? '最近任务' : '所选任务'), workspaceRunLink(run.id, label));
   const meta = node('p', 'workspace-task-meta');
   const status = node('span', 'workspace-state', recordedRunState(run)); status.dataset.state = run.status;
-  meta.append(status, node('span', 'workspace-overview-caption', ` · ${shortTime(run.updatedAt)}`));
-  item.append(heading, meta);
+  meta.append(status, node('span', 'workspace-overview-caption', `最后记录 ${shortTime(run.updatedAt)}`));
+  const link = workspaceRunLink(run.id, '执行记录'); link.classList.add('workspace-task-open'); link.append(layoutIcon(['M5 12h14m-6-6 6 6-6 6']));
+  item.append(heading, meta, link);
   list.append(item);
 }
 
@@ -784,19 +806,30 @@ function renderWorkspaceOverview() {
   text(status, message); status.hidden = !message; status.dataset.state = workspaceBlocked || disconnected || state.stale || state.status === 'error' ? 'error' : state.status;
   text('workspace-drawer-notice', message); byId('workspace-drawer-notice').hidden = !message;
   byId('retry-workspace-overview').hidden = workspaceBlocked || !['error', 'stale', 'missing'].includes(state.status);
-  const group = groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
-  const items = groups[group];
-  text('workspace-decisions-heading', { open: groups.open?.length ? '待你确认' : '需要处理', history_review: '待核对', followUp: '后续执行' }[group]);
-  text('workspace-decisions-count', items?.length ? `${items.length} 项` : ''); byId('workspace-decisions-count').hidden = !items?.length;
-  text('workspace-decision-caption', group === 'history_review' ? `当前没有待回答事项；另有 ${items.length} 条历史待核对。` : '');
-  byId('workspace-decision-caption').hidden = group !== 'history_review';
+  const automatic = groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
+  const group = state.filter === 'auto' ? automatic : state.filter, items = groups[group];
+  const labels = { open: '待确认', followUp: '后续执行', history_review: '历史待核对' };
+  text('workspace-decisions-heading', '待你关注');
+  text('workspace-decisions-count', items?.length ? `${items.length}` : ''); byId('workspace-decisions-count').hidden = !items?.length;
+  const filters = byId('workspace-decision-filters');
+  for (const button of filters.querySelectorAll('button')) {
+    const key = button.dataset.overviewFilter;
+    button.hidden = !groups[key]?.length && !(state.filter === key && groups[key] !== null);
+    button.setAttribute('aria-pressed', String(key === group));
+    text(button, `${labels[key]}${groups[key] === null ? ' · 未知' : ` ${groups[key].length}`}`);
+  }
+  filters.hidden = ![...filters.children].some(button => !button.hidden);
+  const caption = group === 'history_review' && groups.open?.length === 0 ? `当前没有待回答事项；另有 ${items.length} 条历史待核对。` : '';
+  text('workspace-decision-caption', caption); byId('workspace-decision-caption').hidden = !caption;
   const empty = byId('workspace-decision-empty');
-  text(empty, items === null ? '' : !items.length ? '当前没有待回答事项。' : ''); empty.hidden = items === null || Boolean(items.length);
+  text(empty, items === null || items.length ? '' : { open: '当前没有待回答事项。', followUp: '当前没有待执行的后续动作。', history_review: '当前没有历史待核对事项。' }[group]);
+  empty.hidden = items === null || Boolean(items.length);
   updatePreviewList(byId('workspace-decision-list'), items?.slice(0, 3) ?? [], 'decision', decisionRow);
+  text('workspace-decision-summary', items === null ? '事项数量未知' : `${items.length} 项${{ open: '等待确认', followUp: '后续动作未完成', history_review: '历史记录待核对' }[group]}${items.length > 3 ? ' · 首页展示 3 项' : ''}`);
   text('workspace-all-decisions', `全部事项 · ${groups.all === null ? '未知' : groups.all.length}`);
   for (const [id, key] of [['workspace-snoozed-link', 'snoozed'], ['workspace-followup-link', 'followUp']]) {
     byId(id).hidden = !groups[key]?.length || group === key;
-    text(id, `${DECISION_GROUPS[key]} · ${groups[key]?.length ?? 0}`);
+    text(id, `${DECISION_GROUPS[key]} · ${groups[key]?.length ?? 0}${key === 'followUp' ? ' · 已决定，无需重复回答' : ''}`);
   }
   renderWorkspaceHighlights(); renderOverviewReadingNotice(); renderWorkspaceDrawer();
 }
@@ -908,6 +941,7 @@ function highlightDetail(highlight) {
 
 function applyWorkspaceUpdates() {
   if (overviewState.pending) { overviewState.data = overviewState.pending; overviewState.pending = null; }
+  renderCandidateOrdering();
 }
 
 function showWorkspaceDrawer(trigger) {
@@ -927,7 +961,7 @@ function showWorkspaceDrawer(trigger) {
 function openWorkspaceList(kind = 'decisions', group = drawerState.group, trigger = document.activeElement) {
   const changed = drawerState.listKind !== kind || drawerState.group !== group;
   if (changed) { drawerState.listScroll = 0; drawerState.listFocus = null; }
-  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  if (drawerState.page === 'candidate') closeCandidate();
   drawerState.stack = [];
   drawerState.page = 'list'; drawerState.listKind = kind; drawerState.group = group;
   showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
@@ -950,7 +984,8 @@ function openDrawerCandidate(candidate, trigger) {
 }
 
 function returnDrawerPage() {
-  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  if (drawerState.page === 'candidate' && !drawerState.stack.length) { closeWorkspaceDrawer(); return; }
+  if (drawerState.page === 'candidate') closeCandidate();
   const previous = drawerState.stack.pop();
   drawerState.page = previous?.page ?? 'list';
   drawerState.itemId = previous?.itemId ?? null;
@@ -1025,7 +1060,7 @@ function renderWorkspaceDrawer() {
   listView.hidden = !listing; detail.hidden = listing || following || candidate;
   byId('following-picker').hidden = !following; byId('drawer-record-host').hidden = !candidate;
   byId('workspace-drawer-back').hidden = listing || following;
-  text('workspace-drawer-back', { decision: '返回事项', highlight: '返回进展', list: '返回列表' }[state.stack.at(-1)?.page] ?? (state.listKind === 'highlights' ? '返回进展列表' : '返回事项列表'));
+  text('workspace-drawer-back', { decision: '返回事项', highlight: '返回进展', list: '返回列表' }[state.stack.at(-1)?.page] ?? (candidate ? { search: '返回搜索结果', results: '返回处理名单', activity: '返回近期流水' }[candidateOrigin?.source] ?? '返回人选名单' : state.listKind === 'highlights' ? '返回进展列表' : '返回事项列表'));
   text('workspace-drawer-title', following ? '选择关注岗位' : candidate ? '人选资料' : listing ? state.listKind === 'decisions' ? '全部事项' : '近期进展' : state.page === 'decision' ? '事项详情' : '进展详情');
   text('workspace-drawer-footer', following ? '个人关注与招聘状态分别保存。' : candidate ? '资料来自当前工作区。' : '在聊天中说明事项与决定；这里保留记录。');
   if (following) { renderFollowingPicker(); return; }
@@ -1054,9 +1089,9 @@ function renderWorkspaceDrawer() {
 
 function closeWorkspaceDrawer(restoreFocus = true) {
   if (!drawerState.page) return;
-  const dialog = byId('workspace-drawer');
+  const dialog = byId('workspace-drawer'), origin = drawerState.page === 'candidate' ? candidateOrigin : null;
   if (drawerState.page === 'list') drawerState.listScroll = byId('workspace-drawer-content').scrollTop;
-  if (candidateOrigin?.source === 'drawer') closeCandidate();
+  if (drawerState.page === 'candidate') closeCandidate();
   drawerState.page = null; drawerState.stack = [];
   byId('following-picker').hidden = true;
   for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'false');
@@ -1068,9 +1103,13 @@ function closeWorkspaceDrawer(restoreFocus = true) {
   if (restoreFocus) {
     let target = drawerState.returnFocus;
     if (target && !target.isConnected) {
-      const row = target.closest('[data-decision], [data-event]');
-      const replacement = [...byId('assistant').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event));
-      target = replacement?.querySelector('button');
+      const list = byId({ stage: 'candidate-list', search: 'candidate-search-list', results: 'result-list' }[origin?.source]);
+      if (list) target = [...list.querySelectorAll('button')].find(button => button.dataset.candidate === origin.candidateId || (target.dataset.resultFocus && button.dataset.resultFocus === target.dataset.resultFocus));
+      else {
+        const row = target.closest('[data-decision], [data-event]');
+        const replacement = [...byId('assistant').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event));
+        target = replacement?.querySelector('button');
+      }
     }
     (target?.isConnected && !target.closest('[hidden]') && visibleWorkbenchTarget(target) ? target : workspaceNavTargets[activeView]).focus({ preventScroll: true });
     if (window.scrollY !== drawerState.pageScroll) window.scrollTo(0, drawerState.pageScroll);
@@ -1086,7 +1125,7 @@ byId('workspace-drawer-back').addEventListener('click', returnDrawerPage);
 byId('workspace-drawer-close').addEventListener('click', () => closeWorkspaceDrawer());
 byId('workspace-drawer-backdrop').addEventListener('click', () => closeWorkspaceDrawer());
 byId('workspace-drawer').addEventListener('cancel', event => { event.preventDefault(); closeWorkspaceDrawer(); });
-byId('workspace-drawer').addEventListener('close', () => closeWorkspaceDrawer());
+byId('workspace-drawer').addEventListener('close', event => { if (!event.currentTarget.open) closeWorkspaceDrawer(); });
 byId('workspace-drawer').addEventListener('click', event => {
   if (event.target !== event.currentTarget) return;
   const rect = event.currentTarget.getBoundingClientRect();
@@ -1117,14 +1156,19 @@ function renderLinkedDecisions() {
   }
 }
 
+for (const button of byId('workspace-decision-filters').querySelectorAll('button')) button.addEventListener('click', () => {
+  overviewState.filter = button.dataset.overviewFilter;
+  renderWorkspaceOverview();
+});
 byId('workspace-all-decisions').addEventListener('click', event => openWorkspaceList('decisions', 'all', event.currentTarget));
 byId('workspace-followup-link').addEventListener('click', event => openWorkspaceList('decisions', 'followUp', event.currentTarget));
 byId('workspace-snoozed-link').addEventListener('click', event => openWorkspaceList('decisions', 'snoozed', event.currentTarget));
 byId('workspace-show-highlights').addEventListener('click', event => openWorkspaceList('highlights', drawerState.group, event.currentTarget));
 byId('workspace-highlight-history').addEventListener('click', () => navigateWorkspace('tasks'));
-for (const id of ['workspace-apply-updates', 'workspace-drawer-update']) byId(id).addEventListener('click', () => {
+for (const id of ['workspace-apply-updates', 'workspace-drawer-update', 'candidate-apply-updates']) byId(id).addEventListener('click', () => {
   applyWorkspaceUpdates(); renderWorkspaceOverview(); renderLinkedDecisions();
   if (drawerState.page) byId('workspace-drawer-title').focus({ preventScroll: true });
+  else if (id === 'candidate-apply-updates') byId('candidates-heading').focus({ preventScroll: true });
 });
 byId('workspace-return-overview').addEventListener('click', () => {
   const runId = overviewState.pendingRunId;
@@ -1350,29 +1394,70 @@ function renderRoleControls() {
 function closeCandidate() {
   selectedCandidateId = null; candidateOrigin = null; recordRequest++; documentRequest++;
   byId('candidate-record').hidden = true;
-  byId('candidate-list').hidden = false;
-  byId('candidate-search-content').hidden = searchConfirmations !== null;
-  byId('results-content').hidden = false;
-  byId('stage-record-host').append(byId('candidate-record'));
+  byId('record-content').replaceChildren();
 }
 
-function captureSearchPosition(trigger = null) {
-  const visible = [...byId('candidate-search-list').querySelectorAll('button')].find(button => {
-    const rect = button.getBoundingClientRect();
-    return rect.bottom > 0 && rect.top < window.innerHeight;
-  });
-  const anchor = trigger?.closest('#candidate-search-list') ? trigger : visible;
-  return { candidateId: anchor?.dataset.candidate ?? null, top: anchor?.getBoundingClientRect().top ?? 0, scrollY: window.scrollY };
+const ACTIVITY_LABELS = { archive: '档案事件', result: '处理记录' };
+let activityCache = { source: undefined, map: new Map() };
+
+function candidateActivityMap() {
+  const source = overviewState.data?.candidateActivity;
+  if (activityCache.source === source) return activityCache.map;
+  activityCache = { source, map: new Map((source ?? []).map(item => [item.candidateId, item])) };
+  return activityCache.map;
 }
 
-function restoreSearchPosition(position, fallback) {
-  const anchor = [...byId('candidate-search-list').querySelectorAll('button')].find(button => button.dataset.candidate === position.candidateId);
-  const target = anchor ?? fallback;
-  target.focus({ preventScroll: true });
-  if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - position.top);
-  else window.scrollTo(0, position.scrollY);
-  const rect = target.getBoundingClientRect();
-  if (rect.top < 0 || rect.bottom > window.innerHeight) target.scrollIntoView({ block: 'nearest' });
+function activityOrder(candidates) {
+  if (!Array.isArray(candidates)) return candidates;
+  const activity = candidateActivityMap(), at = candidate => activity.get(candidate.id)?.at ?? '';
+  return [...candidates].sort((a, b) => at(b).localeCompare(at(a)));
+}
+
+function activityLabel(activity) {
+  return `${activity.precision === 'day' ? activity.at.slice(0, 10) : shortTime(activity.at)} · ${ACTIVITY_LABELS[activity.sourceKind]}`;
+}
+
+function renderCandidateOrdering() {
+  const activity = overviewState.data?.candidateActivity;
+  const message = overviewState.stale ? Array.isArray(activity) ? '进展时间来源待核验，名单暂按上次读取的记录排序。' : '进展时间暂不可读取，暂无法按最近进展排序。' : '';
+  text('candidate-activity-status', message); byId('candidate-activity-status').hidden = !message;
+  const signature = JSON.stringify(activity ?? null);
+  if (signature === appliedCandidateActivity) return;
+  appliedCandidateActivity = signature;
+  if (!snapshot) return;
+  renderStages(); renderCandidateSearch();
+}
+
+function candidateListRow(candidate, origin, existing = null) {
+  const item = existing ?? node('li', 'candidate-row candidate'); item.dataset.candidate = candidate.id;
+  if (!existing) {
+    const button = node('button', 'candidate-list-button candidate-link'); button.type = 'button'; button.dataset.candidate = candidate.id;
+    button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
+    button.addEventListener('click', () => {
+      const current = snapshot?.candidates?.find(value => value.id === button.dataset.candidate);
+      if (current) void openCandidate(current, origin, button);
+    });
+    const person = node('span', 'candidate-person'), avatar = node('span', 'person-avatar'); avatar.setAttribute('aria-hidden', 'true');
+    person.append(avatar, node('strong', 'person-name candidate-name'));
+    const role = node('span', 'person-role'); role.append(node('span', 'candidate-role'), node('span', 'candidate-raw-role'));
+    const stage = node('span', 'candidate-stage'); stage.append(node('span', 'candidate-stage-label'), node('span', 'person-status'));
+    const activity = node('span', 'candidate-activity');
+    activity.append(node('span', 'candidate-activity-label', '最近进展'), node('span', 'candidate-activity-value'));
+    button.append(person, role, stage, activity, node('span', 'person-rating'), layoutIcon(['m9 6 6 6-6 6'])); item.append(button);
+  }
+  const button = item.querySelector('button');
+  button.setAttribute('aria-label', `查看 ${candidate.name} 的候选资料，原岗位：${candidate.rawRole}`);
+  text(item.querySelector('.person-avatar'), Array.from(candidate.name)[0]);
+  text(item.querySelector('.person-name'), candidate.name);
+  text(item.querySelector('.candidate-role'), candidate.role);
+  const raw = item.querySelector('.candidate-raw-role'); text(raw, `原岗位：${candidate.rawRole}`); raw.hidden = candidate.rawRole === candidate.role;
+  text(item.querySelector('.candidate-stage-label'), STAGES.find(stage => stage.id === candidate.stage)?.label ?? '未归类');
+  text(item.querySelector('.person-status'), `原状态：${candidateStatus(candidate)}`);
+  const record = candidateActivityMap().get(candidate.id), known = Array.isArray(overviewState.data?.candidateActivity);
+  text(item.querySelector('.candidate-activity-value'), record ? activityLabel(record) : known ? '无可核实时间' : '时间未知');
+  item.querySelector('.candidate-activity').title = record ? `进展记录 ${activityLabel(record)}` : known ? '没有可核实的档案事件或处理记录时间，排在名单后面' : '候选进展时间尚未成功读取';
+  text(item.querySelector('.person-rating'), candidate.rating || '未评级');
+  return item;
 }
 
 function renderCandidateSearch() {
@@ -1382,43 +1467,22 @@ function renderCandidateSearch() {
   byId('role-blocks').hidden = searching && !layoutState.editing;
   text('role-browser-title', searching ? '全工作区搜索结果' : '岗位与人选');
   results.hidden = !searching;
-  byId('candidate-search-status').hidden = searchConfirmations !== null;
-  byId('search-record-host').hidden = searchConfirmations !== null;
-  byId('return-to-search').hidden = !searching || searchConfirmations === null;
   byId('clear-candidate-search').hidden = !query.length;
   if (!searching) return;
-  const matches = snapshot ? searchCandidates(snapshot, query) : null;
+  const matches = activityOrder(snapshot ? searchCandidates(snapshot, query) : null);
   const shown = matches?.slice(0, candidateSearchLimit) ?? [];
   text('candidate-search-status', matches === null ? '候选台账尚未成功读取，匹配人数未知。' : `找到 ${matches.length} 条候选记录 · 已显示 ${shown.length} 条`);
   const stale = workspaceBlocked ? '工作区连接已变化，以下保留上次搜索记录，请重新打开看板。' : disconnected ? '连接断开，以下搜索结果来自上次读取的台账。' : snapshot?.sources.ledger.status === 'stale' ? '以下搜索结果沿用上次候选记录（陈旧）。' : '';
   text('candidate-search-stale', stale); byId('candidate-search-stale').hidden = !stale;
-  byId('candidate-search-content').hidden = searchConfirmations !== null || candidateOrigin?.source === 'search';
   const more = byId('show-more-candidates');
   more.hidden = matches === null || shown.length === matches.length;
   const list = byId('candidate-search-list');
-  const signature = JSON.stringify([matches === null, shown.map(candidate => [candidate.id, candidate.name, candidate.role, candidate.rawRole, candidateStatus(candidate)])]);
+  const signature = JSON.stringify([matches === null, shown.map(candidate => [candidate.id, candidate.name, candidate.role, candidate.rawRole, candidate.stage, candidate.rating, candidateStatus(candidate), candidateActivityMap().get(candidate.id) ?? null])]);
   if (list.dataset.content === signature) return;
   list.dataset.content = signature;
   const focused = list.contains(document.activeElement) ? document.activeElement : null;
   const previous = new Map([...list.children].map(item => [item.dataset.candidate, item]));
-  const items = shown.map(candidate => {
-    let item = previous.get(candidate.id);
-    if (!item) {
-      item = node('li', 'candidate-row'); item.dataset.candidate = candidate.id;
-      const heading = node('div', 'person-heading');
-      const button = node('button', 'person-name candidate-link'); button.type = 'button'; button.dataset.candidate = candidate.id;
-      button.addEventListener('click', () => { const current = snapshot?.candidates?.find(value => value.id === button.dataset.candidate); if (current) void openCandidate(current, 'search', button); });
-      heading.append(button);
-      item.append(heading, node('p', 'person-role search-role'), node('p', 'person-role search-raw-role'), node('span', 'person-status'));
-    }
-    const button = item.querySelector('button');
-    text(button, candidate.name); button.setAttribute('aria-label', `查看 ${candidate.name} 的候选资料，原岗位：${candidate.rawRole}`);
-    text(item.querySelector('.search-role'), `岗位：${candidate.role}`);
-    const rawRole = item.querySelector('.search-raw-role');
-    text(rawRole, `原岗位：${candidate.rawRole}`); rawRole.hidden = candidate.rawRole === candidate.role;
-    text(item.querySelector('.person-status'), `原状态：${candidateStatus(candidate)}`);
-    return item;
-  });
+  const items = shown.map(candidate => candidateListRow(candidate, 'search', previous.get(candidate.id)));
   if (!items.length) items.push(node('li', 'empty-state', matches === null ? '等待成功读取台账后再显示匹配结果。' : '未找到匹配的人选，请尝试完整姓名或部分姓名。'));
   for (const item of previous.values()) if (!items.includes(item)) item.remove();
   let position = list.firstElementChild;
@@ -1429,7 +1493,6 @@ function renderCandidateSearch() {
 function changeCandidateSearch() {
   setWorkspaceNavTarget('roles');
   candidateSearchLimit = 20;
-  searchConfirmations = null;
   if (candidateOrigin) closeCandidate();
   renderCandidateSearch();
   if (snapshot) renderRunResults(selectedRun());
@@ -1505,20 +1568,19 @@ function candidateProgressView(detail) {
 async function openCandidate(candidate, origin = 'stage', trigger = null) {
   const pending = ++recordRequest;
   documentRequest++; selectedCandidateId = candidate.id;
-  candidateOrigin = { source: origin, trigger, candidateId: candidate.id, searchPosition: origin === 'search' ? captureSearchPosition(trigger) : null };
-  const host = { decisions: 'decision-record-host', results: 'run-record-host', activity: 'activity-record-host', stage: 'stage-record-host', search: 'search-record-host', drawer: 'drawer-record-host' }[origin];
-  byId(host).append(byId('candidate-record'));
-  byId('candidate-list').hidden = origin === 'stage';
-  byId('candidate-search-content').hidden = searchConfirmations !== null || origin === 'search';
-  byId('results-content').hidden = origin === 'results';
-  if (origin === 'decisions') byId('decisions-content').hidden = true;
+  candidateOrigin = { source: origin, trigger, candidateId: candidate.id };
+  if (origin !== 'drawer') {
+    showWorkspaceDrawer(trigger);
+    drawerState.stack = []; drawerState.page = 'candidate'; drawerState.itemId = candidate.id;
+  }
+  byId('drawer-record-host').append(byId('candidate-record'));
   byId('candidate-record').hidden = false;
-  byId('back-to-list').textContent = { decisions: '返回确认名单', results: '返回处理名单', activity: '返回近期流水', stage: '返回名单', search: '返回搜索结果', drawer: '返回事项或进展' }[origin];
-  byId('back-to-list').hidden = origin === 'drawer';
+  renderWorkspaceDrawer();
   const content = byId('record-content');
   content.replaceChildren(node('p', 'muted', '正在读取候选资料…'));
-  byId(origin === 'drawer' ? 'workspace-drawer-title' : 'back-to-list').focus({ preventScroll: true });
-  if (origin === 'search') byId('back-to-list').scrollIntoView({ block: 'nearest' });
+  byId('workspace-drawer-content').scrollTop = 0;
+  byId('workspace-drawer-title').focus({ preventScroll: true });
+  renderOverviewReadingNotice();
   try {
     const detail = await jsonRequest(`/api/candidates/detail?${new URLSearchParams({ candidate: candidate.id })}`);
     if (pending !== recordRequest) return;
@@ -1705,8 +1767,8 @@ const stageButtons = new Map(STAGES.map(stage => {
   button.querySelector('.stage-name').textContent = stage.label;
   button.addEventListener('click', () => {
     if (candidateOrigin?.source === 'stage') closeCandidate();
-    selectedStage = selectedStage === stage.id ? null : stage.id;
-    if (snapshot) renderStages();
+    selectedStage = selectedStage === stage.id ? 'all' : stage.id; candidateStageLimit = 20;
+    if (snapshot) { renderStages(); focusWorkbenchTarget(byId('detail-title'), 'nearest'); }
   });
   byId('stages').append(button);
   return [stage.id, button];
@@ -2159,31 +2221,24 @@ function renderStages(announce = false, view = currentRoleView()) {
   }
   const detail = byId('candidate-detail');
   detail.hidden = selectedStage === null;
+  byId('show-all-stage-candidates').setAttribute('aria-pressed', String(selectedStage === 'all'));
   if (selectedStage !== null) {
-    const stage = view.stages.find(stage => stage.id === selectedStage);
-    const members = view.candidates?.filter(candidate => candidate.stage === selectedStage);
+    const stage = selectedStage === 'all' ? { label: '全部阶段', count: view.total } : view.stages.find(stage => stage.id === selectedStage);
+    const members = activityOrder(view.candidates?.filter(candidate => selectedStage === 'all' || candidate.stage === selectedStage));
+    const shown = members?.slice(0, candidateStageLimit) ?? [];
     text('detail-title', stage.label);
-    text('detail-count', stage.count === null ? '记录数未知' : `${stage.count} 条候选记录`);
-    const signature = JSON.stringify([rolePreferences.scope, rolePreferences.following, rolePreferences.role, selectedStage, stage.count, members]);
+    text('detail-count', stage.count === null ? '记录数未知' : `${stage.count} 条候选记录${members.length > shown.length ? ` · 已显示 ${shown.length} 条` : ''}`);
+    byId('show-more-stage-candidates').hidden = !members || shown.length === members.length;
+    const signature = JSON.stringify([rolePreferences.scope, rolePreferences.following, rolePreferences.role, selectedStage, stage.count, shown, shown.map(candidate => candidateActivityMap().get(candidate.id) ?? null)]);
     const list = byId('candidate-list');
     if (list.dataset.content !== signature) {
       list.dataset.content = signature;
-      const candidates = (members ?? []).map(candidate => {
-        const item = node('li', 'candidate-row candidate');
-        const body = node('div'), heading = node('div', 'person-heading candidate-heading');
-        const name = node('button', 'person-name candidate-name candidate-link', candidate.name); name.type = 'button'; name.dataset.candidate = candidate.id;
-        name.setAttribute('aria-label', `查看 ${candidate.name} 的候选资料`);
-        name.addEventListener('click', () => { void openCandidate(candidate, 'stage', name); });
-        heading.append(name);
-        const status = node('span', 'person-status', candidateStatus(candidate));
-        status.setAttribute('aria-label', `原始状态：${candidateStatus(candidate)}`);
-        body.append(heading, node('p', 'person-role candidate-meta', candidate.role));
-        if (candidate.rawRole && candidate.rawRole !== candidate.role) body.append(node('p', 'person-role', `原岗位：${candidate.rawRole}`));
-        body.append(status);
-        item.append(body); return item;
-      });
-      if (!candidates.length) candidates.push(node('li', 'empty-state', stage.count === null ? '台账未读取，记录数未知' : '此阶段暂无候选记录'));
+      const focused = list.contains(document.activeElement) ? document.activeElement : null;
+      const previous = new Map([...list.children].map(item => [item.dataset.candidate, item]));
+      const candidates = shown.map(candidate => candidateListRow(candidate, 'stage', previous.get(candidate.id)));
+      if (!candidates.length) candidates.push(node('li', 'empty-state', stage.count === null ? '台账未读取，记录数未知' : selectedStage === 'all' ? '当前岗位范围没有候选记录' : '此阶段暂无候选记录'));
       list.replaceChildren(...candidates);
+      if (focused && document.activeElement !== focused && focused.isConnected) focused.focus({ preventScroll: true });
     }
   }
   if (announce) byId('filter-announcement').textContent = `${view.label}，${view.total === null ? '候选记录数未知' : `共 ${view.total} 条候选记录`}；工作区任务保持选定。`;
@@ -2227,18 +2282,6 @@ function render() {
   renderWorkspaceTasks(); renderWorkspaceOverview(); renderLinkedDecisions();
 }
 
-byId('back-to-list').addEventListener('click', () => {
-  const origin = candidateOrigin;
-  closeCandidate();
-  if (snapshot && !workspaceBlocked) renderRunResults(selectedRun());
-  if (origin?.source === 'search') renderCandidateSearch();
-  const list = byId({ decisions: 'decision-list', results: 'result-list', activity: 'activity-list', stage: 'candidate-list', search: 'candidate-search-list' }[origin?.source ?? 'stage']);
-  const decisionFocus = origin?.trigger?.dataset.decisionFocus;
-  const target = origin?.trigger?.isConnected ? origin.trigger : decisionFocus ? [...list.querySelectorAll('[data-decision-focus]')].find(button => button.dataset.decisionFocus === decisionFocus) : [...list.querySelectorAll('.candidate-link')].find(button => button.dataset.candidate === origin?.candidateId);
-  const fallback = origin?.source === 'search' ? byId('candidate-query') : origin?.source === 'decisions' ? byId('decisions-heading') : origin?.source === 'stage' ? stageButtons.get(selectedStage) : byId(resultsState.filter === 'decision' ? 'show-run-decisions' : 'show-run-results');
-  if (origin?.searchPosition) restoreSearchPosition(origin.searchPosition, fallback);
-  else (target?.getClientRects().length ? target : fallback)?.focus({ preventScroll: true });
-});
 for (const scope of ROLE_SCOPES) {
   const button = node('button', '', scope.label); button.type = 'button'; button.dataset.scope = scope.id;
   button.setAttribute('aria-pressed', String(scope.id === rolePreferences.scope));
@@ -2275,7 +2318,7 @@ byId('candidate-query').addEventListener('keydown', event => {
 });
 byId('clear-candidate-search').addEventListener('click', clearCandidateSearch);
 byId('show-more-candidates').addEventListener('click', () => {
-  const firstNew = searchCandidates(snapshot, byId('candidate-query').value)?.[candidateSearchLimit]?.id;
+  const firstNew = activityOrder(searchCandidates(snapshot, byId('candidate-query').value))?.[candidateSearchLimit]?.id;
   candidateSearchLimit += 20;
   renderCandidateSearch();
   [...byId('candidate-search-list').querySelectorAll('button')].find(button => button.dataset.candidate === firstNew)?.focus({ preventScroll: true });
@@ -2291,14 +2334,6 @@ byId('clear-role-search').addEventListener('click', () => {
 });
 byId('view-decisions-records').addEventListener('click', () => openRunResults('decision'));
 
-byId('return-to-search').addEventListener('click', () => {
-  const position = searchConfirmations;
-  searchConfirmations = null;
-  if (candidateOrigin) closeCandidate();
-  renderCandidateSearch();
-  if (snapshot) renderRunResults(selectedRun());
-  if (position) restoreSearchPosition(position, byId('candidate-query'));
-});
 for (const id of ['choose-following', 'workspace-choose-following']) byId(id).addEventListener('click', event => toggleFollowingPicker(event.currentTarget));
 byId('following-query').addEventListener('input', () => { if (snapshot) renderFollowingPicker(); });
 byId('finish-following').addEventListener('click', () => closeWorkspaceDrawer());
@@ -2381,12 +2416,23 @@ window.addEventListener('popstate', () => {
   renderCandidateSearch();
 });
 byId('steps-detail').addEventListener('toggle', () => { byId('steps-summary').textContent = byId('steps-detail').open ? '收起全部步骤' : '查看全部步骤'; });
+byId('show-all-stage-candidates').addEventListener('click', () => {
+  selectedStage = 'all'; candidateStageLimit = 20;
+  byId('candidate-stages').open = true;
+  if (snapshot) { renderStages(); focusWorkbenchTarget(byId('detail-title'), 'nearest'); }
+});
+byId('show-more-stage-candidates').addEventListener('click', () => {
+  const members = activityOrder(currentRoleView().candidates?.filter(candidate => selectedStage === 'all' || candidate.stage === selectedStage));
+  const firstNew = members?.[candidateStageLimit]?.id;
+  candidateStageLimit += 20; renderStages();
+  [...byId('candidate-list').querySelectorAll('button')].find(button => button.dataset.candidate === firstNew)?.focus({ preventScroll: true });
+});
 byId('collapse-stage').addEventListener('click', () => {
   if (candidateOrigin?.source === 'stage') closeCandidate();
   const previous = selectedStage;
   selectedStage = null;
   if (snapshot) renderStages();
-  stageButtons.get(previous)?.focus({ preventScroll: true });
+  (stageButtons.get(previous) ?? byId('show-all-stage-candidates')).focus({ preventScroll: true });
 });
 
 const themeButton = byId('theme');
@@ -2441,7 +2487,7 @@ const overviewController = createSnapshotController({
   onError: error => {
     if (workspaceBlocked) return;
     overviewState.status = 'error'; overviewState.error = error.message; overviewState.stale = true;
-    renderWorkspaceOverview(); renderLinkedDecisions();
+    renderCandidateOrdering(); renderWorkspaceOverview(); renderLinkedDecisions();
   }
 });
 byId('retry-workspace-overview').addEventListener('click', () => { void overviewController.refresh({ invalidate: true }); });
