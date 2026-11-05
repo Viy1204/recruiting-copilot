@@ -54,10 +54,34 @@ function decisionPriority(item, now) {
   return item.effectiveState === 'history_review' ? 2 : 3;
 }
 
+const validActivity = item => item && typeof item.candidateId === 'string' && typeof item.at === 'string'
+  && Number.isFinite(Date.parse(item.at)) && ['day', 'instant'].includes(item.precision) && ['archive', 'result'].includes(item.sourceKind);
+
+function candidateActivityIndex({ archiveHighlights, runs, previous, archiveStatus, runStatus, runsRead, now }) {
+  const entries = new Map(), retained = Array.isArray(previous?.candidateActivity) ? previous.candidateActivity.filter(validActivity) : [];
+  const consider = item => {
+    if (!validActivity(item) || item.at > now) return;
+    const current = entries.get(item.candidateId);
+    if (current && item.at < current.at) return;
+    if (current && item.at === current.at && current.sourceKind === 'archive' && item.sourceKind !== 'archive') return;
+    if (current && item.at === current.at && current.sourceKind === item.sourceKind && current.precision === 'instant' && item.precision === 'day') return;
+    entries.set(item.candidateId, item);
+  };
+  for (const item of archiveHighlights) {
+    consider({ candidateId: item.context?.candidateId, at: item.occurredAt, precision: item.timePrecision === 'day' ? 'day' : 'instant', sourceKind: 'archive' });
+  }
+  for (const run of runs.values()) for (const result of run.results ?? []) consider({ candidateId: result.candidateId, at: result.updatedAt, precision: 'instant', sourceKind: 'result' });
+  if (archiveStatus !== 'ok') for (const item of retained) if (item.sourceKind === 'archive') consider(item);
+  if (runStatus !== 'ok') for (const item of retained) if (item.sourceKind === 'result') consider(item);
+  const known = archiveStatus === 'ok' || runsRead || retained.length > 0;
+  if (!known) return null;
+  return [...entries.values()].sort((a, b) => b.at.localeCompare(a.at) || a.candidateId.localeCompare(b.candidateId));
+}
+
 export async function readWorkspaceOverview(workspace, previous = null, now = () => new Date().toISOString()) {
   const root = await resolveWorkspace(workspace), time = now();
   const diagnostics = [], runs = new Map();
-  let decisions = null, highlights = null, decisionStatus = 'missing', runStatus = 'missing';
+  let decisions = null, highlights = null, decisionStatus = 'missing', runStatus = 'missing', runsRead = false;
   try {
     const directory = await boardDirectory(root, ['runtime', 'recruit-board', 'decisions']);
     const marker = await lstat(path.join(directory, '.initialized'));
@@ -78,6 +102,7 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
   try {
     const directory = await boardDirectory(root, ['runtime', 'recruit-board', 'runs']);
     runStatus = 'ok';
+    runsRead = true;
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (!entry.name.endsWith('.json')) continue;
       const id = entry.name.slice(0, -5);
@@ -94,6 +119,16 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
   if (previous?.highlights?.some(item => item.sourceRunIds.some(id => !runs.has(id)))) {
     runStatus = 'error';
     diagnostics.push(diagnostic('HIGHLIGHT_RUN_MISSING', 'runs', '近期重点的来源轮次缺失，保留最后可信记录'));
+  }
+  const resultTimes = new Map();
+  for (const run of runs.values()) for (const result of run.results ?? []) {
+    if (result.updatedAt > time) continue;
+    const current = resultTimes.get(result.candidateId);
+    if (!current || current < result.updatedAt) resultTimes.set(result.candidateId, result.updatedAt);
+  }
+  if (previous?.candidateActivity?.some(item => validActivity(item) && item.sourceKind === 'result' && (!resultTimes.has(item.candidateId) || resultTimes.get(item.candidateId) < item.at))) {
+    runStatus = 'error';
+    diagnostics.push(diagnostic('CANDIDATE_ACTIVITY_SOURCE_UNAVAILABLE', 'runs', '曾成功读取的人选处理记录缺失或已变化，保留最后可信进展时间'));
   }
   for (const item of decisions ?? []) {
     for (const source of item.sources) {
@@ -166,7 +201,7 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
     decisions = previous.decisions.map(item => ({ ...item, effectiveState: item.state === 'snoozed' && item.snoozedUntil !== null && item.snoozedUntil <= time ? 'open' : item.state }));
     stale = true; retainedDecisions = true;
   }
-  if ((runStatus === 'error' || runStatus === 'missing') && previous?.highlights?.length) {
+  if ((runStatus === 'error' || runStatus === 'missing') && (previous?.highlights?.length || previous?.candidateActivity?.some(item => validActivity(item) && item.sourceKind === 'result'))) {
     highlights ??= previous.highlights;
     stale = true;
   }
@@ -185,11 +220,12 @@ export async function readWorkspaceOverview(workspace, previous = null, now = ()
   decisions?.sort((a, b) => decisionPriority(a, time) - decisionPriority(b, time) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const status = stale ? 'stale' : decisionStatus === 'error' || runStatus === 'error' || archiveStatus === 'error' || diagnostics.some(item => item.code === 'DECISION_SOURCE_UNAVAILABLE') ? 'error' : decisionStatus === 'missing' ? 'missing' : 'ok';
   const updatedAt = stale ? previous.updatedAt : [...(decisions ?? []).map(item => item.updatedAt), ...[...runs.values()].map(run => run.updatedAt), ...archiveHighlights.map(item => item.updatedAt)].sort().at(-1) ?? null;
-  const revision = createHash('sha256').update(JSON.stringify({ status, decisions, highlights, counts, diagnostics })).digest('hex');
-  return { status, updatedAt, revision, decisions, highlights, counts, diagnostics };
+  const candidateActivity = candidateActivityIndex({ archiveHighlights, runs, previous, archiveStatus, runStatus, runsRead, now: time });
+  const revision = createHash('sha256').update(JSON.stringify({ status, decisions, highlights, candidateActivity, counts, diagnostics })).digest('hex');
+  return { status, updatedAt, revision, decisions, highlights, candidateActivity, counts, diagnostics };
 }
 
 export function overviewSummary(overview) {
-  const { decisions, highlights, ...summary } = overview;
+  const { decisions, highlights, candidateActivity, ...summary } = overview;
   return summary;
 }

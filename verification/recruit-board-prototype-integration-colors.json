@@ -1,0 +1,22 @@
+{
+  "light": {
+    "标题": { "foreground": [41, 40, 35], "background": [249, 248, 247] },
+    "摘要": { "foreground": [100, 96, 88], "background": [255, 255, 255] },
+    "辅助文字": { "foreground": [100, 96, 88], "background": [255, 255, 255] },
+    "状态标签": { "foreground": [145, 67, 41], "background": [252, 240, 236] },
+    "事项链接": { "foreground": [145, 67, 41], "background": [249, 248, 247] },
+    "副标题": { "foreground": [100, 96, 88], "background": [249, 248, 247] },
+    "读取状态": { "foreground": [116, 81, 30], "background": [251, 241, 223] },
+    "关联提示": { "foreground": [116, 81, 30], "background": [255, 255, 255] }
+  },
+  "dark": {
+    "标题": { "foreground": [234, 231, 221], "background": [24, 23, 20] },
+    "摘要": { "foreground": [180, 175, 165], "background": [39, 38, 35] },
+    "辅助文字": { "foreground": [180, 175, 165], "background": [39, 38, 35] },
+    "状态标签": { "foreground": [242, 165, 139], "background": [57, 41, 35] },
+    "事项链接": { "foreground": [242, 165, 139], "background": [24, 23, 20] },
+    "副标题": { "foreground": [180, 175, 165], "background": [24, 23, 20] },
+    "读取状态": { "foreground": [221, 184, 122], "background": [56, 46, 29] },
+    "关联提示": { "foreground": [221, 184, 122], "background": [39, 38, 35] }
+  }
+}

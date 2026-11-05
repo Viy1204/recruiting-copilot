@@ -154,8 +154,10 @@ test('工作区事项不随岗位轮次筛选；首页保留服务端处理优�
     decision('history', { state: 'history_review', effectiveState: 'history_review' })
   ]);
   const p = await page(t, data);
-  assert.equal(p.$('#workspace-decisions-heading').textContent, '待你确认');
-  assert.equal(p.$('#workspace-decisions-count').textContent, '4 项');
+  assert.equal(p.$('#workspace-decisions-heading').textContent, '待你关注');
+  assert.equal(p.$('[data-overview-filter="open"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.$('[data-overview-filter="open"]').textContent, '待确认 4');
+  assert.equal(p.$('#workspace-decisions-count').textContent, '4');
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 6');
   assert.deepEqual(p.all('#workspace-decision-list > li').map(item => item.dataset.decision), ['blocking', 'ordinary', 'first']);
   assert.doesNotMatch(p.$('#workspace-decision-list').textContent, /role:internal/);
@@ -183,7 +185,9 @@ test('无待确认时直接预览后续执行；详情保留动作原因与处�
     decision('closed', { state: 'closed', effectiveState: 'closed', decision: answer, blocking: true })
   ]);
   const p = await page(t, data);
-  assert.equal(p.$('#workspace-decisions-heading').textContent, '后续执行');
+  assert.equal(p.$('#workspace-decisions-heading').textContent, '待你关注');
+  assert.equal(p.$('[data-overview-filter="followUp"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.$('[data-overview-filter="followUp"]').textContent, '后续执行 1');
   assert.equal(p.$('#workspace-followup-link').hidden, true);
   assert.doesNotMatch(p.$('#assistant').textContent, /0 项未解决/);
   await p.click(homeDecision('follow'));
@@ -444,7 +448,9 @@ test('截图状态open0/history10/closed4进入即见三条待核对，全部历
   ]);
   const p = await page(t, data);
   p.assertView('assistant');
-  assert.equal(p.$('#workspace-decisions-heading').textContent, '待核对');
+  assert.equal(p.$('#workspace-decisions-heading').textContent, '待你关注');
+  assert.equal(p.$('[data-overview-filter="history_review"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.$('[data-overview-filter="history_review"]').textContent, '历史待核对 10');
   assert.equal(p.all('#workspace-decision-list > li').length, 3);
   assert.equal(p.$('#workspace-decision-list .workspace-preview-scope'), null);
   assert.match(p.$('#workspace-decision-caption').textContent, /没有待回答事项.*10 条历史待核对/);
