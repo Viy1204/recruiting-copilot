@@ -25,8 +25,8 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
 脚本会检查 Node.js ≥22，安装 Boss / 猎聘 CLI，并在 macOS 等环境中自动修复 npm
-全局命令的 `PATH`。v0.7.0 默认安装固定的 Boss 维护包
-`@viyzhu/boss-cli-fork@0.8.5`。如需替换来源，可在运行前设置 `BOSS_CLI_SOURCE`。
+全局命令的 `PATH`。v0.8.3 默认安装固定的 Boss 维护包
+`@viyzhu/boss-cli-fork@0.8.7`。如需替换来源，可在运行前设置 `BOSS_CLI_SOURCE`。
 
 如果当前 agent 没有全局安装权限，先给同一脚本加 `--check-only`
 获取诊断结果。**无论是权限、Node/npm/git 缺失、网络、构建还是包安装失败，

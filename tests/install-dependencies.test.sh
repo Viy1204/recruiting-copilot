@@ -165,7 +165,7 @@ test_boss_source_defaults_to_fork_and_can_be_overridden() {
   default_install=$(grep '^install -g ' "$default_sandbox/npm.log" | sed -n '1p')
   override_install=$(grep '^install -g ' "$override_sandbox/npm.log" | sed -n '1p')
   assert_equals \
-    'install -g @viyzhu/boss-cli-fork@0.8.5' \
+    'install -g @viyzhu/boss-cli-fork@0.8.7' \
     "$default_install" \
     'default Boss CLI source'
   [ ! -e "$default_sandbox/git.log" ] || fail 'default Boss CLI source invoked git'
