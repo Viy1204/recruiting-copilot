@@ -36,7 +36,7 @@ dsh plugin --profile web remove recruiting-copilot
 1. `skills/` 下 8 个 skill（ask-viy、recruit-init、recruit-grill、recruit-daily、
    resume-review、interview-schedule、market-talent-mapping、recruit-board）在任意工作区可用。
 2. Web UI 右侧提供「招聘浏览器」面板，默认折叠、只读，观察两个 CLI 的平台页面。
-   它与展示任务、人选和本地资料的[招聘进展看板](../README.md#招聘进展看板)是两个入口。
+   它与展示任务、人选和本地资料的[招聘工作台](../README.md#招聘工作台)是两个入口。
 
 ## 两个源都默认有头（2026-09-21；此前按源分开）
 
