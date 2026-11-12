@@ -41,6 +41,28 @@ https://github.com/user-attachments/assets/8dbf02ed-b83d-4d2b-beaa-dd693fb5a297
 
 打招呼默认等你确认。你可以在本轮明确说“合适的直接打招呼”，AI 在该轮授权范围内执行并逐一回报；下一轮或第二天不自动沿用授权。
 
+### 收藏 BOSS 人选，留待跟进
+
+[升级 BOSS CLI 至 0.8.8](#升级-boss-cli-以使用收藏) 后，可以把待比较或跨天跟进的人选加入平台收藏。先让 AI 搜索或读取推荐列表，核对本轮人选，再按该列表的序号收藏。下面以第 2 人为例。
+
+```bash
+boss favorite --index 2
+```
+
+后续跟进时，刷新“互动 → 收藏牛人”列表，读取当前已加载的人选与独立编号。
+
+```bash
+boss favorite --list
+```
+
+需要取消时，核对刚读收藏列表中的编号。下面以第 1 人为例。
+
+```bash
+boss favorite --remove --index 1
+```
+
+搜索、推荐与收藏列表的编号不能混用，取消后须重新读取收藏列表。需要收藏哪些人选，由你明确指定。收藏不会发送打招呼消息，招聘台账仍单独记录筛选结论、联系状态和后续动作。完整命令与快照规则见 [BOSS CLI 使用说明](https://github.com/Viy1204/boss-cli#readme)。
+
 ### 新开岗位或修改标准
 
 - 新开岗位时说“帮我梳理 XX 岗位”。先完成该岗的 `recruit-grill`，再加入每日招聘。
@@ -70,10 +92,12 @@ cd recruiting-copilot
 安装两个平台的 CLI。
 
 ```bash
-sh skills/recruit-init/scripts/install-dependencies.sh
+BOSS_CLI_SOURCE=@viyzhu/boss-cli-fork@0.8.8 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.7` 和猎聘包 `@viyzhu/liepin-cli`。BOSS `0.8.7` 包含未读角标漏报与在线简历预览修复；已有用户需按[升级说明](docs/releases/v0.8.3.md#升级已有工作区)更新已安装的 CLI。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
+上面的命令显式选择 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.8`，同时安装猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
+
+收藏功能与本次预览修正需要 BOSS CLI **0.8.8 或更高版本**。未设置 `BOSS_CLI_SOURCE` 时，固定版本安装器仍默认使用 0.8.7。已有安装按[升级 BOSS CLI](#升级-boss-cli-以使用收藏)单独升级。
 
 若只想诊断环境，给脚本加 `--check-only`，它不会安装包或修改 shell 配置。正常安装时，macOS 若缺少 npm 全局命令路径，脚本会更新当前 shell 的配置文件。
 
@@ -108,6 +132,24 @@ liepin login
 以后用 AI 工具打开你自己的招聘工作区，说“处理今天的招聘”。AI 按已经确认的标准执行，并交付台账、日报及待确认事项。
 
 采用 Agent Skills 约定的工具，也可通过 `npx skills add Viy1204/recruiting-copilot` 安装全局技能。工作区本身已携带流程，这一步不是必需项。
+
+### 升级 BOSS CLI 以使用收藏
+
+BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 起提供，招聘工作流的正式版为 v0.8.3。安装或升级 BOSS CLI。
+
+```bash
+npm install -g @viyzhu/boss-cli-fork@0.8.8 --registry=https://registry.npmjs.org/
+```
+
+核对输出中的包名和版本。
+
+```bash
+boss version
+```
+
+应看到 `@viyzhu/boss-cli-fork`，版本为 `0.8.8`。这一版的 `boss preview` 成功时输出 PNG 路径，不再附加固定每日额度提醒。OCR 失败仍报错，同时保留已保存截图的绝对路径和原始原因。在线简历的权限与额度仍以账号权益和平台实际提示为准，见 [BOSS CLI 0.8.8 正式版](https://github.com/Viy1204/boss-cli/releases/tag/v0.8.8)。
+
+工作区与 Skill 文件的升级仍按[已有工作区升级说明](docs/releases/v0.8.3.md#升级已有工作区)执行。
 
 ### Claude Code 插件入口
 
