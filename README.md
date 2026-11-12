@@ -92,12 +92,12 @@ cd recruiting-copilot
 安装两个平台的 CLI。
 
 ```bash
-BOSS_CLI_SOURCE=@viyzhu/boss-cli-fork@0.8.8 sh skills/recruit-init/scripts/install-dependencies.sh
+sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-上面的命令显式选择 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.8`，同时安装猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
+安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.7` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
 
-收藏功能与本次预览修正需要 BOSS CLI **0.8.8 或更高版本**。未设置 `BOSS_CLI_SOURCE` 时，固定版本安装器仍默认使用 0.8.7。已有安装按[升级 BOSS CLI](#升级-boss-cli-以使用收藏)单独升级。
+收藏功能与本次预览修正需要 BOSS CLI **0.8.8 或更高版本**。先完成步骤 2 的初始化，再按步骤 3 的说明升级。
 
 若只想诊断环境，给脚本加 `--check-only`，它不会安装包或修改 shell 配置。正常安装时，macOS 若缺少 npm 全局命令路径，脚本会更新当前 shell 的配置文件。
 
@@ -111,7 +111,9 @@ AI 会询问工作区位置，建立模板和各工具的 Skill 入口，再逐�
 
 已有工作区先按[升级说明](docs/releases/v0.8.3.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
 
-#### 3. 在可见窗口中完成人工登录
+#### 3. 初始化后升级 BOSS CLI，再完成人工登录
+
+固定 v0.8.3 的 `recruit-init` 会再次运行默认依赖安装器，安装 BOSS CLI 0.8.7。初始化完成后，先按[升级 BOSS CLI](#升级-boss-cli-以使用收藏)安装 0.8.8，并执行 `boss version` 确认版本，再继续下方登录。
 
 BOSS 使用：
 
@@ -135,7 +137,11 @@ liepin login
 
 ### 升级 BOSS CLI 以使用收藏
 
-BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 起提供，招聘工作流的正式版为 v0.8.3。安装或升级 BOSS CLI。
+BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 起提供，招聘工作流的正式版为 v0.8.3。
+
+首次使用先完成上方步骤 2 的工作区初始化，再运行本节命令。已有工作区可直接升级。以后重新运行初始化或默认安装器后，也需再次核对 CLI 版本。
+
+安装或升级 BOSS CLI。
 
 ```bash
 npm install -g @viyzhu/boss-cli-fork@0.8.8 --registry=https://registry.npmjs.org/
