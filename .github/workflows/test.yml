@@ -24,5 +24,6 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: node --test verification/rounds-web-behavior.mjs
+      - run: node --test verification/deploy-ui.test.mjs
       - run: sh tests/install-dependencies.test.sh
       - run: sh tests/register-workspace-skills.test.sh
