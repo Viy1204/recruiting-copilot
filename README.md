@@ -95,7 +95,7 @@ cd recruiting-copilot
 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.8` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
+安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.9` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
 
 收藏功能与本次预览修正需要 BOSS CLI **0.8.8 或更高版本**。已有安装按[升级 BOSS CLI](#升级-boss-cli-以使用收藏)单独升级。
 
@@ -142,7 +142,7 @@ BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 �
 安装或升级 BOSS CLI。
 
 ```bash
-npm install -g @viyzhu/boss-cli-fork@0.8.8 --registry=https://registry.npmjs.org/
+npm install -g @viyzhu/boss-cli-fork@0.8.9 --registry=https://registry.npmjs.org/
 ```
 
 核对输出中的包名和版本。
@@ -151,7 +151,7 @@ npm install -g @viyzhu/boss-cli-fork@0.8.8 --registry=https://registry.npmjs.org
 boss version
 ```
 
-应看到 `@viyzhu/boss-cli-fork`，版本为 `0.8.8`。这一版的 `boss preview` 成功时输出 PNG 路径，不再附加固定每日额度提醒。OCR 失败仍报错，同时保留已保存截图的绝对路径和原始原因。在线简历的权限与额度仍以账号权益和平台实际提示为准，见 [BOSS CLI 0.8.8 正式版](https://github.com/Viy1204/boss-cli/releases/tag/v0.8.8)。
+应看到 `@viyzhu/boss-cli-fork`，版本为 `0.8.9`。这一版在 0.8.8 基础上适配了搜索池新版详情面板的账号权益按钮（见 [BOSS CLI 0.8.9 正式版](https://github.com/Viy1204/boss-cli/releases/tag/v0.8.9)）。`boss preview` 成功时输出 PNG 路径，不再附加固定每日额度提醒。OCR 失败仍报错，同时保留已保存截图的绝对路径和原始原因。在线简历的权限与额度仍以账号权益和平台实际提示为准。
 
 工作区与 Skill 文件的升级仍按[已有工作区升级说明](docs/releases/v0.8.3.md#升级已有工作区)执行。
 
