@@ -32,6 +32,6 @@ node scripts/verify-state-machines.mjs live --mutations
 - 原子性：同步的公开调用与一次 Promise 续体分别为一步；超时独立于请求结束，abort 不等于结束。排队新读取在旧请求 finally 内同步开始。
 - 突变：移除成功响应 current/timeout guard；绕过 refresh 的 flight guard。两者必须分别被 `FORMAL_LIVE_OBSOLETE_PUBLICATION` 和 `FORMAL_LIVE_SINGLE_FLIGHT` 抓住。
 
-最后核对源码的提交：`80d623348799711ded9ea78eaf5c8961e1556a69`。精确文件摘要与突变锚点在 `verification/formal/coverage.json` 的 `live` 项，原始覆盖记录为 `verification/formal/coverage-live.json`。源码摘要变动会使命令失败，即使模型通过也不能继续沿用旧结论。
+最后核对源码的提交：`eb790519332fc30cde6157bcd029ef443f76dddc`。精确文件摘要与突变锚点在 `verification/formal/coverage.json` 的 `live` 项，原始覆盖记录为 `verification/formal/coverage-live.json`。源码摘要变动会使命令失败，即使模型通过也不能继续沿用旧结论。
 
 变更后先读取覆盖函数，确认同步步骤及取消语义仍匹配模型；语义变化时再改模型、真实实现检查和突变。直接运行带 `--mutations` 的完整检查并解读本次 TLC 结果，无需重复执行普通基线命令。确认匹配后更新 `coverage-live.json` 的源摘要，只有核对过新提交才前移总表同步提交。发现实现问题保留反例，未经用户要求不修改产品代码。历史改动未核对时使用 `/pstack:maintain-formal-verification-skill` 重新对齐。

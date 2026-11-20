@@ -9,7 +9,7 @@ description: 修改招聘看板候选台账读取、兼容配置回退、整套�
 
 损害：把读取失败显示为零人会误导招聘决策；只保留旧候选、却套用新岗位或新映射，会把同一批人按另一套口径重新计算。
 
-同步基线 syncCommit：`80d623348799711ded9ea78eaf5c8961e1556a69`。
+同步基线 syncCommit：`eb790519332fc30cde6157bcd029ef443f76dddc`。
 覆盖记录：`verification/formal/coverage-snapshots.json`；总表只引用该片段，源码 SHA-256 只保存在片段中。
 
 ## 代码与交付

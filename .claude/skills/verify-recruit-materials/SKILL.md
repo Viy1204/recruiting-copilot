@@ -9,7 +9,7 @@ description: 修改招聘看板资料映射保存、本地原件导入、候选�
 
 损害：旧表单覆盖新清单会丢掉更正后的关联，或把已移除资料重新挂回人选。补充合同还防止同名跨原岗串档，以及篡改后的归档原件继续被当作可信资料读取。
 
-同步基线 syncCommit：`80d623348799711ded9ea78eaf5c8961e1556a69`。
+同步基线 syncCommit：`eb790519332fc30cde6157bcd029ef443f76dddc`。
 覆盖记录：`verification/formal/coverage-materials.json`；总表只引用该片段，不重复保存源码摘要。
 
 ## 代码与交付
