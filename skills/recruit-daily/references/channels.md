@@ -63,13 +63,15 @@
 | 搜索（返回 resume_id/im_id/user_id/age/degree...） | `liepin search "<关键词>" --city <城市> --json` |
 | 推荐（**无 age 字段**，年龄硬规则难核） | `liepin recommend --json` |
 | 投递池 | `liepin talent` |
-| 查简历 | `liepin resume <talentId>` |
-| 打招呼（自定义消息，绑职位） | `liepin greet <resume_id> --ejobId <职位ID> --message "话术" --json` |
+| 查简历 | `liepin resume <talentId> [--source search\|recommend\|talent\|chat]` |
+| 打招呼（自定义消息，绑职位） | `liepin greet <resume_id> --ejobId <职位ID> --message "话术" [--source ...] --json` |
 
 关键行为与坑：
 - `search`/`recommend` 输出的 JSON 前面有非 JSON 前缀（"正在跳转…"），解析时从第一个 `[` 截取。
 - **打招呼绑的是 `resume_id`（不是 user_id）**，`--ejobId` 从 joblist 取；只有 resume_id 支持 `--message`。
-- **recommend 无 age 字段**：如果 CONTEXT 有年龄硬规则，推荐池难核验——谨慎打，优先 search。
+- **recommend 无 age 字段，但 `search` 属高敏接口**：如果 CONTEXT 有年龄硬规则，用 `search` 带筛选参数精搜，不要按公司名循环连发 `search`（2026-11-18 实测连续约 36 次直接触发验证页硬拦）。单批连续 `search` 不超过 15 次，之后强制停顿 ≥5 分钟；不需要年龄硬筛时优先用 `recommend`。
+- **列表先筛再调 `liepin resume`，严禁全量拉简历**：优先用 `search` 筛选参数和列表字段排除明显不匹配的人，只对过初筛的候选人查详情。实测单日调用 `resume` 900–1,100 次会触发软限流，固定毫秒间隔（零抖动）会放大自动化特征。建议单日 ≤300 份、速率 ≤3 份/分钟，间隔 2–8 秒随机抖动，每 10 份插 30–90 秒长停顿；调用 `resume` / `greet` 时按候选人实际来源传 `--source`（CLI 支持时），避免恒报 `R_SEARCH_CONDITION`。
+- **报「已达到每日简历浏览上限」立即停手**：即使「我的权益」面板显示简历查看「不限」且仍有开聊点数，该报错也是风控软限流（不是普通报错，也不是可买额度）。**立即停止继续调 `resume`、停止重试和探活**，否则会升级为安全验证页硬拦；用 `liepin risk --json` 查看状态，等人工确认允许恢复后再继续。
 - **greet 前查 `liepin chatlist` 或台账去重**：对已建会话会**重发消息**，别重复骚扰已联系的人。
 - 猎聘候选人的 `resume_id` 记进台账备注（`rid=<resume_id>`），后续打招呼/查简历要用。
 - **猎聘境外 IP 拦截**：即使扫码成功，VPN／整机隧道仍可能导致“检测到您当前网络地址在境外”。由用户关闭代理或将 `*.liepin.com` 配置为直连后再确认页面恢复；不要反复登录试探。
