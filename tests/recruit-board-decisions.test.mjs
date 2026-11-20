@@ -10,6 +10,8 @@ import { applyDecisionCommand, decisionsCLI, readDecision } from '../skills/recr
 import { readWorkspaceOverview } from '../skills/recruit-board/scripts/overview.mjs';
 import { recordProgress } from '../skills/recruit-board/scripts/progress.mjs';
 import { importLegacyDecisions } from '../skills/recruit-board/scripts/import-history.mjs';
+import { createBoardServer } from '../skills/recruit-board/scripts/server.mjs';
+import { actionsCLI } from '../skills/recruit-board/scripts/actions.mjs';
 
 const t0 = '2026-11-01T01:00:00.000Z', t1 = '2026-11-02T01:00:00.000Z', t2 = '2026-11-03T01:00:00.000Z';
 const identity = { subjectKey: 'candidate:123', questionKey: 'location-exception', scope: '仅此候选' };
@@ -240,4 +242,255 @@ test('来源、版本、身份、输入文件与路径边界验证，拒绝后�
   assert.equal((await readWorkspaceOverview(root)).status, 'error');
   await assert.rejects(register(root), /工作区/);
   assert.deepEqual(await readdir(outside), ['input.json']);
+});
+
+async function startDecisionBoard(t, root, now = () => t1) {
+  const server = await createBoardServer({ workspace: root, now });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const health = await (await fetch(`${baseUrl}/api/health`)).json();
+  const { csrfToken } = await (await fetch(`${baseUrl}/api/session`)).json();
+  const postDecision = async (body, headers = {}, rawBody = null) => {
+    const response = await fetch(`${baseUrl}/api/decisions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+        'X-Workspace-Key': health.workspaceKey,
+        Origin: baseUrl,
+        ...headers
+      },
+      body: rawBody ?? JSON.stringify(body)
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  return { baseUrl, health, csrfToken, postDecision };
+}
+
+test('HTTP /api/health 声明 web-decisions，POST /api/decisions 支持 decide 暂存、刷新总览缓存并与 actions CLI 互通', async t => {
+  const root = await fixture(t);
+  const { item } = await register(root);
+  const { baseUrl, health, postDecision } = await startDecisionBoard(t, root, () => t1);
+  assert.ok(health.capabilities.includes('web-decisions'));
+  const beforeOverview = await (await fetch(`${baseUrl}/api/workspace/overview`)).json();
+  assert.equal(beforeOverview.counts.open, 1);
+  assert.equal(beforeOverview.counts.followUp, 0);
+
+  const decided = await postDecision({
+    operation: 'decide',
+    input: { id: item.id, expectedRevision: 1, requestId: 'http-decide-1', decision: answer, actions }
+  });
+  assert.equal(decided.status, 200);
+  assert.equal(decided.body.replayed, false);
+  assert.equal(decided.body.appliedRevision, 2);
+  assert.equal(decided.body.item.state, 'decided');
+  assert.equal(decided.body.item.followUp.status, 'pending');
+  assert.ok(decided.body.item.actions.every(action => action.status === 'pending'));
+  assert.equal(typeof decided.body.message, 'string');
+
+  const afterOverview = await (await fetch(`${baseUrl}/api/workspace/overview`)).json();
+  assert.equal(afterOverview.counts.open, 0);
+  assert.equal(afterOverview.counts.followUp, 1);
+  assert.equal(afterOverview.decisions[0].state, 'decided');
+  assert.equal(afterOverview.decisions[0].followUp.status, 'pending');
+
+  const cliDirect = await actionsCLI(['workspace-overview', '--workspace', root]);
+  assert.equal(cliDirect.counts.followUp, 1);
+  assert.equal(cliDirect.decisions[0].id, item.id);
+  assert.equal(cliDirect.decisions[0].state, 'decided');
+  assert.equal(cliDirect.decisions[0].followUp.status, 'pending');
+
+  const actionsCli = fileURLToPath(new URL('../skills/recruit-board/scripts/actions.mjs', import.meta.url));
+  const { stdout } = await promisify(execFile)(process.execPath, [actionsCli, 'workspace-overview', '--workspace', root]);
+  const cliProcess = JSON.parse(stdout);
+  assert.equal(cliProcess.decisions[0].revision, 2);
+  assert.equal(cliProcess.decisions[0].followUp.status, 'pending');
+});
+
+test('HTTP POST /api/decisions 支持 snooze、reopen、revise、cancel 与 resolve-history', async t => {
+  const root = await fixture(t);
+  const { item } = await register(root);
+  const result = { id: 'hist-1', stepId: 'screen', candidateId: JSON.stringify(['合成乙', '合成岗']), action: '初筛', outcome: '需核对', attention: 'decision', nextAction: '是否保留历史例外' };
+  await recordProgress({ workspace: root, id: 'first', action: { type: 'result', result } }, () => t0);
+  const imported = await importLegacyDecisions(root, 'first', () => t0);
+  const historyItem = await readDecision(root, imported.imported[0].id);
+
+  const { baseUrl, postDecision } = await startDecisionBoard(t, root, () => t1);
+
+  const snoozed = await postDecision({
+    operation: 'snooze',
+    input: { id: item.id, expectedRevision: 1, requestId: 'http-snooze-1', until: t2, reason: '暂缓到周二' }
+  });
+  assert.equal(snoozed.status, 200);
+  assert.equal(snoozed.body.item.state, 'snoozed');
+  const overview = await (await fetch(`${baseUrl}/api/workspace/overview`)).json();
+  assert.equal(overview.counts.snoozed, 1);
+  assert.equal(overview.counts.open, 0);
+  assert.equal(overview.counts.history, 1);
+
+  const reopened = await postDecision({
+    operation: 'reopen',
+    input: { id: item.id, expectedRevision: 2, requestId: 'http-reopen-1', reason: '提前重新评估' }
+  });
+  assert.equal(reopened.status, 200);
+  assert.equal(reopened.body.item.state, 'open');
+
+  const decided = await postDecision({
+    operation: 'decide',
+    input: { id: item.id, expectedRevision: 3, requestId: 'http-decide-2', decision: answer, actions }
+  });
+  assert.equal(decided.status, 200);
+
+  const revised = await postDecision({
+    operation: 'revise',
+    input: { id: item.id, expectedRevision: 4, requestId: 'http-revise-1', decision: { ...answer, text: '改为现场办公' }, reason: '明确修订', actions: [actions[0]] }
+  });
+  assert.equal(revised.status, 200);
+  assert.equal(revised.body.item.revision, 5);
+  assert.equal(revised.body.item.decision.text, '改为现场办公');
+  assert.equal(revised.body.item.followUp.status, 'pending');
+  assert.equal(revised.body.item.actions.length, 1);
+
+  const cancelled = await postDecision({
+    operation: 'cancel',
+    input: { id: item.id, expectedRevision: 5, requestId: 'http-cancel-1', reason: '岗位暂停' }
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.item.state, 'cancelled');
+  assert.equal(cancelled.body.item.followUp.status, 'cancelled');
+
+  const resolved = await postDecision({
+    operation: 'resolve-history',
+    input: {
+      id: historyItem.id,
+      expectedRevision: 1,
+      requestId: 'http-resolve-1',
+      resolution: 'decided',
+      reason: '核实后批准推进',
+      decision: { text: '历史例外有效', scope: historyItem.identity.scope },
+      actions: []
+    }
+  });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.body.item.state, 'decided');
+  assert.equal(resolved.body.item.decision.text, '历史例外有效');
+});
+
+test('HTTP POST /api/decisions 保证 requestId 幂等重放、载荷冲突 409、过期版本 409 不改磁盘与 scope 校验', async t => {
+  const root = await fixture(t);
+  const { item } = await register(root);
+  const second = await register(root, { identity: { ...identity, subjectKey: 'candidate:999' }, requestId: 'register-second' });
+  const { postDecision } = await startDecisionBoard(t, root, () => t1);
+
+  const firstPayload = {
+    operation: 'decide',
+    input: { id: item.id, expectedRevision: 1, requestId: 'replay-req-1', decision: answer, actions: [] }
+  };
+  const first = await postDecision(firstPayload);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.appliedRevision, 2);
+  const diskAtRev2 = await readFile(decisionFile(root, item.id));
+
+  const replay = await postDecision(firstPayload);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.replayed, true);
+  assert.equal(replay.body.appliedRevision, 2);
+  assert.equal(replay.body.item.revision, 2);
+  assert.deepEqual(await readFile(decisionFile(root, item.id)), diskAtRev2);
+
+  const conflictPayload = await postDecision({
+    operation: 'decide',
+    input: { id: item.id, expectedRevision: 1, requestId: 'replay-req-1', decision: { ...answer, text: '篡改决定内容' }, actions: [] }
+  });
+  assert.equal(conflictPayload.status, 409);
+  assert.equal(conflictPayload.body.error.code, 'DECISION_REQUEST_CONFLICT');
+  assert.deepEqual(await readFile(decisionFile(root, item.id)), diskAtRev2);
+
+  const revised = await postDecision({
+    operation: 'revise',
+    input: { id: item.id, expectedRevision: 2, requestId: 'revise-req-2', decision: { ...answer, text: '二轮修订' }, reason: '更新标准', actions: [] }
+  });
+  assert.equal(revised.status, 200);
+  assert.equal(revised.body.item.revision, 3);
+  const diskAtRev3 = await readFile(decisionFile(root, item.id));
+
+  const stale = await postDecision({
+    operation: 'revise',
+    input: { id: item.id, expectedRevision: 1, requestId: 'stale-req-3', decision: { ...answer, text: '过期覆盖' }, reason: '旧版本', actions: [] }
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, 'DECISION_REVISION_CONFLICT');
+  assert.deepEqual(await readFile(decisionFile(root, item.id)), diskAtRev3);
+
+  const secondDisk = await readFile(decisionFile(root, second.item.id));
+  const wrongScope = await postDecision({
+    operation: 'decide',
+    input: { id: second.item.id, expectedRevision: 1, requestId: 'scope-mismatch-1', decision: { ...answer, scope: '全岗通用' }, actions: [] }
+  });
+  assert.equal(wrongScope.status, 400);
+  assert.equal(wrongScope.body.error.code, 'DECISION_INPUT_INVALID');
+  assert.deepEqual(await readFile(decisionFile(root, second.item.id)), secondDisk);
+});
+
+test('HTTP POST /api/decisions 拒绝受限操作、非法输入、缺失 CSRF、跨站 Origin 与错误工作区键', async t => {
+  const root = await fixture(t);
+  const { item } = await register(root);
+  const { baseUrl, health, csrfToken, postDecision } = await startDecisionBoard(t, root, () => t1);
+  const validBody = { operation: 'snooze', input: { id: item.id, expectedRevision: 1, requestId: 'guard-check', until: null, reason: '测试守卫' } };
+
+  for (const op of ['action', 'register', 'import', 'close', 'evidence', 'invalidate', 'unknown']) {
+    const res = await postDecision({ operation: op, input: { id: item.id, expectedRevision: 1, requestId: `blocked-${op}` } });
+    assert.equal(res.status, 400, op);
+    assert.equal(res.body.error.code, 'DECISION_OP_FORBIDDEN', op);
+  }
+
+  for (const headers of [
+    { 'X-CSRF-Token': '' },
+    { 'X-CSRF-Token': csrfToken.replace(/^./, csrfToken[0] === 'a' ? 'b' : 'a') }
+  ]) {
+    const res = await postDecision(validBody, headers);
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error.code, 'CSRF_REJECTED');
+  }
+  const noCsrf = await fetch(`${baseUrl}/api/decisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Workspace-Key': health.workspaceKey, Origin: baseUrl },
+    body: JSON.stringify(validBody)
+  });
+  assert.equal(noCsrf.status, 403);
+  assert.equal((await noCsrf.json()).error.code, 'CSRF_REJECTED');
+
+  const crossOrigin = await fetch(`${baseUrl}/api/decisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, 'X-Workspace-Key': health.workspaceKey, Origin: 'https://evil.example' },
+    body: JSON.stringify(validBody)
+  });
+  assert.equal(crossOrigin.status, 403);
+
+  const wrongKey = health.workspaceKey === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64);
+  const mismatch = await postDecision(validBody, { 'X-Workspace-Key': wrongKey });
+  assert.equal(mismatch.status, 409);
+  assert.equal(mismatch.body.error.code, 'WORKSPACE_MISMATCH');
+
+  const nonJson = await postDecision(null, { 'Content-Type': 'text/plain' }, 'plain');
+  assert.equal(nonJson.status, 415);
+  assert.equal(nonJson.body.error.code, 'JSON_REQUIRED');
+
+  const invalidJson = await postDecision(null, {}, '{');
+  assert.equal(invalidJson.status, 400);
+  assert.equal(invalidJson.body.error.code, 'JSON_INVALID');
+
+  for (const badBody of [{}, { operation: 'snooze' }, { operation: 'snooze', input: {}, extra: 1 }, []]) {
+    const res = await postDecision(badBody);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'DECISION_INPUT_INVALID');
+  }
+
+  const oversized = await postDecision(null, {}, JSON.stringify({ operation: 'snooze', input: { pad: 'x'.repeat(33000) } }));
+  assert.equal(oversized.status, 413);
+  assert.equal(oversized.body.error.code, 'REQUEST_TOO_LARGE');
+
+  const methodNotAllowed = await fetch(`${baseUrl}/api/decisions`, { method: 'DELETE' });
+  assert.equal(methodNotAllowed.status, 405);
 });

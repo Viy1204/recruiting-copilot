@@ -1,6 +1,6 @@
 # 跨轮事项与每轮重点
 
-本参考供六个招聘工作流和普通聊天中的事项处理共用。看板只展示文件中已记录的事实，不会自动读取聊天全文或替你执行招聘平台操作。
+本参考供六个招聘工作流、普通聊天与本地看板 `POST /api/decisions` 共用。本地看板与 `scripts/decisions.mjs` 共用 `applyDecisionCommand` 写入 `runtime/recruit-board/decisions/`。看板仅暂存人类决定、暂缓、修订、重开、取消与历史核对，禁止经由 HTTP 调用 `register`、`import`、`evidence`、`action`、`close` 或 `invalidate`，也不会替你执行招聘平台操作。
 
 ## 开工与收尾
 
@@ -54,6 +54,8 @@ node "<actions>" workspace-overview --workspace "<workspace>"
 node "<decisions>" register --workspace "<workspace>" --input-file "<workspace>/runtime/decision-input.json"
 ```
 
+本地看板的 `POST /api/decisions` 也通过同一 `applyDecisionCommand` 写入事项，但只允许 `decide`、`snooze`、`revise`、`reopen`、`cancel` 与 `resolve-history` 六种人类分拣操作。`register`、`evidence`、`action`、`close`、`invalidate` 与 `import` 仍仅限工作流 CLI 调用，经由 HTTP 提交将返回 `400`（`DECISION_OP_FORBIDDEN`）。
+
 register 示例：
 
 ```json
@@ -106,9 +108,9 @@ register 示例：
 node "<decisions>" evidence --workspace "<workspace>" --input-file "<workspace>/runtime/decision-input.json"
 ```
 
-## 用户在聊天里作决定
+## 用户在聊天或看板作决定
 
-先对应对象、问题与适用范围。明确且能唯一对应的回答直接记录；“可以”可能对应多项时只问必要的消歧问题。“都同意”只适用于用户明确看到的那组事项，不扩展到未列出的事项。查看、没有回复、暂缓到期都不是批准。
+用户可在聊天中答复，也可直接在本地看板通过 `POST /api/decisions` 提交决定、暂缓、修订、重开、取消或历史核对。无论走聊天还是网页入口，记录前均须先对应对象、问题与 `item.identity.scope`。明确且能唯一对应的回答直接记录，存在歧义时先问必要的消歧问题。"都同意"只适用于用户明确看到的那组事项，不扩展到未列出的事项。查看、没有回复、暂缓到期都不是批准。
 
 例如把下列内容写入输入文件后调用 decide：
 
@@ -141,7 +143,7 @@ node "<decisions>" decide --workspace "<workspace>" --input-file "<workspace>/ru
 
 ## 后续执行与续办
 
-动作写入只记录事实，不执行外部动作。读取事项确认授权和实际条件，再用原工作流完成业务操作，最后记录结果。
+动作写入只记录事实，不执行外部动作，且 `action` 命令仅可由工作流或 CLI 在核实真实结果后调用（看板 `POST /api/decisions` 会拒绝 `action`）。读取事项确认授权和实际条件，再用原工作流完成业务操作，最后记录结果。
 
 ```json
 {
