@@ -1,0 +1,23 @@
+{
+  "model": "Snapshots.tla",
+  "contract": "snapshots.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/model.mjs",
+      "sha256": "be2f6b16fbef5f0bd43fe46392e922480fac49d78d6283f80d1942a956f38f31"
+    },
+    {
+      "path": "skills/recruit-board/scripts/reader.mjs",
+      "sha256": "5e0c643d181b5f49907baf220c0da3ac6e6d400c97964d9aa3040c987064d65a"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "delete-config-trust-guard",
+      "file": "skills/recruit-board/model.mjs",
+      "before": "  if (!config && hadConfig) preserveCandidates();\n  else {",
+      "after": "  {",
+      "expect": "SNAPSHOTS_TRUSTED_VIEW_PRESERVED"
+    }
+  ]
+}

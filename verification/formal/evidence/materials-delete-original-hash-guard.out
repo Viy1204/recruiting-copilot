@@ -1,0 +1,33 @@
+✔ 旧版保存请求不能覆盖新清单，候选资料和文档标识按原人岗隔离 (107.6023ms)
+✖ 旧版导入请求不能在新清单上复活资料，成功归档可读且内容改变后阻断 (117.1049ms)
+✔ 同名跨原岗未确认时不自动串档，用户确认清空后不恢复隐式档案 (111.3482ms)
+✔ 同版保存和导入争用同一清单写锁，最多一个请求提交 (51.935ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 518.9727
+
+✖ failing tests:
+
+test at verification\formal\materials.test.mjs:70:1
+✖ 旧版导入请求不能在新清单上复活资料，成功归档可读且内容改变后阻断 (117.1049ms)
+  AssertionError [ERR_ASSERTION]: MATERIALS_TAMPERED_ARCHIVE_BLOCKED
+  
+  'ok' !== 'blocked'
+  
+      at file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:94:12
+      at async withWorkspace (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:42:12)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:71:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'ok',
+    expected: 'blocked',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

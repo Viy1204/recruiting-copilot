@@ -1,0 +1,42 @@
+✖ 两项代表步骤的所有可达顺序：禁止假完成，结束后禁止新进度写入 (11.131ms)
+✔ 所有真实工作流均允许任意步骤顺序、等待续办及不先写 summary 的正常完成 (4.2583ms)
+✖ recordProgress 拒绝未收尾任务与三类终态的新收据，失败写入不改变文件 (158.224ms)
+✔ 终态可返回历史重点请求的回执，回放不改变任何持久化内容 (148.0629ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 2
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 565.6665
+
+✖ failing tests:
+
+test at verification\formal\runs.test.mjs:18:1
+✖ 两项代表步骤的所有可达顺序：禁止假完成，结束后禁止新进度写入 (11.131ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception (Error): RUNS_TERMINAL_GUARD failed/fail
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/runs.test.mjs:43:44)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at verification\formal\runs.test.mjs:86:1
+✖ recordProgress 拒绝未收尾任务与三类终态的新收据，失败写入不改变文件 (158.224ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection (Error): RUNS_TERMINAL_STORE_GUARD
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/runs.test.mjs:103:7)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

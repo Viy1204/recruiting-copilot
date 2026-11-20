@@ -1,0 +1,45 @@
+---
+title: "候选资料清单拒绝旧版本覆盖"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 可读取
+    lg1: 持有资料写锁
+  }
+  class lg0 blue
+  class lg1 orange
+  s0: 两份请求使用同一清单版本
+  s1: 已取得资料写锁#65292;核对清单版本
+  s2: 版本一致#65292;准备关联资料
+  s3: 清单已复核#65292;等待原子替换
+  s4: 原件已归档#65292;清单尚未提交
+  s5: 导入已中断 原件保留 清单未提交
+  s6: 新清单已保存#65292;等待释放写锁
+  s7: 另一份同版请求待处理
+  s8: 本轮资料请求均已结束
+  s9: 旧请求已拒绝#65292;等待释放写锁
+  [*] --> s0
+  s0 --> s1: 取得资料写锁
+  s1 --> s2: 核对请求版本
+  s2 --> s3: 保存前复核清单
+  s2 --> s4: 单独发布归档原件
+  s3 --> s6: 原子替换资料清单
+  s4 --> s5: 导入中断#65292;允许留下未关联原件
+  s4 --> s3: 保存前复核清单
+  s5 --> s7: 释放资料写锁
+  s6 --> s7: 释放资料写锁
+  s5 --> s8: 释放资料写锁
+  s7 --> s1: 取得资料写锁
+  s6 --> s8: 释放资料写锁
+  s1 --> s9: 核对请求版本
+  s9 --> s8: 释放资料写锁
+  class s0 blue
+  class s1 orange
+  class s2 orange
+  class s3 orange
+  class s4 orange
+  class s5 orange
+  class s6 orange
+  class s7 blue
+  class s8 blue
+  class s9 orange

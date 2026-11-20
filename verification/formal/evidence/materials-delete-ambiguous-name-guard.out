@@ -1,0 +1,49 @@
+✔ 旧版保存请求不能覆盖新清单，候选资料和文档标识按原人岗隔离 (144.5875ms)
+✔ 旧版导入请求不能在新清单上复活资料，成功归档可读且内容改变后阻断 (122.2638ms)
+✖ 同名跨原岗未确认时不自动串档，用户确认清空后不恢复隐式档案 (13.2807ms)
+✔ 同版保存和导入争用同一清单写锁，最多一个请求提交 (42.1424ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 451.6912
+
+✖ failing tests:
+
+test at verification\formal\materials.test.mjs:99:1
+✖ 同名跨原岗未确认时不自动串档，用户确认清空后不恢复隐式档案 (13.2807ms)
+  AssertionError [ERR_ASSERTION]: MATERIALS_AMBIGUOUS_IDENTITY_ISOLATED
+  + actual - expected
+  
+  + [
+  +   {
+  +     category: 'archive',
+  +     downloadOnly: false,
+  +     filename: '虚构同名.md',
+  +     id: '4b5c5501a4c5c15ae6cb2ff571311d632c77d31accca79a056968eb1b6ae38be',
+  +     kind: 'markdown',
+  +     label: '面试档案',
+  +     message: null,
+  +     mimeType: 'text/plain; charset=utf-8',
+  +     path: '03-interview/虚构同名.md',
+  +     size: 86,
+  +     status: 'ok'
+  +   }
+  + ]
+  - []
+  
+      at file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:101:50
+      at async withWorkspace (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:42:12)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:100:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: '4b5c5501a4c5c15ae6cb2ff571311d632c77d31accca79a056968eb1b6ae38be', path: '03-interview/虚构同名.md', label: '面试档案', category: 'archive', kind: 'markdown', status: 'ok', message: null, size: 86, filename: '虚构同名.md', mimeType: 'text/plain; charset=utf-8', downloadOnly: false } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

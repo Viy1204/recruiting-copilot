@@ -1,0 +1,15 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 0 and seed 4265456450470432754 with 1 worker on 12 cores with 7225MB heap and 64MB offheap memory [pid: 62576] (Windows 10 10.0 amd64, Eclipse Adoptium 25.0.5 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file C:\Users\zhuyifan\recruiting-copilot\verification\formal\models\Mirror.tla
+Semantic processing of module Mirror
+Starting... (2026-11-09 15:34:53)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-09 15:34:53.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 9.1E-16
+341 states generated, 60 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 4).
+Finished in 00s at (2026-11-09 15:34:53)

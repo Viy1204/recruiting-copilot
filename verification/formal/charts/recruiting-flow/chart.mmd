@@ -1,0 +1,42 @@
+---
+title: "招聘主流程 从筛选到约面进展可见"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 完成
+    lg1: 待处理
+    lg2: 进行
+  }
+  class lg0 teal
+  class lg1 orange
+  class lg2 blue
+  s0: 读取已确认岗位标准
+  s1: 取简历#12289;筛选并记录依据
+  s2: 等待用户决定
+  s3: 已暂缓#65292;保留事项
+  s4: 已获授权#65292;等待执行
+  s5: 外部已成功#65292;档案待同步
+  s6: 结果不确定#65292;先核实外部状态
+  s7: 档案事件已写#65292;待回读总览
+  s8: 进展已核实可见
+  [*] --> s0
+  s0 --> s1: 按现行标准开工
+  s1 --> s2: 发现需要确认的后续动作
+  s2 --> s3: 用户选择暂缓
+  s2 --> s4: 用户批准本次动作
+  s3 --> s2: 继续讨论此事项
+  s4 --> s5: 约面动作核实成功
+  s4 --> s6: 返回结果不足以判断成功
+  s5 --> s7: 用稳定事件身份同步档案
+  s6 --> s4: 核实尚未执行#65292;可按有效授权续办
+  s6 --> s5: 核实已经成功#65292;避免重复执行
+  s7 --> s8: 回读总览#65292;确认事件可达
+  class s0 blue
+  class s1 blue
+  class s2 orange
+  class s3 orange
+  class s4 blue
+  class s5 orange
+  class s6 orange
+  class s7 blue
+  class s8 teal

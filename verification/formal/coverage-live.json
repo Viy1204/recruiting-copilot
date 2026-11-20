@@ -1,0 +1,26 @@
+{
+  "model": "Live.tla",
+  "contract": "live.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/public/live.mjs",
+      "sha256": "ded42d28612598ed5b6f81ef94bf7e397ed0cafb0ecb6ac07cc4577b18310007"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "publish-obsolete-response",
+      "file": "skills/recruit-board/public/live.mjs",
+      "before": "const next = await load(request.controller.signal);\n        if (!current() || request.timedOut) return;\n        failures = 0;",
+      "after": "const next = await load(request.controller.signal);\n        failures = 0;",
+      "expect": "FORMAL_LIVE_OBSOLETE_PUBLICATION"
+    },
+    {
+      "name": "start-overlapping-read",
+      "file": "skills/recruit-board/public/live.mjs",
+      "before": "    if (flight) {\n      if (!invalidate) return flight.promise;",
+      "after": "    if (false && flight) {\n      if (!invalidate) return flight.promise;",
+      "expect": "FORMAL_LIVE_SINGLE_FLIGHT"
+    }
+  ]
+}

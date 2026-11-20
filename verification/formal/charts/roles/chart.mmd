@@ -1,0 +1,36 @@
+---
+title: "岗位配置防止旧请求覆盖新值"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 可读取
+    lg1: 持有岗位写锁
+  }
+  class lg0 blue
+  class lg1 orange
+  s0: 同一版本的两个岗位保存请求
+  s1: 已取得共用写锁#65292;核对配置版本
+  s2: 替换内容已准备#65292;保存前再次核对
+  s3: 版本匹配#65292;等待原子替换配置
+  s4: 新岗位配置已提交#65292;等待释放写锁
+  s5: 新配置已保存#65292;旧请求待核对
+  s6: 本轮岗位保存请求均已结束
+  s7: 旧版本请求已拒绝#65292;等待释放写锁
+  [*] --> s0
+  s0 --> s1: 取得岗位共用写锁
+  s1 --> s2: 核对原始配置版本
+  s2 --> s3: 保存前再次核对版本
+  s3 --> s4: 原子替换当前配置文件
+  s4 --> s5: 释放岗位写锁
+  s4 --> s6: 释放岗位写锁
+  s5 --> s1: 取得岗位共用写锁
+  s1 --> s7: 核对原始配置版本
+  s7 --> s6: 释放岗位写锁
+  class s0 blue
+  class s1 orange
+  class s2 orange
+  class s3 orange
+  class s4 orange
+  class s5 blue
+  class s6 blue
+  class s7 orange

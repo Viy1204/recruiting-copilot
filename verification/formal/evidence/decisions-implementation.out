@@ -1,0 +1,10 @@
+✔ 纯域转换：expectedRevision 阻止旧写，requestId 重放不增加修订或回滚依据 (7.2345ms)
+✔ 公开存储入口：拒绝旧版本后文件不变，重放旧请求仍返回最新事项且逐字不重写 (113.8949ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 265.1801

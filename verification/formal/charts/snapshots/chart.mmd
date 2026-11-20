@@ -1,0 +1,34 @@
+---
+title: "候选快照保留可信视图"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 来源待恢复
+    lg1: 可核对
+  }
+  class lg0 orange
+  class lg1 blue
+  s0: 开始读取候选台账
+  s1: 台账读取结束#65292;等待岗位表
+  s2: 岗位表读取结束#65292;等待兼容配置
+  s3: 来源已读取#65292;等待生成候选投影
+  s4: 整套沿用最后可信视图并标陈旧
+  s5: 台账有效#65292;确认为零人
+  s6: 按本次可用来源展示候选
+  s7: 台账不可读#65292;人数明确未知
+  [*] --> s0
+  s0 --> s1: 独立读取候选台账
+  s1 --> s2: 独立读取正式岗位表
+  s2 --> s3: 独立读取兼容配置
+  s3 --> s4: 核对来源并生成完整视图
+  s3 --> s5: 核对来源并生成完整视图
+  s3 --> s7: 核对来源并生成完整视图
+  s3 --> s6: 核对来源并生成完整视图
+  class s0 blue
+  class s1 blue
+  class s2 blue
+  class s3 blue
+  class s4 orange
+  class s5 blue
+  class s6 blue
+  class s7 orange

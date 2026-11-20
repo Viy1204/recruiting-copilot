@@ -1,0 +1,48 @@
+TLC 1.7.4; openjdk version "25.0.5" 2026-10-20 LTS
+
+runs
+implementation PASS; model PASS; 66 distinct states
+mutation remove-terminal-write-guard: CAUGHT
+mutation remove-completed-input-guard: CAUGHT
+
+decisions
+implementation PASS; model PASS; 7 distinct states
+mutation remove-expected-revision-guard: CAUGHT
+mutation remove-request-replay-guard: CAUGHT
+
+events
+implementation PASS; model PASS; 60 distinct states
+mutation remove-calendar-archive-event-guard: CAUGHT
+mutation remove-archive-diagnostic-guard: CAUGHT
+
+snapshots
+implementation PASS; model PASS; 195 distinct states
+mutation delete-config-trust-guard: CAUGHT
+
+materials
+implementation PASS; model PASS; 38 distinct states
+mutation delete-set-caller-revision-guard: CAUGHT
+mutation delete-import-caller-revision-guard: CAUGHT
+mutation delete-ambiguous-name-guard: CAUGHT
+mutation delete-original-hash-guard: CAUGHT
+
+roles
+implementation PASS; model PASS; 54 distinct states
+mutation delete-alias-revision-guards: CAUGHT
+mutation delete-status-revision-guards: CAUGHT
+
+live
+implementation PASS; model PASS; 10 distinct states
+mutation publish-obsolete-response: CAUGHT
+mutation start-overlapping-read: CAUGHT
+
+mirror
+implementation PASS; model PASS; 60 distinct states
+mutation recover-during-risk: CAUGHT
+mutation fit-during-risk: CAUGHT
+mutation replace-first-risk: CAUGHT
+mutation clear-after-risk-await: CAUGHT
+
+Evidence: C:\Users\zhuyifan\AppData\Local\Temp\recruit-formal-run-2TQhRo
+
+[exited with code 0]

@@ -1,0 +1,56 @@
+{
+  "model": "Materials.tla",
+  "contract": "materials.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/scripts/materials.mjs",
+      "sha256": "fee8a10acdcdbedac7eda4db406a8cf848537cf4b2e70e600f48e064a52a88aa"
+    },
+    {
+      "path": "skills/recruit-board/scripts/records.mjs",
+      "sha256": "d06bc8951119ceb2a987889ca0a683e318727c0dffb633450ec5c5a3f3ec323b"
+    },
+    {
+      "path": "skills/recruit-board/scripts/storage.mjs",
+      "sha256": "34de725c933ac5c0e4dc1f2388e28c89ad1a99ce0ba0252efc4312585e6deb8c"
+    },
+    {
+      "path": "skills/recruit-board/model.mjs",
+      "sha256": "be2f6b16fbef5f0bd43fe46392e922480fac49d78d6283f80d1942a956f38f31"
+    },
+    {
+      "path": "skills/recruit-board/scripts/reader.mjs",
+      "sha256": "5e0c643d181b5f49907baf220c0da3ac6e6d400c97964d9aa3040c987064d65a"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "delete-set-caller-revision-guard",
+      "file": "skills/recruit-board/scripts/materials.mjs",
+      "before": "    if (current.revision !== revision) throw failure('MATERIALS_CONFLICT', '资料映射已被修改，请重新读取后保存', 409);\n",
+      "after": "",
+      "expect": "MATERIALS_STALE_SET_REJECTED"
+    },
+    {
+      "name": "delete-import-caller-revision-guard",
+      "file": "skills/recruit-board/scripts/materials.mjs",
+      "before": "    if (revision !== undefined && current.revision !== revision) throw failure('MATERIALS_CONFLICT', '资料映射已被修改，请重新读取后导入', 409);\n",
+      "after": "",
+      "expect": "MATERIALS_STALE_IMPORT_REJECTED"
+    },
+    {
+      "name": "delete-ambiguous-name-guard",
+      "file": "skills/recruit-board/scripts/records.mjs",
+      "before": "  if (!explicit?.confirmed && plainName && uniqueName) {",
+      "after": "  if (!explicit?.confirmed && plainName) {",
+      "expect": "MATERIALS_AMBIGUOUS_IDENTITY_ISOLATED"
+    },
+    {
+      "name": "delete-original-hash-guard",
+      "file": "skills/recruit-board/scripts/records.mjs",
+      "before": "    if (reference.sha256 && createHash('sha256').update(bytes).digest('hex') !== reference.sha256) return blocked('归档原件的内容校验不一致，请核对后重新关联', bytes.length);\n",
+      "after": "",
+      "expect": "MATERIALS_TAMPERED_ARCHIVE_BLOCKED"
+    }
+  ]
+}

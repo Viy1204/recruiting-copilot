@@ -1,0 +1,18 @@
+{
+  "syncCommit": "80d623348799711ded9ea78eaf5c8961e1556a69",
+  "scratchCopies": [
+    "package.json",
+    "skills/recruit-board",
+    "lib"
+  ],
+  "subsystems": {
+    "runs": "coverage-runs.json",
+    "decisions": "coverage-decisions.json",
+    "events": "coverage-events.json",
+    "snapshots": "coverage-snapshots.json",
+    "materials": "coverage-materials.json",
+    "roles": "coverage-roles.json",
+    "live": "coverage-live.json",
+    "mirror": "coverage-mirror.json"
+  }
+}

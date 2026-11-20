@@ -1,0 +1,59 @@
+✔ 所有至多四步的风险、人工解除和维护事件保持熔断及首次依据 (7.507ms)
+✖ 风险在首条视口命令等待期间置位后，不应再派发新的还原写入 (1.4224ms)
+✖ 熔断中断的还原在人工解除后可重试，成功后不重复还原 (0.3599ms)
+✔ 还原等待期间重新请求相同贴合，中断后不会复用失效的旧覆盖 (0.4093ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 2
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 120.6064
+
+✖ failing tests:
+
+test at verification\formal\mirror.test.mjs:66:1
+✖ 风险在首条视口命令等待期间置位后，不应再派发新的还原写入 (1.4224ms)
+  AssertionError [ERR_ASSERTION]: FORMAL_MIRROR_ASYNC_RISK
+  + actual - expected
+  
+  + [
+  +   {
+  +     method: 'Emulation.clearDeviceMetricsOverride',
+  +     riskAtDispatch: true
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/mirror.test.mjs:79:10)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { method: 'Emulation.clearDeviceMetricsOverride', riskAtDispatch: true } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at verification\formal\mirror.test.mjs:82:1
+✖ 熔断中断的还原在人工解除后可重试，成功后不重复还原 (0.3599ms)
+  AssertionError [ERR_ASSERTION]: FORMAL_MIRROR_RESTORE_RETRY
+  + actual - expected
+  
+    [
+      'Emulation.setDeviceMetricsOverride',
+  +   'Emulation.clearDeviceMetricsOverride'
+    ]
+  
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/mirror.test.mjs:95:10)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride' ],
+    expected: [ 'Emulation.setDeviceMetricsOverride' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

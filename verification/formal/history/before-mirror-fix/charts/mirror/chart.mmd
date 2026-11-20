@@ -1,0 +1,53 @@
+---
+title: "浏览器镜像 风险置位与异步还原竞态"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 发现问题
+    lg1: 熔断
+    lg2: 正常
+    lg3: Breaks NoViewportDispatchAfterRisk
+    lg4: Path to the NoViewportDispatchAfterRisk bug
+  }
+  class lg0 pink
+  class lg1 orange
+  class lg2 teal
+  class lg3 breaks
+  class lg4 bugPath
+  s0: 未熔断 可以自动维护
+  s1: 首条视口命令等待返回
+  s2: 已熔断 自动维护入口被拦截
+  s3: 还原命令已发出 等待返回
+  s4: 已熔断 首条视口命令仍在途
+  s5: 命令发出后才熔断 等待返回
+  s6: 熔断后仍发出下一条还原命令
+  s7: 风险后的写入已返回 等待安全恢复
+  [*] --> s0
+  s0 --> s1: 入口检查后开始视口还原
+  s0 --> s2: 观察到风险页
+  s1 --> s3: 首条返回后继续发送清除命令
+  s1 --> s4: 观察到风险页
+  s2 --> s0: 用户处理后显式解除
+  s3 --> s0: 清除命令返回
+  s3 --> s5: 观察到风险页
+  s4 --> s1: 用户处理后显式解除
+  s4 --> s6: 首条返回后继续发送清除命令
+  s5 --> s3: 用户处理后显式解除
+  s5 --> s2: 清除命令返回
+  s6 --> s7: 清除命令返回
+  s7 --> s1: 重新还原 [已经人工解除风险]
+  classDef breaks fill:#ffecee,stroke:#e72e3b,stroke-width:2.5px,color:#cd2834
+  class s0 teal
+  class s0 bugPath
+  class s1 teal
+  class s1 bugPath
+  class s2 orange
+  class s3 teal
+  class s4 orange
+  class s4 bugPath
+  class s5 orange
+  class s6 pink
+  class s6 breaks
+  class s6 bugPath
+  class s7 pink
+  class s7 breaks

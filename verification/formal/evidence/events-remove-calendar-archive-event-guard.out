@@ -1,0 +1,43 @@
+✖ calendar 收据对应的每个人都须有来源本轮的有效档案事件，别人的事件与别轮来源不能代替 (95.887ms)
+✖ 已存在有效事件时，关联档案的坏记录或不可读诊断仍阻止收尾；恢复后可以完成 (98.0821ms)
+✔ 稳定事件身份的重放不重复写档案，摘要与 complete 导入同一重点不重复 (111.2504ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 1
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 425.4775
+
+✖ failing tests:
+
+test at verification\formal\events.test.mjs:51:1
+✖ calendar 收据对应的每个人都须有来源本轮的有效档案事件，别人的事件与别轮来源不能代替 (95.887ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: EVENTS_CALENDAR_GUARD
+      at async assertBlocked (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/events.test.mjs:46:5)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/events.test.mjs:56:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /进展事件/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at verification\formal\events.test.mjs:75:1
+✖ 已存在有效事件时，关联档案的坏记录或不可读诊断仍阻止收尾；恢复后可以完成 (98.0821ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: EVENTS_DIAGNOSTIC_GUARD
+      at async assertBlocked (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/events.test.mjs:46:5)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/events.test.mjs:86:7)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /进展事件/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -1,0 +1,265 @@
+{
+  "date": "2026-11-09",
+  "syncCommit": "80d623348799711ded9ea78eaf5c8961e1556a69",
+  "workingTree": {
+    "committed": false,
+    "changedSources": [
+      {
+        "path": "lib/index.js",
+        "sha256": "cefb427a96bdc213f529de52fc38eccb651df8ff5e763bc614b6ec42f67278ee"
+      }
+    ]
+  },
+  "tools": {
+    "node": "v24.9.0",
+    "tlcRelease": "1.7.4",
+    "java": "Temurin 25.0.5"
+  },
+  "regression": {
+    "tests": 238,
+    "pass": 238,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "subsystems": [
+    {
+      "subsystem": "runs",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "66",
+      "mutations": [
+        {
+          "name": "remove-terminal-write-guard",
+          "detected": true
+        },
+        {
+          "name": "remove-completed-input-guard",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 4,
+        "pass": 4,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 66
+    },
+    {
+      "subsystem": "decisions",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "7",
+      "mutations": [
+        {
+          "name": "remove-expected-revision-guard",
+          "detected": true
+        },
+        {
+          "name": "remove-request-replay-guard",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 7
+    },
+    {
+      "subsystem": "events",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "60",
+      "mutations": [
+        {
+          "name": "remove-calendar-archive-event-guard",
+          "detected": true
+        },
+        {
+          "name": "remove-archive-diagnostic-guard",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 60
+    },
+    {
+      "subsystem": "snapshots",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "195",
+      "mutations": [
+        {
+          "name": "delete-config-trust-guard",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 195
+    },
+    {
+      "subsystem": "materials",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "38",
+      "mutations": [
+        {
+          "name": "delete-set-caller-revision-guard",
+          "detected": true
+        },
+        {
+          "name": "delete-import-caller-revision-guard",
+          "detected": true
+        },
+        {
+          "name": "delete-ambiguous-name-guard",
+          "detected": true
+        },
+        {
+          "name": "delete-original-hash-guard",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 4,
+        "pass": 4,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 38
+    },
+    {
+      "subsystem": "roles",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "54",
+      "mutations": [
+        {
+          "name": "delete-alias-revision-guards",
+          "detected": true
+        },
+        {
+          "name": "delete-status-revision-guards",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 54
+    },
+    {
+      "subsystem": "live",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "10",
+      "mutations": [
+        {
+          "name": "publish-obsolete-response",
+          "detected": true
+        },
+        {
+          "name": "start-overlapping-read",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 10
+    },
+    {
+      "subsystem": "mirror",
+      "implementation": 0,
+      "tlc": 0,
+      "states": "60",
+      "mutations": [
+        {
+          "name": "recover-during-risk",
+          "detected": true
+        },
+        {
+          "name": "fit-during-risk",
+          "detected": true
+        },
+        {
+          "name": "replace-first-risk",
+          "detected": true
+        },
+        {
+          "name": "clear-after-risk-await",
+          "detected": true
+        }
+      ],
+      "knownFindings": [],
+      "contract": {
+        "tests": 4,
+        "pass": 4,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      },
+      "statechartExploredStates": 60,
+      "statechartStatus": "generated",
+      "reviewedWorkingTree": true,
+      "statechartGraphStates": 6,
+      "statechartArrows": 11,
+      "statechartHiddenSteps": 176
+    }
+  ],
+  "mutations": {
+    "total": 19,
+    "caught": 19
+  },
+  "contractTotals": {
+    "tests": 24,
+    "pass": 24,
+    "fail": 0
+  },
+  "statechart": {
+    "mirror": {
+      "status": "generated",
+      "explicitUserInvocation": true,
+      "exploredStates": 60,
+      "graphStates": 6,
+      "arrows": 11,
+      "hiddenSteps": 176,
+      "report": "charts/mirror/report.md",
+      "historicalReport": "history/before-mirror-fix/charts/mirror/report.md"
+    }
+  }
+}

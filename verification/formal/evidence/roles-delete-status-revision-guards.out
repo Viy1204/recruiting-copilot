@@ -1,0 +1,28 @@
+✔ 同一配置旧版本的别名保存不能覆盖新映射，原人岗身份和岗位表不变 (55.4095ms)
+✖ 同一配置旧版本的状态保存不能覆盖新状态，提交点前后的其他字节保留 (33.0954ms)
+✔ 同一文件版本的两个岗位请求争用共用锁，最多一个提交 (47.3108ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 255.8792
+
+✖ failing tests:
+
+test at verification\formal\roles.test.mjs:68:1
+✖ 同一配置旧版本的状态保存不能覆盖新状态，提交点前后的其他字节保留 (33.0954ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: ROLES_STALE_STATUS_REJECTED
+      at async file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/roles.test.mjs:76:5
+      at async withWorkspace (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/roles.test.mjs:28:12)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/roles.test.mjs:69:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

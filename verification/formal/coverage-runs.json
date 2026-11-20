@@ -1,0 +1,30 @@
+{
+  "model": "Runs.tla",
+  "contract": "runs.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/model.mjs",
+      "sha256": "be2f6b16fbef5f0bd43fe46392e922480fac49d78d6283f80d1942a956f38f31"
+    },
+    {
+      "path": "skills/recruit-board/scripts/progress.mjs",
+      "sha256": "0f9dd89b82bbcb97ed65f616cfd59f3980d2aae804742ab87638cc07d3f272f3"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "remove-terminal-write-guard",
+      "file": "skills/recruit-board/model.mjs",
+      "before": "  if (['completed', 'failed', 'cancelled'].includes(run.status)) throw new Error('轮次已经结束，请创建新的 runId');",
+      "after": "",
+      "expect": "RUNS_TERMINAL_GUARD"
+    },
+    {
+      "name": "remove-completed-input-guard",
+      "file": "skills/recruit-board/model.mjs",
+      "before": "  if (value.status === 'completed' && steps.some(step => !['completed', 'skipped'].includes(step.status))) throw new Error('完成轮次仍有未完成步骤');",
+      "after": "",
+      "expect": "RUNS_VALIDATE_COMPLETION_GUARD"
+    }
+  ]
+}
