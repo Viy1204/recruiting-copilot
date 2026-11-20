@@ -99,17 +99,27 @@
               <button type="button" data-overview-filter="open" aria-pressed="false" aria-controls="workspace-decision-list" hidden>待确认</button>
               <button type="button" data-overview-filter="followUp" aria-pressed="false" aria-controls="workspace-decision-list" hidden>后续执行</button>
               <button type="button" data-overview-filter="history_review" aria-pressed="false" aria-controls="workspace-decision-list" hidden>历史待核对</button>
+              <button type="button" data-overview-filter="snoozed" aria-pressed="false" aria-controls="workspace-decision-list" hidden>已暂缓</button>
+              <button type="button" data-overview-filter="all" aria-pressed="false" aria-controls="workspace-decision-list" hidden>全部事项</button>
             </div>
             <p id="workspace-decision-caption" class="workspace-overview-caption" hidden></p>
             <p id="workspace-decision-empty" class="workspace-overview-note" hidden></p>
-            <ul id="workspace-decision-list" class="workspace-decision-list" aria-labelledby="workspace-decisions-heading"></ul>
+            <p id="triage-status" class="triage-status" role="status" aria-live="polite" hidden></p>
+            <div id="triage-workbench" class="triage-workbench">
+              <div class="triage-queue-pane">
+                <div id="triage-queue-head" class="triage-queue-head" hidden><span id="triage-queue-title" class="triage-queue-title"></span><span class="triage-queue-hint">↑↓ 切人 · Shift+↓ 多选</span></div>
+                <div id="triage-batch-bar" class="triage-batch-bar" hidden></div>
+                <ul id="workspace-decision-list" class="workspace-decision-list" aria-labelledby="workspace-decisions-heading"></ul>
+              </div>
+              <aside id="triage-inspector" class="triage-inspector" aria-label="当前事项详情与拍板" hidden></aside>
+            </div>
             <div class="workspace-decision-entries overview-list-footer">
               <p id="workspace-decision-summary" class="workspace-overview-caption"></p>
-              <button id="workspace-all-decisions" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer">全部事项</button>
+              <button id="workspace-all-decisions" class="text-button" type="button" aria-controls="workspace-decision-list">全部事项</button>
             </div>
             <div class="workspace-secondary-entries">
-              <button id="workspace-snoozed-link" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer" hidden></button>
-              <button id="workspace-followup-link" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer" hidden></button>
+              <button id="workspace-snoozed-link" class="text-button" type="button" aria-controls="workspace-decision-list" hidden></button>
+              <button id="workspace-followup-link" class="text-button" type="button" aria-controls="workspace-decision-list" hidden></button>
             </div>
           </section>
           <section class="workspace-highlights" aria-labelledby="workspace-highlights-heading">
@@ -366,7 +376,7 @@
         <button id="finish-following" class="primary-button" type="button">完成</button>
       </section>
     </div>
-    <footer id="workspace-drawer-footer" class="workspace-drawer-footer">在聊天中说明事项与决定；这里保留记录。</footer>
+    <footer id="workspace-drawer-footer" class="workspace-drawer-footer">资料与关注来自当前工作区。</footer>
   </dialog>
   <template id="stage-template">
     <button class="stage-button" type="button" aria-expanded="false" aria-controls="candidate-detail">

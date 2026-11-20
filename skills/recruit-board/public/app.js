@@ -1,5 +1,6 @@
 import { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } from '/model.mjs';
 import { createSnapshotController } from '/live.mjs';
+import { bindLayer, bindPart, createChange, createReorder, createRovingFocus, createSelection, definePrimitive, keepFocus } from '/vendor/ui-sdk-core/index.js';
 
 const byId = id => document.getElementById(id);
 const roleSelect = byId('role'), runSelect = byId('run'), refreshButton = byId('refresh-board');
@@ -17,6 +18,8 @@ let resultsRequest = 0;
 const freshResults = runId => ({ runId, open: true, filter: 'all', data: undefined, status: 'idle', error: null, requestedVersion: null, loadedVersion: null, updatedAt: null, expanded: new Set() });
 let resultsState = freshResults(null);
 const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null, filter: 'auto' };
+const triageState = { activeId: null, expandedId: null, drafts: new Map(), status: '', statusError: false, submittingId: null, userCollapsed: false };
+let triageCleanups = [], triageInst = null, bypassOverviewFreeze = false, drawerLayerCleanup = null, pickerLayerCleanup = null;
 const drawerState = { page: null, group: 'all', listKind: 'decisions', itemId: null, returnFocus: null, listFocus: null, listScroll: 0, pageScroll: 0, expanded: new Set(), stack: [] };
 let roleRangeMessage = '';
 let runHighlightsRequest = 0, runHighlightsAbort = null;
@@ -42,9 +45,9 @@ const LAYOUT_GROUPS = {
   tasks: { parent: 'task-blocks', label: '任务与记录', members: [{ id: 'task-card', label: '任务摘要' }, { id: 'execution-records', label: '执行记录' }] }
 };
 const defaultLayoutOrders = () => Object.fromEntries(Object.entries(LAYOUT_GROUPS).map(([id, group]) => [id, group.members.map(member => member.id)]));
-const layoutState = { editing: false, workspaceKey: null, orders: defaultLayoutOrders(), gesture: null, changedBeforeLoad: false, storageMessage: '' };
-const layoutItems = new Map();
-let applyingLayout = false, layoutScrollFrame = null;
+const layoutState = { editing: false, workspaceKey: null, orders: defaultLayoutOrders(), changedBeforeLoad: false, storageMessage: '' };
+const layoutItems = new Map(), layoutGroups = new Map();
+let applyingLayout = false;
 
 const workspaceNavTargets = {
   overview: byId('workbench-heading'),
@@ -99,8 +102,25 @@ document.addEventListener('focusin', event => {
   workspaceNavFocus = navItem ? navItem.dataset.navTarget : null;
 });
 document.addEventListener('pointerdown', event => { if (!event.target.closest?.('[data-nav-target]')) workspaceNavFocus = null; }, true);
+function isCompactTriage() {
+  const app = document.querySelector('.app');
+  if (app?.dataset.preview === 'narrow') return true;
+  const width = app?.getBoundingClientRect().width ?? 0;
+  if (width > 0) return width < 900;
+  return typeof window.__workbenchWidth === 'number' && window.__workbenchWidth < 900;
+}
+let lastCompactTriage = isCompactTriage();
+function syncCompactTriage() {
+  const next = isCompactTriage();
+  if (next === lastCompactTriage) return;
+  lastCompactTriage = next;
+  if (next && triageState.activeId) { triageState.expandedId = triageState.activeId; triageState.userCollapsed = false; }
+  if (!next && !triageState.activeId && triageState.expandedId) triageState.activeId = triageState.expandedId;
+  if (overviewState.data) renderWorkspaceOverview();
+}
 if (typeof ResizeObserver === 'function') {
   new ResizeObserver(() => {
+    syncCompactTriage();
     if (!workspaceNavFocus) return;
     const active = document.activeElement;
     if (active !== document.body && active !== document.documentElement && visibleWorkbenchTarget(active)) return;
@@ -112,6 +132,7 @@ if (typeof ResizeObserver === 'function') {
     if (heading && visibleWorkbenchTarget(heading)) focusWorkbenchTarget(heading);
   }).observe(document.querySelector('.app'));
 }
+window.addEventListener('resize', syncCompactTriage);
 
 const initialPreviewMode = initialURL.searchParams.get('preview');
 const previewEnabled = ['wide', 'narrow'].includes(initialPreviewMode);
@@ -122,6 +143,7 @@ function setPreviewMode(mode) {
   const url = new URL(window.location.href);
   url.searchParams.set('preview', mode);
   if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+  syncCompactTriage();
 }
 byId('preview-toolbar').hidden = !previewEnabled;
 if (previewEnabled) setPreviewMode(initialPreviewMode);
@@ -165,184 +187,74 @@ function parseLayoutOrders(value) {
   return { orders, repaired };
 }
 
-function updateLayoutControls() {
+function domApplyGroupOrder(groupId, order) {
+  const focused = document.activeElement, selection = focused?.matches('input, textarea') && typeof focused.selectionStart === 'number' ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection] : null;
+  applyingLayout = true;
+  try {
+    const parent = byId(LAYOUT_GROUPS[groupId].parent);
+    let position = parent.firstElementChild;
+    for (const id of order) {
+      const element = layoutItems.get(id)?.element;
+      if (!element) continue;
+      if (element !== position) { if (typeof parent.moveBefore === 'function') parent.moveBefore(element, position); else parent.insertBefore(element, position); }
+      position = element.nextElementSibling;
+    }
+    if (focused?.isConnected && document.activeElement !== focused) { focused.focus({ preventScroll: true }); if (selection) focused.setSelectionRange(...selection); }
+  } finally { applyingLayout = false; }
+}
+
+function updateLayoutControls(groupIdFilter = null) {
   for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
-    const order = layoutState.orders[groupId];
+    if (groupIdFilter && groupId !== groupIdFilter) continue;
+    const inst = layoutGroups.get(groupId), state = inst?.get(), order = state ? inst.api.reorder.order(state) : layoutState.orders[groupId];
     for (const member of group.members) {
       const controls = layoutItems.get(member.id), position = order.indexOf(member.id);
+      if (!controls) continue;
+      const moving = state ? inst.api.reorder.moving(state, member.id) : false, dragging = state ? inst.api.reorder.dragging(state, member.id) : false;
       controls.bar.hidden = !layoutState.editing;
+      controls.element.classList.toggle('layout-dragging', dragging);
+      controls.element.classList.toggle('layout-grabbed', moving && !dragging);
+      controls.handle.setAttribute('aria-pressed', String(moving));
       controls.handle.setAttribute('aria-label', `调整${member.label}顺序，${group.label}第 ${position + 1} / ${order.length} 位`);
       controls.up.setAttribute('aria-disabled', String(position === 0));
       controls.down.setAttribute('aria-disabled', String(position === order.length - 1));
     }
   }
+  if ([...layoutGroups.values()].some(inst => inst.get().draft?.pointer)) document.documentElement.dataset.layoutDragging = 'true';
+  else delete document.documentElement.dataset.layoutDragging;
 }
 
 function applyLayoutOrders(orders) {
-  const focused = document.activeElement;
-  const selection = focused?.matches('input, textarea') && typeof focused.selectionStart === 'number' ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection] : null;
   layoutState.orders = orders;
-  applyingLayout = true;
-  try {
-    for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
-      const parent = byId(group.parent);
-      let position = parent.firstElementChild;
-      for (const id of orders[groupId]) {
-        const element = layoutItems.get(id).element;
-        if (element !== position) {
-          if (typeof parent.moveBefore === 'function') parent.moveBefore(element, position);
-          else parent.insertBefore(element, position);
-        }
-        position = element.nextElementSibling;
-      }
-    }
-    if (focused?.isConnected && document.activeElement !== focused) {
-      focused.focus({ preventScroll: true });
-      if (selection) focused.setSelectionRange(...selection);
-    }
-  } finally {
-    applyingLayout = false;
-  }
+  for (const groupId of Object.keys(LAYOUT_GROUPS)) { domApplyGroupOrder(groupId, orders[groupId]); layoutGroups.get(groupId)?.setOptions({ order: orders[groupId] }); }
   updateLayoutControls();
 }
 
+const hasActiveLayoutDraft = () => [...layoutGroups.values()].some(inst => Boolean(inst.get().draft));
+const cancelLayoutDrafts = () => { for (const inst of layoutGroups.values()) inst.api.reorder.cancel(); };
+
 function syncLayoutPreferences() {
-  if (layoutState.workspaceKey || !snapshot?.workspaceKey || layoutState.gesture) return;
+  if (layoutState.workspaceKey || !snapshot?.workspaceKey || hasActiveLayoutDraft()) return;
   layoutState.workspaceKey = snapshot.workspaceKey;
   let orders = defaultLayoutOrders();
   try {
     const saved = localStorage.getItem(`recruiting-board:layout:v1:${layoutState.workspaceKey}`);
     if (saved !== null) {
       try {
-        const parsed = parseLayoutOrders(JSON.parse(saved));
-        orders = parsed.orders;
+        const parsed = parseLayoutOrders(JSON.parse(saved)); orders = parsed.orders;
         if (parsed.repaired) layoutState.storageMessage = '本机布局记录已整理：忽略无效或重复项，并补齐缺少的模块。';
-      } catch (error) {
-        layoutState.storageMessage = '本机布局记录损坏或版本不兼容，已恢复默认顺序。';
-      }
+      } catch { layoutState.storageMessage = '本机布局记录损坏或版本不兼容，已恢复默认顺序。'; }
     }
-  } catch (error) {
-    layoutState.storageMessage = '本机布局读取失败；本页仍可排序，刷新后可能不会保留。';
-  }
-  if (!layoutState.changedBeforeLoad && !layoutState.gesture) applyLayoutOrders(orders);
-  else if (!layoutState.gesture) persistLayoutOrders();
+  } catch { layoutState.storageMessage = '本机布局读取失败；本页仍可排序，刷新后可能不会保留。'; }
+  if (!layoutState.changedBeforeLoad) applyLayoutOrders(orders); else persistLayoutOrders();
   renderLayoutStorageNotice();
-}
-
-function layoutPositionMessage(groupId, id) {
-  const order = layoutState.orders[groupId];
-  return `${layoutItems.get(id).label}位于${LAYOUT_GROUPS[groupId].label}第 ${order.indexOf(id) + 1} / ${order.length} 位`;
-}
-
-function keepLayoutControlVisible(element) {
-  const rect = element.getBoundingClientRect();
-  const top = Math.min(byId('layout-toolbar').getBoundingClientRect().bottom + 8, window.innerHeight / 2);
-  if (rect.top < top) window.scrollBy(0, rect.top - top);
-  else if (rect.bottom > window.innerHeight - 12) window.scrollBy(0, rect.bottom - window.innerHeight + 12);
-}
-
-function clearLayoutDrop() {
-  for (const { element } of layoutItems.values()) delete element.dataset.layoutDrop;
-}
-
-function previewLayoutDrop(gesture) {
-  clearLayoutDrop();
-  const parent = byId(LAYOUT_GROUPS[gesture.groupId].parent), bounds = parent.getBoundingClientRect();
-  gesture.order = null;
-  if (gesture.x < bounds.left || gesture.x > bounds.right || gesture.y < bounds.top || gesture.y > bounds.bottom) return;
-  const rest = gesture.before.filter(id => id !== gesture.id);
-  const visible = rest.filter(id => layoutItems.get(id).element.getClientRects().length);
-  if (!visible.length) { gesture.order = gesture.before; return; }
-  const next = visible.find(id => {
-    const rect = layoutItems.get(id).element.getBoundingClientRect();
-    return gesture.y < rect.top + rect.height / 2;
-  });
-  const index = next === undefined ? rest.length : rest.indexOf(next);
-  gesture.order = [...rest.slice(0, index), gesture.id, ...rest.slice(index)];
-  if (gesture.order.every((id, position) => id === gesture.before[position])) return;
-  layoutItems.get(next ?? visible[visible.length - 1]).element.dataset.layoutDrop = next === undefined ? 'after' : 'before';
-}
-
-function scrollLayoutDrag(timestamp) {
-  layoutScrollFrame = null;
-  const gesture = layoutState.gesture;
-  if (gesture?.kind !== 'pointer' || gesture.phase !== 'dragging') return;
-  const bounds = byId(LAYOUT_GROUPS[gesture.groupId].parent).getBoundingClientRect();
-  const top = Math.max(0, byId('layout-toolbar').getBoundingClientRect().bottom), edge = 64;
-  const bottom = window.innerHeight;
-  const inGroup = gesture.x >= bounds.left && gesture.x <= bounds.right && gesture.y >= bounds.top && gesture.y <= bounds.bottom;
-  const speed = !inGroup ? 0 : gesture.y < top + edge ? -Math.min(1, (top + edge - gesture.y) / edge) : gesture.y > bottom - edge ? Math.min(1, (gesture.y - bottom + edge) / edge) : 0;
-  const elapsed = gesture.lastFrame === null ? 16 : Math.min(32, timestamp - gesture.lastFrame);
-  gesture.lastFrame = timestamp;
-  if (speed) window.scrollBy(0, speed * elapsed * .8);
-  previewLayoutDrop(gesture);
-  layoutScrollFrame = requestAnimationFrame(scrollLayoutDrag);
-}
-
-function finishLayoutGesture(commit, returnFocus = false) {
-  const gesture = layoutState.gesture;
-  if (!gesture) return;
-  layoutState.gesture = null;
-  if (layoutScrollFrame !== null) cancelAnimationFrame(layoutScrollFrame);
-  layoutScrollFrame = null;
-  const item = layoutItems.get(gesture.id);
-  item.element.classList.remove('layout-dragging', 'layout-grabbed');
-  item.handle.setAttribute('aria-pressed', 'false');
-  delete document.documentElement.dataset.layoutDragging;
-  clearLayoutDrop();
-  if (gesture.kind === 'pointer' && item.handle.hasPointerCapture?.(gesture.pointerId)) item.handle.releasePointerCapture(gesture.pointerId);
-  if (gesture.kind === 'pointer' && gesture.phase === 'pending') {
-    syncLayoutPreferences();
-    return;
-  }
-  const order = gesture.kind === 'pointer' ? gesture.order : layoutState.orders[gesture.groupId];
-  const accepted = commit && order !== null;
-  const next = accepted ? order : gesture.before;
-  const changed = next.some((id, index) => id !== gesture.before[index]);
-  applyLayoutOrders({ ...layoutState.orders, [gesture.groupId]: next });
-  if (accepted && changed) persistLayoutOrders();
-  syncLayoutPreferences();
-  announceLayout(accepted ? `${layoutPositionMessage(gesture.groupId, gesture.id)}，${changed ? '顺序已应用' : '位置未变'}。` : `${item.label}的本次移动已取消，顺序已恢复。`);
-  if (returnFocus) item.handle.focus({ preventScroll: true });
-}
-
-function startKeyboardLayout(groupId, id) {
-  const current = layoutState.gesture;
-  if (current?.kind === 'pointer') return false;
-  if (current?.id === id) return true;
-  if (current) finishLayoutGesture(true);
-  layoutState.gesture = { kind: 'keyboard', groupId, id, before: [...layoutState.orders[groupId]] };
-  const item = layoutItems.get(id);
-  item.element.classList.add('layout-grabbed');
-  item.handle.setAttribute('aria-pressed', 'true');
-  announceLayout(`已抓起${item.label}；↑↓ 在${LAYOUT_GROUPS[groupId].label}内移动，Enter 或空格确认，Esc 取消。`);
-  return true;
-}
-
-function moveLayoutItem(groupId, id, offset, keyboard = false, trigger = null) {
-  if (!layoutState.editing) return;
-  if (keyboard) { if (!startKeyboardLayout(groupId, id)) return; }
-  else if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
-  const order = [...layoutState.orders[groupId]], index = order.indexOf(id), target = index + offset;
-  if (target < 0 || target >= order.length) { announceLayout(`${layoutItems.get(id).label}已在同级${offset < 0 ? '最前' : '最后'}。`); return; }
-  [order[index], order[target]] = [order[target], order[index]];
-  applyLayoutOrders({ ...layoutState.orders, [groupId]: order });
-  if (!keyboard) persistLayoutOrders();
-  announceLayout(`${layoutPositionMessage(groupId, id)}。${keyboard ? 'Enter 或空格确认，Esc 取消。' : '顺序已应用。'}`);
-  keepLayoutControlVisible(trigger ?? layoutItems.get(id).handle);
 }
 
 function setLayoutEditing(editing) {
-  if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
-  layoutState.editing = editing;
-  byId('edit-layout').setAttribute('aria-expanded', String(editing));
-  byId('layout-editor').hidden = !editing;
-  byId('layout-toolbar').classList.toggle('is-editing', editing);
-  byId('layout-root').classList.toggle('is-editing', editing);
-  setWorkspaceNavTarget(activeView);
-  updateLayoutControls();
-  renderLayoutStorageNotice();
-  renderCandidateSearch();
+  cancelLayoutDrafts(); layoutState.editing = editing;
+  byId('edit-layout').setAttribute('aria-expanded', String(editing)); byId('layout-editor').hidden = !editing;
+  byId('layout-toolbar').classList.toggle('is-editing', editing); byId('layout-root').classList.toggle('is-editing', editing);
+  setWorkspaceNavTarget(activeView); updateLayoutControls(); renderLayoutStorageNotice(); renderCandidateSearch();
   announceLayout(editing ? '正在调整布局。可拖动同级模块、点上移／下移，或在把手上使用上下箭头。' : '已完成布局调整。');
   if (!editing) byId('edit-layout').focus({ preventScroll: true });
 }
@@ -350,112 +262,72 @@ function setLayoutEditing(editing) {
 function layoutIcon(paths) {
   const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
-  for (const d of paths) {
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d); icon.append(path);
-  }
+  for (const d of paths) { const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d); icon.append(path); }
   return icon;
 }
 
+const layoutGroupPrimitive = definePrimitive({
+  name: 'layout-group', options: { order: 'object' },
+  state: options => ({ order: options.order ?? [], draft: null }), sync: options => ({ order: options.order }),
+  api: context => ({
+    reorder: createReorder(context, {
+      key: 'order', draft: 'draft', orientation: () => 'vertical', label: id => layoutItems.get(id)?.label ?? id,
+      set: next => { applyLayoutOrders({ ...layoutState.orders, [context.id]: next }); persistLayoutOrders(); announceLayout(`${LAYOUT_GROUPS[context.id].label}顺序已更新。`); return true; }
+    })
+  }),
+  slots: slot => ({ item: slot({ props: { id: 'string' }, bind: (el, part) => part.api.reorder.bind(el, { key: part.props.id, props: part.props }) }) })
+});
+
 for (const [groupId, group] of Object.entries(LAYOUT_GROUPS)) {
+  const inst = layoutGroupPrimitive({ id: groupId, order: layoutState.orders[groupId] });
+  layoutGroups.set(groupId, inst);
   for (const member of group.members) {
     const element = byId(group.parent).querySelector(`:scope > [data-layout-item="${member.id}"]`);
-    const bar = node('div', 'layout-item-controls'); bar.hidden = true;
-    bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', `${member.label}布局操作`);
-    const handle = node('button', 'layout-drag-handle'); handle.type = 'button'; handle.id = `layout-handle-${member.id}`;
-    handle.dataset.layoutHandle = member.id;
+    const bar = node('div', 'layout-item-controls'); bar.hidden = true; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', `${member.label}布局操作`);
+    const handle = node('button', 'layout-drag-handle'); handle.type = 'button'; handle.id = `layout-handle-${member.id}`; handle.dataset.layoutHandle = member.id;
     handle.setAttribute('aria-describedby', 'layout-help'); handle.setAttribute('aria-controls', group.parent);
     handle.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown Enter Space Escape'); handle.setAttribute('aria-pressed', 'false');
     handle.title = `拖动${member.label}；也可用 ↑↓ 调整，Enter 确认，Esc 取消`;
     handle.append(layoutIcon(['M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01']), node('span', 'layout-handle-label', member.label));
     const up = node('button', 'layout-move-button'), down = node('button', 'layout-move-button');
     for (const [button, direction, offset, path] of [[up, '上移', -1, 'M12 19V5M5 12l7-7 7 7'], [down, '下移', 1, 'M12 5v14M5 12l7 7 7-7']]) {
-      button.type = 'button'; button.dataset.layoutMove = offset < 0 ? 'up' : 'down';
-      button.setAttribute('aria-label', `${direction}${member.label}`); button.title = direction;
+      button.type = 'button'; button.dataset.layoutMove = offset < 0 ? 'up' : 'down'; button.setAttribute('aria-label', `${direction}${member.label}`); button.title = direction;
       button.append(layoutIcon([path]));
-      button.addEventListener('click', () => moveLayoutItem(groupId, member.id, offset, false, button));
+      button.addEventListener('click', () => { if (!layoutState.editing) return; inst.api.reorder.cancel(); const order = layoutState.orders[groupId], target = order.indexOf(member.id) + offset; if (target >= 0 && target < order.length) inst.api.reorder.move(member.id, target); });
     }
     handle.addEventListener('keydown', event => {
       if (!layoutState.editing || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
-      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-        event.preventDefault(); event.stopPropagation();
-        moveLayoutItem(groupId, member.id, event.key === 'ArrowUp' ? -1 : 1, true);
-      } else if (event.key === ' ' || event.key === 'Enter') {
-        event.preventDefault(); event.stopPropagation();
-        if (event.repeat) return;
-        if (layoutState.gesture?.id === member.id) finishLayoutGesture(true, true);
-        else startKeyboardLayout(groupId, member.id);
-      }
-    });
-    handle.addEventListener('click', event => {
-      event.preventDefault();
-      if (!layoutState.editing || event.detail !== 0 || layoutState.gesture?.kind === 'pointer') return;
-      if (layoutState.gesture?.id === member.id) finishLayoutGesture(true, true);
-      else startKeyboardLayout(groupId, member.id);
+      if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !inst.get().draft) inst.api.reorder.grab(member.id);
+      if (inst.api.reorder.keydown(event, member.id)) event.stopPropagation();
     });
     handle.addEventListener('pointerdown', event => {
       if (!layoutState.editing || event.button !== 0 || !event.isPrimary) return;
-      event.preventDefault(); event.stopPropagation();
-      if (layoutState.gesture) finishLayoutGesture(layoutState.gesture.kind === 'keyboard');
-      handle.focus({ preventScroll: true });
-      layoutState.gesture = { kind: 'pointer', phase: 'pending', groupId, id: member.id, pointerId: event.pointerId, before: [...layoutState.orders[groupId]], order: null, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, lastFrame: null };
-      if (typeof handle.setPointerCapture === 'function') handle.setPointerCapture(event.pointerId);
-    });
-    handle.addEventListener('lostpointercapture', event => {
-      if (layoutState.gesture?.kind === 'pointer' && layoutState.gesture.pointerId === event.pointerId) finishLayoutGesture(false);
+      inst.api.reorder.pointerdown(event, member.id);
+      event.preventDefault(); event.stopPropagation(); handle.focus({ preventScroll: true });
     });
     handle.addEventListener('dragstart', event => event.preventDefault());
     bar.append(handle, up, down); element.prepend(bar);
     layoutItems.set(member.id, { ...member, groupId, element, bar, handle, up, down });
+    bindPart(inst, 'item', element, { id: member.id });
   }
+  inst.subscribe(() => { if (!applyingLayout) domApplyGroupOrder(groupId, inst.api.reorder.order(inst.get())); updateLayoutControls(groupId); });
 }
 updateLayoutControls();
 byId('edit-layout').addEventListener('click', () => setLayoutEditing(!layoutState.editing));
 byId('finish-layout').addEventListener('click', () => setLayoutEditing(false));
 byId('reset-layout').addEventListener('click', () => {
-  finishLayoutGesture(false);
+  cancelLayoutDrafts();
   applyLayoutOrders(defaultLayoutOrders()); persistLayoutOrders();
   announceLayout('已恢复默认布局：确认事项、岗位与人选、任务与记录；组内顺序也已恢复。');
 });
-document.addEventListener('pointermove', event => {
-  const gesture = layoutState.gesture;
-  if (gesture?.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
-  gesture.x = event.clientX; gesture.y = event.clientY;
-  if (gesture.phase === 'pending') {
-    if (Math.hypot(gesture.x - gesture.startX, gesture.y - gesture.startY) < 6) return;
-    gesture.phase = 'dragging';
-    layoutItems.get(gesture.id).element.classList.add('layout-dragging');
-    layoutItems.get(gesture.id).handle.setAttribute('aria-pressed', 'true');
-    document.documentElement.dataset.layoutDragging = 'true';
-    announceLayout(`正在移动${layoutItems.get(gesture.id).label}，仅限${LAYOUT_GROUPS[gesture.groupId].label}内；松开应用，Esc 取消。`);
-    layoutScrollFrame = requestAnimationFrame(scrollLayoutDrag);
-  }
-  event.preventDefault(); previewLayoutDrop(gesture);
-}, { passive: false });
-document.addEventListener('pointerup', event => {
-  const gesture = layoutState.gesture;
-  if (gesture?.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
-  if (gesture.phase === 'dragging') { gesture.x = event.clientX; gesture.y = event.clientY; previewLayoutDrop(gesture); }
-  finishLayoutGesture(true, true);
-});
-document.addEventListener('pointercancel', event => {
-  if (layoutState.gesture?.kind === 'pointer' && layoutState.gesture.pointerId === event.pointerId) finishLayoutGesture(false, true);
-});
 document.addEventListener('keydown', event => {
   if (!layoutState.editing || event.key !== 'Escape' || event.isComposing) return;
-  if (layoutState.gesture) {
-    event.preventDefault(); event.stopPropagation(); finishLayoutGesture(false, true);
-  } else if (event.target.closest('.layout-item-controls, #layout-toolbar')) {
-    event.preventDefault(); event.stopPropagation(); setLayoutEditing(false);
-  }
+  if (hasActiveLayoutDraft()) { event.preventDefault(); event.stopPropagation(); cancelLayoutDrafts(); }
+  else if (event.target.closest('.layout-item-controls, #layout-toolbar')) { event.preventDefault(); event.stopPropagation(); setLayoutEditing(false); }
 }, true);
-document.addEventListener('focusin', event => {
-  const gesture = layoutState.gesture;
-  if (!applyingLayout && gesture?.kind === 'keyboard' && event.target !== layoutItems.get(gesture.id).handle) finishLayoutGesture(true);
-});
-window.addEventListener('blur', () => finishLayoutGesture(false));
-window.addEventListener('pagehide', () => finishLayoutGesture(false));
-document.addEventListener('visibilitychange', () => { if (document.hidden) finishLayoutGesture(false); });
+window.addEventListener('blur', cancelLayoutDrafts);
+window.addEventListener('pagehide', cancelLayoutDrafts);
+document.addEventListener('visibilitychange', () => { if (document.hidden) cancelLayoutDrafts(); });
 
 function options(select, values, selection) {
   const signature = JSON.stringify(values);
@@ -521,17 +393,21 @@ function checkWorkspaceOverview(response) {
 }
 
 function overviewReading() {
+  if (bypassOverviewFreeze) return false;
+  const active = document.activeElement;
   return Boolean(
     drawerState.page
     || byId('source-details').open
+    || active?.closest?.('.decision-composer-input, .decision-composer-form')
+    || document.querySelector('#triage-inspector details[open], .triage-inline-body details[open]')
     || (activeView === 'tasks' && byId('execution-records').open)
     || (activeView === 'roles' && (
       selectedCandidateId
       || (selectedStage && selectedStage !== 'all')
       || !byId('role-manager').hidden
       || byId('candidate-query').value.trim()
-      || byId('candidate-list').contains(document.activeElement)
-      || byId('candidate-search-list').contains(document.activeElement)
+      || byId('candidate-list').contains(active)
+      || byId('candidate-search-list').contains(active)
     ))
     || layoutState.editing
   );
@@ -666,108 +542,226 @@ function subjectLine(item) {
 }
 
 function subjectLinks(item) {
-  const links = node('div', 'subject-links');
-  for (const subject of itemSubjects(item)) {
-    if (!subject.candidateId) continue;
-    if (subject.current) {
-      const button = node('button', 'text-button', `查看 ${subject.name} 的资料`); button.type = 'button';
-      button.dataset.subject = subject.candidateId;
-      button.addEventListener('click', () => openDrawerCandidate(subject.current, button));
-      links.append(button);
-    } else links.append(node('p', 'workspace-overview-caption', `${subject.name} · 当前资料不可用，保留原记录中的岗位信息。`));
+  const subjects = itemSubjects(item).filter(s => s.candidateId), messages = item.associationMessages ?? [];
+  if (!subjects.length && !messages.length) return null;
+  const bar = node('div', 'dossier-archive-bar'), actions = node('div', 'subject-links');
+  if (subjects.some(s => s.current)) bar.append(node('span', 'workspace-overview-caption', '已核实候选档案'));
+  for (const subject of subjects) {
+    if (!subject.current) { bar.append(node('p', 'workspace-overview-caption', `${subject.name} · 当前资料不可用，保留原记录中的岗位信息。`)); continue; }
+    const button = node('button', 'secondary-button dossier-archive-btn', `阅读原始档案 · ${subject.name}`); button.type = 'button';
+    button.dataset.subject = subject.candidateId; button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
+    button.addEventListener('click', () => drawerState.page ? openDrawerCandidate(subject.current, button) : void openCandidate(subject.current, 'triage', button));
+    actions.append(button);
   }
-  for (const message of item.associationMessages ?? []) links.append(node('p', 'association-note', message));
-  return links;
+  if (actions.children.length) bar.append(actions);
+  for (const message of messages) bar.append(node('p', 'association-note', message));
+  return bar;
 }
 
 function eventDetails(item) {
   const details = node('span', 'highlight-details');
-  for (const field of item.details ?? []) {
-    const row = node('span'); row.append(node('span', 'detail-label', field.label), node('span', '', field.value)); details.append(row);
-  }
+  for (const field of item.details ?? []) { const row = node('span'); row.append(node('span', 'detail-label', field.label), node('span', '', field.value)); details.append(row); }
   return details;
 }
 
-function decisionBackground(item) {
-  return item.reason || [...item.history].reverse().find(entry => entry.evidence)?.evidence || '';
+const decisionBackground = item => item.reason || [...item.history].reverse().find(entry => entry.evidence)?.evidence || '';
+const formatRating = (r, spaced = false) => !r ? '' : /^[SABCD][+-]?$/i.test(r.trim()) ? `${r.trim()}${spaced ? ' ' : ''}级` : r.trim();
+
+function triageBrief(item) {
+  const subjects = itemSubjects(item), c = subjects[0]?.current ?? null, act = c ? candidateActivityMap().get(c.id) : null;
+  const stageLabel = c ? (STAGES.find(stage => stage.id === c.stage)?.label ?? '未归类') : '';
+  const firstRunId = item.sources?.[0]?.runId, firstRun = firstRunId ? snapshot?.runs?.find(run => run.id === firstRunId) : null;
+  const firstRunLabel = firstRun ? `${firstRun.label} · ${shortTime(firstRun.createdAt)}` : firstRunId ? `轮次 ${firstRunId}` : '';
+  const ratingTag = c ? formatRating(c.rating, false) : '';
+  const who = c ? `${c.name}${ratingTag ? ` · ${ratingTag}` : ''}` : (subjects[0]?.name || subjects[0]?.role || '工作区事项');
+  const roleBase = [...new Set(subjects.map(s => s.role || '岗位待确认'))].join(' / ') || (item.associationStatus === 'workspace' || item.context?.scope === 'workspace' ? '工作区事项' : '岗位待确认');
+  const rawScope = item.decision?.scope || item.identity?.scope || '';
+  const cleanScope = rawScope && (rawScope !== '历史收据待核对' || item.effectiveState === 'history_review') ? rawScope : '';
+  const scopePart = cleanScope && cleanScope !== roleBase ? cleanScope : '';
+  const pillText = item.blocking && item.effectiveState === 'open' ? '阻塞下一步 · 待确认' : item.state === 'decided' && item.followUp?.status && item.followUp.status !== 'none' ? `${DECISION_STATES[item.effectiveState]} · 待下一轮执行` : DECISION_STATES[item.effectiveState];
+  const tone = item.blocking && item.effectiveState === 'open' ? 'urgent' : item.effectiveState === 'open' ? 'warn' : item.effectiveState;
+  const facts = c
+    ? [['当前阶段 / 评级', `${stageLabel} · ${formatRating(c.rating, true) || '未评级'}`], ['台账状态 / 近期动作', `${candidateStatus(c)}${act?.action ? ` · ${act.action}` : ''}`], ['应聘岗位 / 适用范围', `${subjects[0].role || '岗位待确认'} · ${cleanScope || '仅此候选'}`]]
+    : [['事项对象 / 状态', `${subjects[0]?.name || subjects[0]?.role || '工作区事项'} · ${DECISION_STATES[item.effectiveState]}`], ['适用范围', `${cleanScope || '工作区范围'}`], ['来源轮次 / 更新', `${firstRunLabel || '本地事项记录'} · ${shortTime(item.updatedAt)}`]];
+  const notices = [
+    item.deadline && `截止 ${time(item.deadline)}`,
+    item.snoozedUntil ? `暂缓至 ${time(item.snoozedUntil)}${item.state === 'snoozed' && item.effectiveState === 'open' ? ' · 已到期，恢复提醒' : ''}` : item.effectiveState === 'snoozed' && '暂缓期限未指定。',
+    item.blocking && ['open', 'snoozed', 'history_review'].includes(item.effectiveState) && '有后续动作等待该决定。',
+    item.effectiveState === 'history_review' && !item.decision && '历史记录尚待核对，未确认当前是否仍有效。'
+  ].filter(Boolean);
+  return { who, roleLabel: [roleBase, scopePart].filter(Boolean).join(' · '), pill: { text: pillText, state: item.effectiveState, tone }, background: decisionBackground(item), facts, notices, subjects };
 }
 
-function decisionRow(item) {
-  const row = node('li', 'workspace-decision'); row.dataset.decision = item.id;
-  const button = node('button', 'workspace-preview-row'); button.type = 'button';
-  button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', 'workspace-drawer');
-  const heading = node('span', 'workspace-preview-subject'), avatar = node('span', 'subject-avatar'); avatar.setAttribute('aria-hidden', 'true');
-  const subjects = itemSubjects(item);
-  if (subjects.length === 1 && subjects[0].name) avatar.textContent = Array.from(subjects[0].name)[0];
-  else avatar.append(layoutIcon(['M3 7h18v14H3zM8 7V3h8v4M8 7v14M16 7v14']));
-  heading.append(avatar, subjectLine(item), layoutIcon(['m9 6 6 6-6 6']));
-  button.append(heading, node('strong', 'workspace-preview-title', item.title));
-  const background = decisionBackground(item);
-  button.append(node('span', 'workspace-preview-background', background || '背景尚未记录，可查看来源核对。'));
-  const state = node('span', 'workspace-preview-state', DECISION_STATES[item.effectiveState]); state.dataset.state = item.effectiveState;
-  const footer = node('span', 'workspace-preview-footer'); footer.append(state);
-  if (hasFollowUp(item)) {
-    const action = node('span', 'workspace-preview-state', ACTION_STATES[item.followUp.status]); action.dataset.state = item.followUp.status;
-    footer.append(action);
+const triageListPrimitive = definePrimitive({
+  name: 'triage-list', state: () => ({ tabStop: null, selected: [] }),
+  api: context => {
+    const change = createChange(context);
+    const roving = createRovingFocus(context, { slot: 'row', key: 'tabStop', orientation: () => 'vertical', loop: () => false });
+    const selection = createSelection(context, { key: 'selected', set: (value, details) => change('selected', value, details), order: () => roving.items().map(entry => entry.key), multiple: () => true });
+    return { roving, selection };
+  },
+  slots: slot => ({
+    root: slot({ attrs: () => ({ role: 'listbox', 'aria-multiselectable': 'true' }) }),
+    row: slot({
+      props: { id: 'string' },
+      attrs: (state, { props, api }) => ({ role: 'option', tabindex: api.roving.tabIndex(state, { key: props.id, props }), 'aria-selected': String(state.selected.includes(props.id)) }),
+      on: { keydown: (event, { api }) => { const moved = api.roving.keydown(event, event.currentTarget); if (moved?.shift) api.selection.extend(moved.key, { from: moved.from, reason: 'keyboard-range', event }); } },
+      focus: ({ props, api }) => api.roving.focus(props.id),
+      bind: (el, part) => part.api.roving.bind(el, { key: part.props.id, props: part.props })
+    })
+  })
+});
+
+const getTriageDraft = id => { let d = triageState.drafts.get(id); if (!d) { d = { text: '', followUp: false }; triageState.drafts.set(id, d); } return d; };
+const ensureCsrfToken = async () => csrfToken ?? (csrfToken = (await jsonRequest('/api/session')).csrfToken);
+const rowForDecision = (root, id) => [...root.querySelectorAll('[data-decision]')].find(el => el.dataset.decision === id);
+
+function buildDecisionCommand(item, mode, payload = {}) {
+  const requestId = globalThis.crypto?.randomUUID?.() ?? `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const base = { id: item.id, requestId, expectedRevision: item.revision ?? 1 };
+  if (mode === 'snooze') return { operation: 'snooze', input: { ...base, until: new Date(Date.now() + 86_400_000).toISOString(), reason: '看板暂缓至明日复核' } };
+  const decisionText = (mode === 'preset1' ? '同意并登记待执行动作' : mode === 'preset2' ? '仅记录结论，无需外部执行动作' : payload.text ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').trim();
+  const actions = mode === 'preset1' ? [{ id: 'followup-action', kind: 'external', label: '按已确认方案执行外部跟进' }] : mode === 'preset2' ? [] : payload.actions ?? [];
+  if (item.state === 'history_review') return { operation: 'resolve-history', input: { ...base, resolution: 'decided', reason: '看板历史核对确认', decision: { text: decisionText, scope: item.identity.scope, authority: '看板历史核对' }, actions } };
+  if (item.state === 'decided' || item.state === 'closed') return { operation: 'revise', input: { ...base, reason: '看板修订决定', decision: { text: decisionText, scope: item.identity.scope, authority: '看板修订确认' }, actions } };
+  return { operation: 'decide', input: { ...base, decision: { text: decisionText, scope: item.identity.scope, authority: '看板确认' }, actions } };
+}
+
+function renderTriageStatus() { const el = byId('triage-status'); text(el, triageState.status); el.hidden = !triageState.status; el.dataset.state = triageState.statusError ? 'error' : 'ok'; }
+
+async function submitDecision(item, mode, payload = {}, { autoAdvance = true, refresh = true } = {}) {
+  if (triageState.submittingId || workspaceBlocked) return false;
+  triageState.submittingId = item.id;
+  try {
+    const token = await ensureCsrfToken();
+    const result = await jsonRequest('/api/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify(buildDecisionCommand(item, mode, payload)) });
+    triageState.drafts.delete(item.id); triageState.status = result.message || '已记录决定 · 待下一轮流程执行'; triageState.statusError = false;
+    if (autoAdvance) {
+      const next = (overviewState.data?.decisions ?? []).find(d => d.id !== item.id && ['open', 'history_review'].includes(d.effectiveState));
+      triageState.activeId = next?.id ?? item.id; triageState.expandedId = next?.id ?? null; triageState.userCollapsed = false;
+    }
+    if (refresh) { bypassOverviewFreeze = true; try { await overviewController.refresh({ invalidate: true }); } finally { bypassOverviewFreeze = false; } }
+    return true;
+  } catch (error) { triageState.status = error.message; triageState.statusError = true; renderTriageStatus(); return false; }
+  finally { triageState.submittingId = null; }
+}
+
+function renderDecisionComposer(item) {
+  const box = node('section', 'decision-composer'); box.setAttribute('aria-label', '快速拍板');
+  const inFlight = item.actions?.some(action => ['running', 'uncertain'].includes(action.status));
+  if (!['open', 'snoozed', 'history_review'].includes(item.state) && (item.state !== 'decided' || inFlight)) {
+    box.append(node('p', 'workspace-overview-caption', inFlight ? '存在执行中或待核实动作，请先核实后再修订。' : '当前状态已归档，无需在此操作。')); return box;
   }
-  if (item.deadline && item.effectiveState === 'open') {
-    const due = new Date(item.deadline).getTime() <= Date.now();
-    const deadline = node('span', 'workspace-preview-deadline', `${due ? '已到期' : '截止'} ${shortTime(item.deadline)}`);
-    deadline.dataset.due = String(due); footer.append(deadline);
-  } else if (item.blocking && item.effectiveState === 'open') footer.append(node('span', 'workspace-preview-deadline', '有后续动作等待'));
-  footer.append(node('span', 'workspace-preview-meta', `更新于 ${shortTime(item.updatedAt)}`));
-  button.append(footer);
-  button.addEventListener('click', () => openWorkspaceDecision(item.id, button));
-  row.append(button); return row;
+  const [btn1, btn2] = [['1', '同意并登记待执行动作'], ['2', '仅记录结论（无外部动作）']].map(([k, label]) => {
+    const btn = node('button', 'decision-preset-button'); btn.type = 'button'; btn.dataset.preset = k; if (k === '2') btn.dataset.variant = 'secondary';
+    btn.append(node('kbd', '', k), node('span', '', label)); btn.addEventListener('click', () => void submitDecision(item, k === '1' ? 'preset1' : 'preset2')); return btn;
+  });
+  if (['open', 'snoozed', 'history_review'].includes(item.state)) {
+    const row = node('div', 'decision-preset-row'); row.append(btn1, btn2);
+    box.append(node('p', 'composer-eyebrow', '在看板内直接拍板（快捷键 1 / 2 / S 或输入补充结论）'), row);
+  }
+  const draft = getTriageDraft(item.id), form = node('form', 'decision-composer-form'), input = node('input', 'search-input decision-composer-input');
+  input.type = 'text'; input.placeholder = '或输入补充要求（例如：先问清可出差频率再约一面）'; input.value = draft.text; input.setAttribute('aria-label', '自定义决定内容');
+  input.addEventListener('input', () => { getTriageDraft(item.id).text = input.value; });
+  const followLabel = node('label', 'decision-followup-toggle'), followCheck = node('input');
+  followCheck.type = 'checkbox'; followCheck.checked = draft.followUp; followCheck.addEventListener('change', () => { getTriageDraft(item.id).followUp = followCheck.checked; });
+  followLabel.append(followCheck, node('span', '', '登记后续待执行动作（由下一轮流程核实执行）'));
+  const submit = node('button', 'primary-button', item.state === 'decided' ? '修订决定' : '记录决定'); submit.type = 'submit';
+  form.addEventListener('submit', event => { event.preventDefault(); const value = input.value.trim(); if (value) void submitDecision(item, 'custom', { text: value, actions: followCheck.checked ? [{ id: 'custom-followup', kind: 'external', label: value.slice(0, 120) }] : [] }); });
+  form.append(input, submit);
+  if (['open', 'snoozed'].includes(item.state)) { const snooze = node('button', 'secondary-button', '暂缓至明日 (S)'); snooze.type = 'button'; snooze.dataset.action = 'snooze'; snooze.addEventListener('click', () => void submitDecision(item, 'snooze')); form.append(snooze); }
+  form.append(followLabel);
+  box.append(form, node('p', 'workspace-overview-caption decision-safety-note', '安全边界：点击后仅原子保存为本地「已决定」，外部平台动作保持「待执行」，不私自外发消息。'));
+  return box;
 }
 
-function decisionDetail(item) {
-  const body = node('div', 'workspace-decision-body'); body.dataset.decision = item.id;
-  const state = node('span', 'workspace-state', DECISION_STATES[item.effectiveState]); state.dataset.state = item.effectiveState;
-  body.append(subjectLine(item), node('h3', 'workspace-detail-title', item.title));
-  const background = decisionBackground(item);
-  body.append(node('p', 'workspace-detail-reason', background || '背景尚未记录，请结合来源核对。'), state, subjectLinks(item));
-  if (item.identity.scope && item.identity.scope !== '历史收据待核对') body.append(node('p', 'workspace-overview-caption', `适用范围：${item.identity.scope}`));
-  if (item.decision) body.append(node('h4', '', '当前决定'), node('p', 'workspace-detail-answer', item.decision.text));
-  else body.append(node('p', 'workspace-detail-answer', item.effectiveState === 'history_review' ? '历史记录尚待核对，未确认当前是否仍有效。' : '尚未记录明确决定。'));
-  if (item.deadline) body.append(node('p', 'workspace-overview-note', `截止 ${time(item.deadline)}`));
-  if (item.snoozedUntil) body.append(node('p', 'workspace-overview-note', `暂缓至 ${time(item.snoozedUntil)}${item.state === 'snoozed' && item.effectiveState === 'open' ? ' · 已到期，恢复提醒' : ''}`));
-  else if (item.effectiveState === 'snoozed') body.append(node('p', 'workspace-overview-note', '暂缓期限未指定。'));
-  if (item.blocking && ['open', 'snoozed', 'history_review'].includes(item.effectiveState)) body.append(node('p', 'workspace-overview-note', '有后续动作等待该决定。'));
+const makePill = brief => { const pill = node('span', 'workspace-preview-state', brief.pill.text); pill.dataset.state = brief.pill.state; pill.dataset.tone = brief.pill.tone; return pill; };
+function appendOptionalBadges(target, item) {
+  if (hasFollowUp(item)) { const action = node('span', 'workspace-preview-state', ACTION_STATES[item.followUp.status]); action.dataset.state = item.followUp.status; target.append(action); }
+  if (item.deadline && item.effectiveState === 'open') { const due = new Date(item.deadline).getTime() <= Date.now(); const dl = node('span', 'workspace-preview-deadline', `${due ? '已到期' : '截止'} ${shortTime(item.deadline)}`); dl.dataset.due = String(due); target.append(dl); }
+  else if (item.blocking && item.effectiveState === 'open') target.append(node('span', 'workspace-preview-deadline', '有后续动作等待'));
+}
+
+function decisionRow(item, { triage = false, compact = false, expanded = false } = {}) {
+  const row = node('li', 'workspace-decision'); row.dataset.decision = item.id;
+  const openInline = collapse => {
+    if (collapse) { triageState.expandedId = null; triageState.userCollapsed = true; } else { triageState.activeId = item.id; triageState.expandedId = item.id; triageState.userCollapsed = false; }
+    renderWorkspaceOverview();
+  };
+  if (triage && compact && item.state === 'decided' && !expanded) {
+    row.classList.add('triage-decided-compact');
+    const receipt = node('div', 'triage-compact-receipt'), btn = node('button', 'triage-compact-toggle'), expandBtn = node('button', 'secondary-button triage-expand-btn', '展开核对');
+    btn.type = expandBtn.type = 'button'; btn.dataset.triageRow = item.id; btn.setAttribute('aria-expanded', 'false');
+    btn.append(node('span', 'triage-compact-who', itemSubjects(item)[0]?.name || '工作区事项'), node('span', 'triage-compact-answer', item.decision?.text ? `已记录：${item.decision.text}` : item.title));
+    btn.addEventListener('click', () => openInline(false)); expandBtn.addEventListener('click', () => openInline(false));
+    receipt.append(btn, makePill(triageBrief(item)), expandBtn); row.append(receipt); return row;
+  }
+  const brief = triageBrief(item);
+  if (triage && compact) {
+    row.classList.add('triage-stream-card'); if (expanded) row.classList.add('is-expanded');
+    const head = node('div', 'triage-card-head'), button = node('button', 'triage-stream-summary'), badges = node('span', 'triage-stream-badges'), toggleBtn = node('button', 'secondary-button triage-expand-btn', expanded ? '收起' : '展开核对');
+    button.type = toggleBtn.type = 'button'; button.dataset.triageRow = item.id; button.setAttribute('aria-expanded', String(expanded));
+    badges.append(makePill(brief)); appendOptionalBadges(badges, item); button.append(subjectLine(item), node('strong', 'workspace-preview-title', item.title), badges);
+    button.addEventListener('click', () => openInline(expanded)); toggleBtn.addEventListener('click', () => openInline(expanded)); head.append(button, toggleBtn); row.append(head);
+    if (expanded) { const body = node('div', 'triage-inline-body'); body.append(decisionDetail(item, { inline: true }), renderDecisionComposer(item)); row.append(body); }
+    return row;
+  }
+  if (triage) {
+    const button = node('button', 'workspace-preview-row'), top = node('span', 'triage-row-top'), footer = node('span', 'workspace-preview-footer');
+    button.type = 'button'; button.dataset.triageRow = item.id; if (item.id === triageState.activeId) button.classList.add('is-active');
+    top.append(node('strong', 'triage-row-who', brief.who), makePill(brief));
+    button.append(top, node('span', 'triage-row-role', brief.roleLabel), node('strong', 'workspace-preview-title', item.title));
+    if (brief.background) button.append(node('span', 'workspace-preview-background', brief.background));
+    appendOptionalBadges(footer, item); if (footer.children.length) button.append(footer);
+    button.addEventListener('click', event => { if (event.shiftKey) triageInst?.api.selection.extend(item.id, { reason: 'item-press', event }); else { triageInst?.api.roving.remember(item.id); selectTriageItem(item); } });
+    button.addEventListener('focus', () => { if (!isCompactTriage() && triageState.activeId !== item.id) selectTriageItem(item); });
+    row.append(button); return row;
+  }
+  const button = node('button', 'workspace-preview-row'), heading = node('span', 'workspace-preview-subject'), avatar = node('span', 'subject-avatar'), subjects = brief.subjects, footer = node('span', 'workspace-preview-footer');
+  button.type = 'button'; button.setAttribute('aria-controls', 'assistant'); avatar.setAttribute('aria-hidden', 'true');
+  if (subjects.length === 1 && subjects[0].name) avatar.textContent = Array.from(subjects[0].name)[0]; else avatar.append(layoutIcon(['M3 7h18v14H3zM8 7V3h8v4M8 7v14M16 7v14']));
+  heading.append(avatar, subjectLine(item), layoutIcon(['m9 6 6 6-6 6']));
+  button.append(heading, node('strong', 'workspace-preview-title', item.title), node('span', 'workspace-preview-background', brief.background || '背景尚未记录，可查看来源核对。'));
+  footer.append(makePill(brief)); appendOptionalBadges(footer, item); footer.append(node('span', 'workspace-preview-meta', `更新于 ${shortTime(item.updatedAt)}`)); button.append(footer);
+  button.addEventListener('click', () => openWorkspaceDecision(item.id, button)); row.append(button); return row;
+}
+
+function decisionDetail(item, { inline = false } = {}) {
+  const body = node('div', 'workspace-decision-body'), brief = triageBrief(item); body.dataset.decision = item.id;
+  if (!inline) { const header = node('div', 'dossier-header'), tg = node('div', 'dossier-title-group'); tg.append(subjectLine(item), node('h3', 'workspace-detail-title', item.title)); header.append(tg, makePill(brief)); body.append(header); }
+  const factGrid = node('div', 'triage-fact-grid'), callout = node('div', 'evidence-callout');
+  for (const [label, value] of brief.facts) { const box = node('div', 'triage-fact-box'); box.append(node('span', 'fact-label', label), node('span', 'fact-value', value)); factGrid.append(box); }
+  callout.append(node('span', 'callout-label', '核实依据与决策背景'), node('p', 'workspace-detail-reason', brief.background || '来源轮次未附文字摘要，可展开下方来源记录或打开原始档案核对。'), ...brief.notices.map(n => node('p', 'workspace-overview-note', n)));
+  body.append(factGrid, callout);
+  if (item.decision) { const rec = node('div', 'decision-recorded-box'); rec.append(node('span', 'callout-label', '已记录结论'), node('p', 'workspace-detail-answer', item.decision.text), node('p', 'workspace-overview-caption', `适用范围：${item.decision.scope} · ${shortTime(item.decision.recordedAt)}`)); body.append(rec); }
+  const archiveBar = subjectLinks(item); if (archiveBar) body.append(archiveBar);
   if (item.actions.length) body.append(node('h4', '', '后续动作'), decisionActions(item.actions));
   const evidence = [...new Set(item.history.map(entry => entry.evidence).filter(Boolean))];
   if (evidence.length) {
-    const details = workspaceDisclosure(`evidence:${item.id}`, '依据', 'workspace-decision-evidence');
-    const list = node('ul', 'workspace-evidence-list'); list.append(...evidence.map(value => node('li', '', value)));
-    details.append(list); body.append(details);
+    const details = workspaceDisclosure(`evidence:${item.id}`, '依据', 'workspace-decision-evidence'), list = node('ul', 'workspace-evidence-list');
+    list.append(...evidence.map(value => node('li', '', value))); details.append(list); body.append(details);
   }
   const sources = workspaceDisclosure(`sources:${item.id}`, '来源与记录信息', 'workspace-decision-sources');
   sources.append(decisionFacts([['首次提出', time(item.createdAt)], ['最近更新', time(item.updatedAt)]]));
   if (item.decision) sources.append(decisionFacts([['决定范围', item.decision.scope], ['决定时间', time(item.decision.recordedAt)], ...(item.decision.authority ? [['授权依据', item.decision.authority]] : []), ...(item.decision.expiresAt ? [['有效至', time(item.decision.expiresAt)]] : [])]));
   for (const source of item.sources) {
-    const row = node('div', 'workspace-source');
-    const run = snapshot?.runs?.find(value => value.id === source.runId);
-    row.append(workspaceRunLink(source.runId, run ? `${run.label} · ${shortTime(run.createdAt)}` : `来源轮次 ${source.runId}`));
-    row.append(node('span', 'workspace-overview-caption', `记录于 ${time(source.recordedAt)}`));
+    const row = node('div', 'workspace-source'), run = snapshot?.runs?.find(value => value.id === source.runId);
+    row.append(workspaceRunLink(source.runId, run ? `${run.label} · ${shortTime(run.createdAt)}` : `来源轮次 ${source.runId}`), node('span', 'workspace-overview-caption', `记录于 ${time(source.recordedAt)}`));
     sources.append(row);
   }
   if (!item.sources.length) sources.append(node('p', 'workspace-overview-caption', '未关联来源轮次。'));
-  body.append(sources);
-  const history = workspaceDisclosure(`history:${item.id}`, `处理历史 · ${item.history.length} 条`, 'workspace-decision-history');
-  const entries = node('ol', 'workspace-history-list');
+  const history = workspaceDisclosure(`history:${item.id}`, `处理历史 · ${item.history.length} 条`, 'workspace-decision-history'), entries = node('ol', 'workspace-history-list');
   for (const entry of [...item.history].reverse()) {
     const row = node('li', 'workspace-history-item');
     row.append(node('p', 'workspace-history-heading', `${time(entry.at)} · ${DECISION_STATES[entry.state] ?? '状态未记录'}`));
-    if (entry.reason) row.append(node('p', '', `原因：${entry.reason}`));
-    if (entry.evidence) row.append(node('p', '', `依据：${entry.evidence}`));
-    if (entry.snoozedUntil) row.append(node('p', '', `暂缓至：${time(entry.snoozedUntil)}`));
+    for (const [k, v] of [['原因', entry.reason], ['依据', entry.evidence], ['暂缓至', entry.snoozedUntil && time(entry.snoozedUntil)]]) if (v) row.append(node('p', '', `${k}：${v}`));
     if (entry.decision) row.append(decisionAnswer(entry.decision));
     if (entry.actions.length) row.append(decisionActions(entry.actions));
     if (entry.source) row.append(workspaceRunLink(entry.source.runId, `来源轮次 ${entry.source.runId}`));
     entries.append(row);
   }
   if (!item.history.length) entries.append(node('li', 'workspace-overview-caption', '尚未记录处理历史。'));
-  history.append(entries); body.append(history);
+  history.append(entries); body.append(sources, history);
   return body;
 }
 
@@ -808,6 +802,72 @@ function renderWorkspaceTasks() {
   list.append(item);
 }
 
+const autoDecisionFilter = groups => groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
+
+function renderTriageInspector(item) {
+  const inspector = byId('triage-inspector');
+  if (isCompactTriage() || !item) { inspector.hidden = true; delete inspector.dataset.decision; delete inspector.dataset.signature; inspector.replaceChildren(); return; }
+  const signature = JSON.stringify([item, triageBrief(item), snapshot?.runs?.length ?? 0]);
+  inspector.hidden = false;
+  if (inspector.dataset.decision === item.id && inspector.dataset.signature === signature) return;
+  inspector.dataset.decision = item.id; inspector.dataset.signature = signature;
+  inspector.replaceChildren(decisionDetail(item), renderDecisionComposer(item));
+}
+
+function selectTriageItem(item) {
+  triageState.activeId = item.id; triageState.expandedId = item.id; triageState.userCollapsed = false;
+  for (const row of byId('workspace-decision-list').querySelectorAll('[data-triage-row]')) row.classList.toggle('is-active', row.dataset.triageRow === item.id);
+  renderTriageInspector(item);
+}
+
+function renderTriageBatchBar(inst, items) {
+  const bar = byId('triage-batch-bar'), selected = inst ? inst.get().selected : [];
+  const openSelected = selected.map(id => items.find(d => d.id === id)).filter(d => d && ['open', 'snoozed'].includes(d.effectiveState));
+  bar.hidden = selected.length < 2;
+  if (bar.hidden) { bar.replaceChildren(); return; }
+  const btn = node('button', 'primary-button', `批量暂缓 (${openSelected.length})`); btn.type = 'button'; btn.disabled = !openSelected.length || Boolean(triageState.submittingId);
+  btn.addEventListener('click', async () => { for (const target of openSelected) await submitDecision(target, 'snooze', {}, { autoAdvance: false, refresh: false }); bypassOverviewFreeze = true; try { await overviewController.refresh({ invalidate: true }); } finally { bypassOverviewFreeze = false; } });
+  bar.replaceChildren(node('span', '', `已选 ${selected.length} 项`), btn);
+}
+
+function renderTriageWorkbench(items, groupKey) {
+  const list = byId('workspace-decision-list'), compact = isCompactTriage(), activeItems = items ?? [];
+  byId('triage-workbench').hidden = !activeItems.length;
+  const queueHead = byId('triage-queue-head');
+  queueHead.hidden = compact || !activeItems.length;
+  if (!queueHead.hidden) text('triage-queue-title', `分拣队列 (${activeItems.length})`);
+  renderTriageStatus();
+  if (!activeItems.length) { triageCleanups.forEach(fn => fn?.()); triageCleanups = []; triageInst?.destroy(); triageInst = null; list.replaceChildren(); delete list.dataset.content; renderTriageBatchBar(null, []); renderTriageInspector(null); return; }
+  if (!triageState.activeId || !activeItems.some(d => d.id === triageState.activeId)) triageState.activeId = (activeItems.find(d => ['open', 'history_review'].includes(d.effectiveState)) ?? activeItems[0]).id;
+  if (compact) {
+    if (triageState.expandedId && !activeItems.some(d => d.id === triageState.expandedId)) triageState.expandedId = null;
+    if (triageState.expandedId === null && !triageState.userCollapsed) triageState.expandedId = activeItems.find(d => ['open', 'history_review'].includes(d.effectiveState))?.id ?? null;
+  }
+  renderTriageInspector(activeItems.find(d => d.id === triageState.activeId) ?? activeItems[0]);
+  const signature = JSON.stringify([compact, groupKey, compact ? triageState.expandedId : null, activeItems.map(item => [item, triageBrief(item)])]);
+  if (list.dataset.content === signature) return;
+  const focusedId = list.contains(document.activeElement) ? document.activeElement.closest('[data-decision]')?.dataset.decision : null;
+  const prevStop = triageInst?.get().tabStop ?? focusedId ?? triageState.activeId, prevSelected = triageInst?.get().selected ?? [];
+  triageCleanups.forEach(fn => fn?.()); triageCleanups = []; triageInst?.destroy();
+  triageInst = triageListPrimitive({ id: 'workspace-triage' }); triageCleanups.push(bindPart(triageInst, 'root', list));
+  if (groupKey === 'all') { delete list.dataset.content; renderDecisionRoleGroups(list, activeItems, item => decisionRow(item, { triage: true, compact, expanded: compact && triageState.expandedId === item.id })); }
+  else list.replaceChildren(...activeItems.map(item => decisionRow(item, { triage: true, compact, expanded: compact && triageState.expandedId === item.id })));
+  list.dataset.content = signature;
+  const byItem = new Map(activeItems.map(item => [item.id, item]));
+  for (const rowBtn of list.querySelectorAll('[data-triage-row]')) if (byItem.has(rowBtn.dataset.triageRow)) triageCleanups.push(bindPart(triageInst, 'row', rowBtn, { id: rowBtn.dataset.triageRow }));
+  for (const id of prevSelected) if (byItem.has(id)) triageInst.api.selection.toggle(id, { reason: 'restore' });
+  triageCleanups.push(triageInst.subscribe(() => renderTriageBatchBar(triageInst, activeItems))); renderTriageBatchBar(triageInst, activeItems);
+  const stopTarget = [focusedId, prevStop, triageState.activeId].find(id => id && byItem.has(id));
+  if (stopTarget) triageInst.api.roving.remember(stopTarget);
+  if (focusedId) {
+    const nextFocusId = byItem.has(focusedId) ? focusedId : triageState.activeId;
+    const findRow = () => rowForDecision(list, nextFocusId)?.querySelector('[data-triage-row]') ?? list.querySelector('[data-triage-row]');
+    const targetBtn = findRow();
+    if (targetBtn && document.activeElement !== targetBtn) targetBtn.focus({ preventScroll: true });
+    keepFocus(findRow);
+  }
+}
+
 function renderWorkspaceOverview() {
   const state = overviewState, groups = workspaceDecisionGroups(state.data);
   const retained = Boolean(state.data && (Array.isArray(state.data.decisions) || Array.isArray(state.data.highlights)));
@@ -819,15 +879,14 @@ function renderWorkspaceOverview() {
   text(status, message); status.hidden = !message; status.dataset.state = workspaceBlocked || disconnected || state.stale || state.status === 'error' ? 'error' : state.status;
   text('workspace-drawer-notice', message); byId('workspace-drawer-notice').hidden = !message;
   byId('retry-workspace-overview').hidden = workspaceBlocked || !['error', 'stale', 'missing'].includes(state.status);
-  const automatic = groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
-  const group = state.filter === 'auto' ? automatic : state.filter, items = groups[group];
-  const labels = { open: '待确认', followUp: '后续执行', history_review: '历史待核对' };
+  const group = state.filter === 'auto' ? autoDecisionFilter(groups) : state.filter, items = groups[group];
+  const labels = { open: '待确认', followUp: '后续执行', history_review: '历史待核对', snoozed: '已暂缓', all: '全部事项' };
   text('workspace-decisions-heading', '待你关注');
   text('workspace-decisions-count', items?.length ? `${items.length}` : ''); byId('workspace-decisions-count').hidden = !items?.length;
   const filters = byId('workspace-decision-filters');
   for (const button of filters.querySelectorAll('button')) {
     const key = button.dataset.overviewFilter;
-    button.hidden = !groups[key]?.length && !(state.filter === key && groups[key] !== null);
+    button.hidden = key === 'all' ? state.filter !== 'all' : !groups[key]?.length && !(state.filter === key && groups[key] !== null);
     button.setAttribute('aria-pressed', String(key === group));
     text(button, `${labels[key]}${groups[key] === null ? ' · 未知' : ` ${groups[key].length}`}`);
   }
@@ -835,10 +894,10 @@ function renderWorkspaceOverview() {
   const caption = group === 'history_review' && groups.open?.length === 0 ? `当前没有待回答事项；另有 ${items.length} 条历史待核对。` : '';
   text('workspace-decision-caption', caption); byId('workspace-decision-caption').hidden = !caption;
   const empty = byId('workspace-decision-empty');
-  text(empty, items === null || items.length ? '' : { open: '当前没有待回答事项。', followUp: '当前没有待执行的后续动作。', history_review: '当前没有历史待核对事项。' }[group]);
+  text(empty, items === null || items.length ? '' : { open: '当前没有待回答事项。', followUp: '当前没有待执行的后续动作。', history_review: '当前没有历史待核对事项。', snoozed: '当前没有已暂缓事项。', all: '当前没有待处理事项。' }[group]);
   empty.hidden = items === null || Boolean(items.length);
-  updatePreviewList(byId('workspace-decision-list'), items?.slice(0, 3) ?? [], 'decision', decisionRow);
-  text('workspace-decision-summary', items === null ? '事项数量未知' : `${items.length} 项${{ open: '等待确认', followUp: '后续动作未完成', history_review: '历史记录待核对' }[group]}${items.length > 3 ? ' · 首页展示 3 项' : ''}`);
+  renderTriageWorkbench(items, group);
+  text('workspace-decision-summary', items === null ? '事项数量未知' : `${items.length} 项${{ open: '等待确认', followUp: '后续动作未完成', history_review: '历史记录待核对', snoozed: '已暂缓提醒', all: '工作区事项' }[group]}`);
   text('workspace-all-decisions', `全部事项 · ${groups.all === null ? '未知' : groups.all.length}`);
   for (const [id, key] of [['workspace-snoozed-link', 'snoozed'], ['workspace-followup-link', 'followUp']]) {
     byId(id).hidden = !groups[key]?.length || group === key;
@@ -935,7 +994,8 @@ function highlightDetail(highlight) {
   const body = node('div', 'workspace-highlight-detail'); body.dataset.event = highlight.eventKey;
   body.append(subjectLine(highlight), node('h3', 'workspace-detail-title', highlight.text), eventDetails(highlight));
   if (highlight.evidence) body.append(node('p', 'workspace-detail-reason', highlight.evidence));
-  body.append(node('p', 'workspace-overview-caption', `${highlight.sourceKind === 'archive' ? '面试档案记录' : triggerLabel(highlight.trigger)} · ${highlight.timePrecision === 'day' ? '发生于' : '更新于'} ${progressTime(highlight)}`), subjectLinks(highlight));
+  body.append(node('p', 'workspace-overview-caption', `${highlight.sourceKind === 'archive' ? '面试档案记录' : triggerLabel(highlight.trigger)} · ${highlight.timePrecision === 'day' ? '发生于' : '更新于'} ${progressTime(highlight)}`));
+  const links = subjectLinks(highlight); if (links) body.append(links);
   if (highlight.correction) body.append(node('p', 'workspace-highlight-correction', `更正：${highlight.correction}`));
   if (highlight.decisionId) {
     const button = node('button', 'text-button', '查看关联事项'); button.type = 'button'; button.dataset.linkedItem = highlight.decisionId;
@@ -960,92 +1020,72 @@ function applyWorkspaceUpdates() {
 function showWorkspaceDrawer(trigger) {
   const dialog = byId('workspace-drawer');
   if (dialog.open) return;
-  drawerState.returnFocus = trigger ?? document.activeElement;
-  drawerState.pageScroll = window.scrollY;
+  drawerState.returnFocus = trigger ?? document.activeElement; drawerState.pageScroll = window.scrollY;
   document.documentElement.classList.add('drawer-open');
   if (typeof dialog.showModal === 'function') dialog.showModal();
-  else {
-    dialog.setAttribute('open', '');
-    byId('workspace-drawer-backdrop').hidden = false;
-    document.querySelector('.app').setAttribute('inert', '');
-  }
+  else { dialog.setAttribute('open', ''); byId('workspace-drawer-backdrop').hidden = false; document.querySelector('.app').setAttribute('inert', ''); }
+  drawerLayerCleanup?.();
+  drawerLayerCleanup = bindLayer(dialog, { onDismiss: (reason, event) => { if (reason === 'escape-key') { event.preventDefault(); closeWorkspaceDrawer(); } } });
 }
 
-function openWorkspaceList(kind = 'decisions', group = drawerState.group, trigger = document.activeElement) {
-  const changed = drawerState.listKind !== kind || drawerState.group !== group;
-  if (changed) { drawerState.listScroll = 0; drawerState.listFocus = null; }
+function openWorkspaceList(kind = 'highlights', group = drawerState.group, trigger = document.activeElement) {
+  if (kind === 'decisions') { if (drawerState.page) closeWorkspaceDrawer(false); overviewState.filter = group; setWorkspaceNavTarget('overview'); renderWorkspaceOverview(); focusWorkbenchTarget(byId('workspace-decisions-heading')); return; }
+  if (drawerState.listKind !== kind || drawerState.group !== group) { drawerState.listScroll = 0; drawerState.listFocus = null; }
   if (drawerState.page === 'candidate') closeCandidate();
-  drawerState.stack = [];
-  drawerState.page = 'list'; drawerState.listKind = kind; drawerState.group = group;
+  drawerState.stack = []; drawerState.page = 'list'; drawerState.listKind = 'highlights'; drawerState.group = group;
   showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
-  byId('workspace-drawer-content').scrollTop = drawerState.listScroll;
-  (kind === 'decisions' ? byId('workspace-drawer-filter') : byId('workspace-drawer-title')).focus({ preventScroll: true });
-  renderOverviewReadingNotice();
+  byId('workspace-drawer-content').scrollTop = drawerState.listScroll; byId('workspace-drawer-title').focus({ preventScroll: true }); renderOverviewReadingNotice();
 }
 
-function saveDrawerPage(trigger) {
-  if (!drawerState.page) return;
-  drawerState.stack.push({ page: drawerState.page, itemId: drawerState.itemId, scroll: byId('workspace-drawer-content').scrollTop, expanded: new Set(drawerState.expanded), trigger });
-}
+function saveDrawerPage(trigger) { if (drawerState.page) drawerState.stack.push({ page: drawerState.page, itemId: drawerState.itemId, scroll: byId('workspace-drawer-content').scrollTop, expanded: new Set(drawerState.expanded), trigger }); }
 
 function openDrawerCandidate(candidate, trigger) {
-  saveDrawerPage(trigger);
-  drawerState.page = 'candidate'; drawerState.itemId = candidate.id;
-  renderWorkspaceDrawer();
-  byId('workspace-drawer-content').scrollTop = 0;
-  void openCandidate(candidate, 'drawer', trigger);
+  if (!drawerState.page) { void openCandidate(candidate, 'triage', trigger); return; }
+  saveDrawerPage(trigger); drawerState.page = 'candidate'; drawerState.itemId = candidate.id;
+  renderWorkspaceDrawer(); byId('workspace-drawer-content').scrollTop = 0; void openCandidate(candidate, 'drawer', trigger);
 }
 
 function returnDrawerPage() {
   if (drawerState.page === 'candidate' && !drawerState.stack.length) { closeWorkspaceDrawer(); return; }
   if (drawerState.page === 'candidate') closeCandidate();
   const previous = drawerState.stack.pop();
-  drawerState.page = previous?.page ?? 'list';
-  drawerState.itemId = previous?.itemId ?? null;
-  drawerState.expanded = previous?.expanded ?? new Set();
-  delete byId('workspace-drawer-detail').dataset.content;
-  renderWorkspaceDrawer();
+  drawerState.page = previous?.page ?? 'list'; drawerState.itemId = previous?.itemId ?? null; drawerState.expanded = previous?.expanded ?? new Set();
+  delete byId('workspace-drawer-detail').dataset.content; renderWorkspaceDrawer();
   byId('workspace-drawer-content').scrollTop = previous?.scroll ?? drawerState.listScroll;
   let target = previous?.trigger ?? drawerState.listFocus;
   if (target && !target.isConnected) {
     if (target.dataset.subject) target = [...byId('workspace-drawer-detail').querySelectorAll('[data-subject]')].find(button => button.dataset.subject === target.dataset.subject);
     else if (target.dataset.linkedItem) target = byId('workspace-drawer-detail').querySelector('[data-linked-item]');
-    else {
-      const row = target.closest('[data-decision], [data-event]');
-      target = [...byId('workspace-drawer-list').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event))?.querySelector('button');
-    }
+    else { const row = target.closest('[data-event]'); target = [...byId('workspace-drawer-list').querySelectorAll('[data-event]')].find(item => row && item.dataset.event === row.dataset.event)?.querySelector('button'); }
   }
   (target?.isConnected ? target : byId('workspace-drawer-title')).focus({ preventScroll: true });
 }
 
 function openWorkspaceDetail(kind, id, trigger) {
   if (drawerState.page !== kind || drawerState.itemId !== id) saveDrawerPage(trigger);
-  if (drawerState.page === 'list') {
-    drawerState.listScroll = byId('workspace-drawer-content').scrollTop;
-    drawerState.listFocus = trigger ?? document.activeElement;
-  } else if (!drawerState.page) {
-    drawerState.listKind = kind === 'decision' ? 'decisions' : 'highlights';
-  }
-  if (drawerState.page !== kind || drawerState.itemId !== id) {
-    drawerState.expanded.clear();
-    delete byId('workspace-drawer-detail').dataset.content;
-  }
+  if (drawerState.page === 'list') { drawerState.listScroll = byId('workspace-drawer-content').scrollTop; drawerState.listFocus = trigger ?? document.activeElement; }
+  else if (!drawerState.page) drawerState.listKind = 'highlights';
+  if (drawerState.page !== kind || drawerState.itemId !== id) { drawerState.expanded.clear(); delete byId('workspace-drawer-detail').dataset.content; }
   drawerState.page = kind; drawerState.itemId = id;
   showWorkspaceDrawer(trigger); renderWorkspaceDrawer();
-  byId('workspace-drawer-content').scrollTop = 0;
-  byId('workspace-drawer-title').focus({ preventScroll: true });
-  renderOverviewReadingNotice();
+  byId('workspace-drawer-content').scrollTop = 0; byId('workspace-drawer-title').focus({ preventScroll: true }); renderOverviewReadingNotice();
 }
 
-function openWorkspaceDecision(id, trigger = document.activeElement) {
-  openWorkspaceDetail('decision', id, trigger);
+function openWorkspaceDecision(id) {
+  if (drawerState.page) closeWorkspaceDrawer(false);
+  if (overviewState.pending) applyWorkspaceUpdates();
+  if (overviewState.data?.decisions?.some(value => value.id === id)) {
+    const groups = workspaceDecisionGroups(overviewState.data), activeKey = overviewState.filter === 'auto' ? autoDecisionFilter(groups) : overviewState.filter;
+    if (!groups[activeKey]?.some(d => d.id === id)) overviewState.filter = ['open', 'history_review', 'followUp', 'snoozed'].find(k => groups[k]?.some(d => d.id === id)) ?? 'all';
+    triageState.activeId = id; triageState.expandedId = id; triageState.userCollapsed = false;
+  }
+  setWorkspaceNavTarget('overview'); renderWorkspaceOverview();
+  focusWorkbenchTarget(rowForDecision(byId('workspace-decision-list'), id)?.querySelector('[data-triage-row]') ?? workspaceNavTargets.overview, 'nearest');
 }
 
-function openWorkspaceHighlight(id, trigger = document.activeElement) {
-  openWorkspaceDetail('highlight', id, trigger);
-}
+const openWorkspaceHighlight = (id, trigger = document.activeElement) => openWorkspaceDetail('highlight', id, trigger);
 
-function renderDecisionRoleGroups(list, items) {
+function renderDecisionRoleGroups(list, items, makeRow = decisionRow) {
   const groups = new Map();
   for (const item of items) {
     const roles = [...new Set(itemSubjects(item).map(subject => subject.role).filter(Boolean))].sort();
@@ -1053,17 +1093,14 @@ function renderDecisionRoleGroups(list, items) {
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(item);
   }
-  const signature = JSON.stringify([...groups]);
-  if (list.dataset.content === signature) return;
   const entries = [];
   for (const [label, decisions] of groups) {
     const group = node('li', 'decision-role-group'); group.dataset.roleGroup = label;
-    const heading = node('div', 'decision-role-heading');
-    heading.append(node('h3', '', label), node('span', '', `${decisions.length} 项`));
-    const rows = node('ul', 'workspace-decision-list'); rows.setAttribute('aria-label', `${label}的事项`);
-    rows.append(...decisions.map(decisionRow)); group.append(heading, rows); entries.push(group);
+    const heading = node('div', 'decision-role-heading'); heading.append(node('h3', '', label), node('span', '', `${decisions.length} 项`));
+    const rows = node('ul', 'workspace-decision-list'); rows.setAttribute('aria-label', `${label}的事项`); rows.append(...decisions.map(makeRow));
+    group.append(heading, rows); entries.push(group);
   }
-  list.replaceChildren(...entries); list.dataset.content = signature;
+  list.replaceChildren(...entries);
 }
 
 function renderWorkspaceDrawer() {
@@ -1073,56 +1110,44 @@ function renderWorkspaceDrawer() {
   listView.hidden = !listing; detail.hidden = listing || following || candidate;
   byId('following-picker').hidden = !following; byId('drawer-record-host').hidden = !candidate;
   byId('workspace-drawer-back').hidden = listing || following;
-  text('workspace-drawer-back', { decision: '返回事项', highlight: '返回进展', list: '返回列表' }[state.stack.at(-1)?.page] ?? (candidate ? { search: '返回搜索结果', results: '返回处理名单', activity: '返回近期流水' }[candidateOrigin?.source] ?? '返回人选名单' : state.listKind === 'highlights' ? '返回进展列表' : '返回事项列表'));
-  text('workspace-drawer-title', following ? '选择关注岗位' : candidate ? '人选资料' : listing ? state.listKind === 'decisions' ? '全部事项' : '近期进展' : state.page === 'decision' ? '事项详情' : '进展详情');
-  text('workspace-drawer-footer', following ? '个人关注与招聘状态分别保存。' : candidate ? '资料来自当前工作区。' : '在聊天中说明事项与决定；这里保留记录。');
+  text('workspace-drawer-back', { highlight: '返回进展', list: '返回列表' }[state.stack.at(-1)?.page] ?? (candidate ? { search: '返回搜索结果', results: '返回处理名单', activity: '返回近期流水', triage: '返回分拣台' }[candidateOrigin?.source] ?? '返回人选名单' : '返回进展列表'));
+  text('workspace-drawer-title', following ? '选择关注岗位' : candidate ? '人选资料' : listing ? '近期进展' : '进展详情');
+  text('workspace-drawer-footer', following ? '个人关注与招聘状态分别保存。' : '资料与关注来自当前工作区。');
   if (following) { renderFollowingPicker(); return; }
   if (candidate) return;
   if (listing) {
-    const groups = workspaceDecisionGroups(overviewState.data), filter = byId('workspace-drawer-filter');
-    filter.hidden = state.listKind !== 'decisions';
-    options(filter, Object.entries(DECISION_GROUPS).map(([key, label]) => [key, `${label} · ${groups[key] === null ? '未知' : groups[key].length}`]), state.group);
-    const items = state.listKind === 'decisions' ? groups[state.group] : overviewState.data?.highlights ?? null;
-    text('workspace-drawer-empty', items === null ? '尚未成功读取，数量未知。' : !items.length ? '此分组暂无记录。' : ''); byId('workspace-drawer-empty').hidden = Boolean(items?.length);
-    const list = byId('workspace-drawer-list'), kind = state.listKind === 'decisions' ? 'decision' : 'event';
-    if (list.dataset.kind !== kind) { list.replaceChildren(); delete list.dataset.content; list.dataset.kind = kind; }
-    if (kind === 'decision') renderDecisionRoleGroups(list, items ?? []);
-    else updatePreviewList(list, items ?? [], kind, highlightRow);
-    return;
+    byId('workspace-drawer-filter').hidden = true;
+    const items = overviewState.data?.highlights ?? null, list = byId('workspace-drawer-list');
+    text('workspace-drawer-empty', items === null ? '尚未成功读取，数量未知。' : !items.length ? '暂无近期进展。' : ''); byId('workspace-drawer-empty').hidden = Boolean(items?.length);
+    if (list.dataset.kind !== 'event') { list.replaceChildren(); delete list.dataset.content; list.dataset.kind = 'event'; }
+    updatePreviewList(list, items ?? [], 'event', highlightRow); return;
   }
-  const item = state.page === 'decision' ? overviewState.data?.decisions?.find(value => value.id === state.itemId) : overviewState.data?.highlights?.find(value => value.eventKey === state.itemId);
+  const item = overviewState.data?.highlights?.find(value => value.eventKey === state.itemId);
   const signature = JSON.stringify([state.page, state.itemId, item, item && itemSubjects(item).map(subject => [subject.role, Boolean(subject.current)])]);
   if (detail.dataset.content !== signature) {
     const scroll = byId('workspace-drawer-content').scrollTop;
-    detail.replaceChildren(item ? state.page === 'decision' ? decisionDetail(item) : highlightDetail(item) : node('p', 'workspace-overview-note', '暂未读到关联记录；请刷新后再查看。'));
-    detail.dataset.content = signature;
-    byId('workspace-drawer-content').scrollTop = scroll;
+    detail.replaceChildren(item ? highlightDetail(item) : node('p', 'workspace-overview-note', '暂未读到关联记录；请刷新后再查看。'));
+    detail.dataset.content = signature; byId('workspace-drawer-content').scrollTop = scroll;
   }
 }
 
 function closeWorkspaceDrawer(restoreFocus = true) {
   if (!drawerState.page) return;
+  pickerLayerCleanup?.(); pickerLayerCleanup = null; drawerLayerCleanup?.(); drawerLayerCleanup = null;
   const dialog = byId('workspace-drawer'), origin = drawerState.page === 'candidate' ? candidateOrigin : null;
   if (drawerState.page === 'list') drawerState.listScroll = byId('workspace-drawer-content').scrollTop;
   if (drawerState.page === 'candidate') closeCandidate();
-  drawerState.page = null; drawerState.stack = [];
-  byId('following-picker').hidden = true;
+  drawerState.page = null; drawerState.stack = []; byId('following-picker').hidden = true;
   for (const id of ['choose-following', 'workspace-choose-following']) byId(id).setAttribute('aria-expanded', 'false');
-  if (dialog.open && typeof dialog.close === 'function') dialog.close();
-  else dialog.removeAttribute('open');
-  byId('workspace-drawer-backdrop').hidden = true;
-  document.querySelector('.app').removeAttribute('inert');
-  document.documentElement.classList.remove('drawer-open');
+  if (dialog.open && typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
+  byId('workspace-drawer-backdrop').hidden = true; document.querySelector('.app').removeAttribute('inert'); document.documentElement.classList.remove('drawer-open');
   if (restoreFocus) {
     let target = drawerState.returnFocus;
     if (target && !target.isConnected) {
       const list = byId({ stage: 'candidate-list', search: 'candidate-search-list', results: 'result-list' }[origin?.source]);
       if (list) target = [...list.querySelectorAll('button')].find(button => button.dataset.candidate === origin.candidateId || (target.dataset.resultFocus && button.dataset.resultFocus === target.dataset.resultFocus));
-      else {
-        const row = target.closest('[data-decision], [data-event]');
-        const replacement = [...byId('assistant').querySelectorAll('[data-decision], [data-event]')].find(item => row && (row.dataset.decision ? item.dataset.decision === row.dataset.decision : item.dataset.event === row.dataset.event));
-        target = replacement?.querySelector('button');
-      }
+      else if (target.dataset.subject) target = [...byId('assistant').querySelectorAll('[data-subject]')].find(button => button.dataset.subject === target.dataset.subject);
+      else { const row = target.closest('[data-event]'); target = [...byId('assistant').querySelectorAll('[data-event]')].find(item => row && item.dataset.event === row.dataset.event)?.querySelector('button'); }
     }
     (target?.isConnected && !target.closest('[hidden]') && visibleWorkbenchTarget(target) ? target : workspaceNavTargets[activeView]).focus({ preventScroll: true });
     if (window.scrollY !== drawerState.pageScroll) window.scrollTo(0, drawerState.pageScroll);
@@ -1130,14 +1155,10 @@ function closeWorkspaceDrawer(restoreFocus = true) {
   renderWorkspaceTasks(); renderOverviewReadingNotice();
 }
 
-byId('workspace-drawer-filter').addEventListener('change', event => {
-  drawerState.group = event.target.value; drawerState.listScroll = 0; drawerState.listFocus = null;
-  renderWorkspaceDrawer(); byId('workspace-drawer-content').scrollTop = 0;
-});
 byId('workspace-drawer-back').addEventListener('click', returnDrawerPage);
 byId('workspace-drawer-close').addEventListener('click', () => closeWorkspaceDrawer());
 byId('workspace-drawer-backdrop').addEventListener('click', () => closeWorkspaceDrawer());
-byId('workspace-drawer').addEventListener('cancel', event => { event.preventDefault(); closeWorkspaceDrawer(); });
+byId('workspace-drawer').addEventListener('cancel', event => { event.preventDefault(); if (!byId('material-picker')) closeWorkspaceDrawer(); });
 byId('workspace-drawer').addEventListener('close', event => { if (!event.currentTarget.open) closeWorkspaceDrawer(); });
 byId('workspace-drawer').addEventListener('click', event => {
   if (event.target !== event.currentTarget) return;
@@ -1145,7 +1166,6 @@ byId('workspace-drawer').addEventListener('click', event => {
   if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeWorkspaceDrawer();
 });
 byId('workspace-drawer').addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); closeWorkspaceDrawer(); return; }
   if (event.key !== 'Tab') return;
   const available = [...event.currentTarget.querySelectorAll('button, a[href], input, select, summary, [tabindex="0"]')].filter(element => {
     if (element.disabled || element.closest('[hidden]')) return false;
@@ -1173,10 +1193,21 @@ for (const button of byId('workspace-decision-filters').querySelectorAll('button
   overviewState.filter = button.dataset.overviewFilter;
   renderWorkspaceOverview();
 });
-byId('workspace-all-decisions').addEventListener('click', event => openWorkspaceList('decisions', 'all', event.currentTarget));
-byId('workspace-followup-link').addEventListener('click', event => openWorkspaceList('decisions', 'followUp', event.currentTarget));
-byId('workspace-snoozed-link').addEventListener('click', event => openWorkspaceList('decisions', 'snoozed', event.currentTarget));
+byId('workspace-all-decisions').addEventListener('click', () => { overviewState.filter = 'all'; renderWorkspaceOverview(); });
+byId('workspace-followup-link').addEventListener('click', () => { overviewState.filter = 'followUp'; renderWorkspaceOverview(); });
+byId('workspace-snoozed-link').addEventListener('click', () => { overviewState.filter = 'snoozed'; renderWorkspaceOverview(); });
 byId('workspace-show-highlights').addEventListener('click', event => openWorkspaceList('highlights', drawerState.group, event.currentTarget));
+document.addEventListener('keydown', event => {
+  if (activeView !== 'overview' || drawerState.page || layoutState.editing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (document.querySelector('dialog[open]') || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  const key = event.key.toLowerCase();
+  if (!['1', '2', 's'].includes(key)) return;
+  const targetId = isCompactTriage() ? (triageState.expandedId ?? triageState.activeId) : triageState.activeId;
+  const item = overviewState.data?.decisions?.find(d => d.id === targetId);
+  if (!item) return;
+  if (key === 's' && ['open', 'snoozed'].includes(item.state)) { event.preventDefault(); void submitDecision(item, 'snooze'); }
+  else if ((key === '1' || key === '2') && ['open', 'snoozed', 'history_review'].includes(item.state)) { event.preventDefault(); void submitDecision(item, key === '1' ? 'preset1' : 'preset2'); }
+});
 byId('workspace-highlight-history').addEventListener('click', () => navigateWorkspace('tasks'));
 for (const id of ['workspace-apply-updates', 'workspace-drawer-update', 'candidate-apply-updates']) byId(id).addEventListener('click', () => {
   applyWorkspaceUpdates(); renderWorkspaceOverview(); renderLinkedDecisions();
@@ -1405,6 +1436,7 @@ function renderRoleControls() {
 }
 
 function closeCandidate() {
+  pickerLayerCleanup?.(); pickerLayerCleanup = null;
   selectedCandidateId = null; candidateOrigin = null; recordRequest++; documentRequest++;
   byId('candidate-record').hidden = true;
   byId('record-content').replaceChildren();
@@ -1578,7 +1610,7 @@ function candidateProgressView(detail) {
   return section;
 }
 
-async function openCandidate(candidate, origin = 'stage', trigger = null) {
+async function openCandidate(candidate, origin = 'stage', trigger = null, { preserveScroll = false } = {}) {
   const pending = ++recordRequest;
   documentRequest++; selectedCandidateId = candidate.id;
   candidateOrigin = { source: origin, trigger, candidateId: candidate.id };
@@ -1586,13 +1618,16 @@ async function openCandidate(candidate, origin = 'stage', trigger = null) {
     showWorkspaceDrawer(trigger);
     drawerState.stack = []; drawerState.page = 'candidate'; drawerState.itemId = candidate.id;
   }
-  byId('drawer-record-host').append(byId('candidate-record'));
-  byId('candidate-record').hidden = false;
+  const host = byId('drawer-record-host'), record = byId('candidate-record');
+  if (record.parentElement !== host) host.append(record);
+  record.hidden = false;
   renderWorkspaceDrawer();
   const content = byId('record-content');
-  content.replaceChildren(node('p', 'muted', '正在读取候选资料…'));
-  byId('workspace-drawer-content').scrollTop = 0;
-  byId('workspace-drawer-title').focus({ preventScroll: true });
+  if (!preserveScroll) {
+    content.replaceChildren(node('p', 'muted', '正在读取候选资料…'));
+    byId('workspace-drawer-content').scrollTop = 0;
+    byId('workspace-drawer-title').focus({ preventScroll: true });
+  }
   renderOverviewReadingNotice();
   try {
     const detail = await jsonRequest(`/api/candidates/detail?${new URLSearchParams({ candidate: candidate.id })}`);
@@ -1614,7 +1649,9 @@ async function openCandidate(candidate, origin = 'stage', trigger = null) {
     const warnings = node('div', 'record-warnings');
     warnings.append(...detail.warnings.map(message => node('p', 'muted', message)));
     const documents = node('ul', 'document-list');
-    const preview = node('section', 'document-preview'); preview.hidden = true;
+    const existingPreview = preserveScroll ? content.querySelector(':scope > .document-preview') : null;
+    const preview = existingPreview && !existingPreview.hidden ? existingPreview : node('section', 'document-preview');
+    if (preview !== existingPreview) preview.hidden = true;
     for (const document of detail.documents) {
       const item = node('li', 'document-row'), title = node('p', '', document.label);
       item.append(title, node('p', 'muted document-category', { resume: '简历材料', archive: '面试档案', brief: '候选人介绍', other: '其他资料' }[document.category] ?? '其他资料'));
@@ -1651,7 +1688,9 @@ async function openCandidate(candidate, origin = 'stage', trigger = null) {
     const associate = node('button', 'text-button', '关联资料'); associate.type = 'button';
     associate.addEventListener('click', () => { void openMaterialPicker(detail, associate); });
     tools.append(node('h4', '', '本地资料'), associate);
+    const drawerContent = byId('workspace-drawer-content'), savedScroll = preserveScroll ? drawerContent.scrollTop : 0;
     content.replaceChildren(heading, facts, candidateProgressView(detail), tools, documents, preview, warnings, evaluation);
+    if (preserveScroll) drawerContent.scrollTop = savedScroll;
   } catch (error) {
     if (pending === recordRequest) content.replaceChildren(node('p', 'record-error', error.message));
   }
@@ -1689,11 +1728,24 @@ function renderRoleAliases() {
 
 async function openMaterialPicker(detail, trigger) {
   const candidateId = detail.candidate.id, pending = recordRequest;
+  const drawerContent = byId('workspace-drawer-content'), initialScroll = drawerContent.scrollTop;
   trigger.disabled = true;
-  const old = byId('material-picker'); old?.remove();
+  pickerLayerCleanup?.(); pickerLayerCleanup = null;
+  byId('material-picker')?.remove();
   const panel = node('section', 'material-picker'); panel.id = 'material-picker';
+  const closePicker = (restore = true) => {
+    const keepScroll = drawerContent.scrollTop;
+    pickerLayerCleanup?.(); pickerLayerCleanup = null;
+    panel.remove();
+    if (restore) trigger.focus({ preventScroll: true });
+    drawerContent.scrollTop = keepScroll;
+  };
   const message = node('p', 'muted', '正在读取工作区资料…'); message.setAttribute('role', 'status');
   panel.append(node('h4', '', '关联资料'), message); byId('record-content').append(panel);
+  pickerLayerCleanup = bindLayer(panel, {
+    contains: target => trigger.contains(target),
+    onDismiss: (_reason, event) => { event?.preventDefault?.(); event?.stopPropagation?.(); closePicker(true); }
+  });
   try {
     const data = await jsonRequest('/api/candidates/materials?' + new URLSearchParams({ candidate: candidateId }));
     if (pending !== recordRequest || selectedCandidateId !== candidateId) return;
@@ -1723,19 +1775,25 @@ async function openMaterialPicker(detail, trigger) {
     search.addEventListener('input', render); render();
     const controls = node('div', 'control-actions'), save = node('button', 'primary-button', '确认关联'), cancel = node('button', 'text-button', '取消');
     save.type = cancel.type = 'button';
-    cancel.addEventListener('click', () => { panel.remove(); trigger.focus({ preventScroll: true }); });
+    cancel.addEventListener('click', () => closePicker(true));
     save.addEventListener('click', async () => {
       save.disabled = true; cancel.disabled = true; message.textContent = '正在保存资料关联…';
       try {
-        const session = await jsonRequest('/api/session');
-        await jsonRequest('/api/candidates/materials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrfToken }, body: JSON.stringify({ candidateId, revision: data.revision, files: [...selected.values()] }) });
+        const prevScroll = drawerContent.scrollTop;
+        const token = await ensureCsrfToken();
+        await jsonRequest('/api/candidates/materials', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ candidateId, revision: data.revision, files: [...selected.values()] }) });
         if (pending !== recordRequest || selectedCandidateId !== candidateId) return;
-        const origin = candidateOrigin; await openCandidate(detail.candidate, origin.source, origin.trigger);
+        closePicker(false);
+        const origin = candidateOrigin;
+        await openCandidate(detail.candidate, origin.source, origin.trigger, { preserveScroll: true });
+        byId('record-content').querySelector('.subsection-heading button')?.focus({ preventScroll: true });
+        drawerContent.scrollTop = prevScroll;
       } catch (error) { message.textContent = error.message + '，请重新打开关联资料后重试。'; }
       finally { save.disabled = false; cancel.disabled = false; }
     });
     message.textContent = '只选择已核实属于此人的资料；取消勾选可更正已有映射。' + (data.truncated ? ' 资料列表较多，请先按文件名查找。' : '');
-    controls.append(save, cancel); panel.append(search, list, controls); search.focus();
+    controls.append(save, cancel); panel.append(search, list, controls);
+    search.focus({ preventScroll: true }); drawerContent.scrollTop = initialScroll;
   } catch (error) { message.textContent = error.message; }
   finally { trigger.disabled = false; }
 }
@@ -1799,8 +1857,6 @@ function selectedRun() {
 function flash(element) {
   if (!document.hidden && pageActive && !motionQuery.matches) element.dataset.update = element.dataset.update === 'a' ? 'b' : 'a';
 }
-
-
 
 function resultVersion(run) {
   return JSON.stringify([run.id, run.resultSummary?.revision ?? null]);
