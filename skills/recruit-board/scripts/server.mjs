@@ -1,10 +1,10 @@
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { assertRunId } from '../model.mjs';
-import { readSnapshot, resolveWorkspace, workspaceKeyForRoot } from './reader.mjs';
+import { MAX_FILE_BYTES, readSnapshot, resolveWorkspace, workspaceKeyForRoot } from './reader.mjs';
 import { readCandidateDetail, readCandidateDocument } from './records.mjs';
 import { readRoleInfo, setRoleStatus, setRoleAlias } from './roles.mjs';
 import { listCandidateMaterials, setCandidateMaterials } from './materials.mjs';
@@ -13,6 +13,18 @@ import { readWorkspaceOverview } from './overview.mjs';
 import { actionError } from './actions.mjs';
 
 const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
+const vendorRoot = path.resolve(publicRoot, 'vendor', 'ui-sdk-core');
+
+function resolveVendorAsset(pathname) {
+  let relPath;
+  try { relPath = decodeURIComponent(pathname.slice('/vendor/ui-sdk-core/'.length)); }
+  catch { return null; }
+  if (!relPath || relPath.includes('\0') || relPath.includes('\\')) return null;
+  const segments = relPath.split('/');
+  if (segments.some(segment => !segment || segment === '.' || segment === '..')) return null;
+  const resolved = path.resolve(vendorRoot, ...segments);
+  return resolved.startsWith(vendorRoot + path.sep) && resolved.endsWith('.js') ? resolved : null;
+}
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
@@ -181,6 +193,24 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
         if (params.has('run')) assertRunId(params.get('run'));
         if (params.has('preview') && !['wide', 'narrow'].includes(params.get('preview'))) throw new Error('invalid preview');
       } catch { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'RUN_INPUT_INVALID', message: '看板地址仅接受单个安全 run、工作区标识及 wide / narrow 开发预览参数' } })); return; }
+    }
+    if (url.pathname.startsWith('/vendor/ui-sdk-core/')) {
+      const resolved = params.size === 0 ? resolveVendorAsset(url.pathname) : null;
+      if (!resolved) { send(404, 'text/plain; charset=utf-8', '未找到资源'); return; }
+      try {
+        const info = await lstat(resolved);
+        if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) {
+          send(404, 'text/plain; charset=utf-8', '未找到资源'); return;
+        }
+        const bytes = await readFile(resolved);
+        if (bytes.length > MAX_FILE_BYTES) {
+          send(404, 'text/plain; charset=utf-8', '未找到资源'); return;
+        }
+        send(200, 'text/javascript; charset=utf-8', bytes);
+      } catch {
+        send(404, 'text/plain; charset=utf-8', '未找到资源');
+      }
+      return;
     }
     const asset = assets.get(url.pathname === '/' ? '/' : request.url);
     if (!asset) { send(404, 'text/plain; charset=utf-8', '未找到资源'); return; }

@@ -90,7 +90,11 @@ if (['prepare', 'prepare-ui', 'prepare-web'].includes(mode)) {
   };
   const boardSource = path.join(source, 'skills/recruit-board');
   const uiFiles = new Set(['SKILL.md', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts']);
-  const boardFiles = (await filesUnder(boardSource)).filter(file => mode !== 'prepare-ui' || uiFiles.has(file.replaceAll('\\', '/')));
+  const isUiFile = file => {
+    const portable = file.replaceAll('\\', '/');
+    return uiFiles.has(portable) || portable.startsWith('public/vendor/ui-sdk-core/');
+  };
+  const boardFiles = (await filesUnder(boardSource)).filter(file => mode !== 'prepare-ui' || isUiFile(file));
   for (const root of roots) {
     const rootPath = path.join(workspace, root);
     const info = await lstat(rootPath);

@@ -521,7 +521,20 @@ function checkWorkspaceOverview(response) {
 }
 
 function overviewReading() {
-  return Boolean(drawerState.page || byId('source-details').open || (activeView === 'tasks' && byId('execution-records').open) || (activeView === 'roles' && (selectedCandidateId || selectedStage || !byId('role-manager').hidden)) || layoutState.editing);
+  return Boolean(
+    drawerState.page
+    || byId('source-details').open
+    || (activeView === 'tasks' && byId('execution-records').open)
+    || (activeView === 'roles' && (
+      selectedCandidateId
+      || (selectedStage && selectedStage !== 'all')
+      || !byId('role-manager').hidden
+      || byId('candidate-query').value.trim()
+      || byId('candidate-list').contains(document.activeElement)
+      || byId('candidate-search-list').contains(document.activeElement)
+    ))
+    || layoutState.editing
+  );
 }
 
 function overviewDataSignature(value) {

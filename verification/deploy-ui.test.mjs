@@ -2,14 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const execute = promisify(execFile);
 const deploy = fileURLToPath(new URL('./deploy-rounds.mjs', import.meta.url));
-const uiFiles = ['SKILL.md', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts'];
+const vendorDir = fileURLToPath(new URL('../skills/recruit-board/public/vendor/ui-sdk-core', import.meta.url));
+async function listRelativeFiles(dir, prefix = '') {
+  const result = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) result.push(...await listRelativeFiles(path.join(dir, entry.name), rel));
+    else if (entry.isFile()) result.push(rel);
+  }
+  return result;
+}
+const vendorFiles = (await listRelativeFiles(vendorDir, 'public/vendor/ui-sdk-core')).sort();
+const uiFiles = ['SKILL.md', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts', ...vendorFiles];
+const baseUiFiles = ['SKILL.md', 'public/app.js', 'public/index.html', 'public/style.css', 'types/index.d.ts'];
 const roots = ['skills', '.claude/skills', '.agents/skills', '.qoder/skills'];
 const owner = 'ui-deploy-test';
 
@@ -23,7 +35,7 @@ async function fixture(t) {
     await writeFile(file, text); originals.set(relative, text);
   };
   for (const prefix of roots) {
-    for (const file of uiFiles) {
+    for (const file of baseUiFiles) {
       await put(`${prefix}/recruit-board/${file}`, `old synthetic interface: ${file}\n`);
     }
     if (prefix !== '.claude/skills') {
@@ -59,12 +71,17 @@ test('网页部署只更新白名单文件，保留已装原生副本且备份�
   assert.equal(applied.applied, roots.length * uiFiles.length);
   assert.equal(applied.protectedUnchanged, true);
   assert.equal((await run('verify', prepared.backup)).matchedFiles, roots.length * uiFiles.length);
+  assert.equal(
+    await readFile(path.join(root, 'skills/recruit-board/public/vendor/ui-sdk-core/index.js'), 'utf8'),
+    await readFile(path.join(vendorDir, 'index.js'), 'utf8')
+  );
   for (const [relative, text] of originals) {
     if (manifest.files.some(file => file.relative === relative)) continue;
     assert.equal(await readFile(path.join(root, relative), 'utf8'), text, relative);
   }
   await assert.rejects(readFile(path.join(root, '.claude/skills/recruit-board/hooks/register.tsx')));
   await run('rollback', prepared.backup);
+  await assert.rejects(readFile(path.join(root, 'skills/recruit-board/public/vendor/ui-sdk-core/index.js')), { code: 'ENOENT' });
   for (const [relative, text] of originals) assert.equal(await readFile(path.join(root, relative), 'utf8'), text, relative);
 });
 

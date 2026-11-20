@@ -74,6 +74,7 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
   w.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   w.HTMLElement.prototype.scrollIntoView = function () { scrolls.push(this.id); };
   w.HTMLElement.prototype.getClientRects = function () { return visible(this) ? [{}] : []; };
+  w.Element.prototype.checkVisibility ??= function () { return visible(this); };
   let scrollY = 0;
   Object.defineProperty(w, 'scrollY', { get: () => scrollY });
   w.scrollTo = (x, y) => { scrollY = y; }; w.scrollBy = (x, y) => { scrollY += y; };
@@ -555,4 +556,30 @@ test('布局设置仍可从紧凑工具入口显式打开、排序及还原，�
   assert.equal(p.w.document.activeElement, p.$('#edit-layout'));
   p.$('#edit-layout').click(); p.$('#reset-layout').click(); await settle();
   assert.deepEqual(p.all('#layout-root > [data-layout-item]').map(element => element.dataset.layoutItem), ['assistant', 'roles', 'tasks']);
+});
+
+test('被动切换到岗位与人选时不冻结总览更新，点击具体阶段筛选后仍缓冲提示显示更新', async t => {
+  const p = await page(t, { decisions: [decision('open-1')] });
+  assert.equal(p.$('#workspace-decisions-count').textContent, '1');
+  await navigate(p, 'roles');
+  p.overview.decisions.push(decision('open-2'));
+  p.overview.counts.open = 2;
+  p.overview.revision = '2';
+  await p.refresh();
+  assert.equal(p.$('#workspace-reading-notice').hidden, true);
+  assert.equal(p.$('#workspace-decisions-count').textContent, '2');
+  assert.equal(p.all('#workspace-decision-list > li').length, 2);
+
+  p.$('#stage-talking').click(); await settle();
+  p.overview.decisions.push(decision('open-3'));
+  p.overview.counts.open = 3;
+  p.overview.revision = '3';
+  await p.refresh();
+  assert.equal(p.$('#workspace-reading-notice').hidden, false);
+  assert.equal(p.$('#workspace-decisions-count').textContent, '2');
+  assert.equal(p.all('#workspace-decision-list > li').length, 2);
+  p.$('#workspace-apply-updates').click(); await settle();
+  assert.equal(p.$('#workspace-reading-notice').hidden, true);
+  assert.equal(p.$('#workspace-decisions-count').textContent, '3');
+  assert.equal(p.all('#workspace-decision-list > li').length, 3);
 });
