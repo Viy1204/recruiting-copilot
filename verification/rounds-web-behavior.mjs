@@ -113,7 +113,7 @@ async function page(t, data = fixture(), options = {}) {
     }
     return Response.json(structuredClone(payload));
   };
-  const executable = source.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__createSnapshotController;\n').replace(/^import .* from '\/vendor\/ui-sdk-core\/index\.js';\r?\n/m, 'const { bindLayer, bindPart, createChange, createReorder, createRovingFocus, createSelection, definePrimitive, keepFocus } = window.__uiSdkCore;\n');
+  const executable = source.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__createSnapshotController;\n').replace(/^import \{([^}]+)\} from '\/vendor\/ui-sdk-core\/index\.js';\r?\n/m, 'const {$1} = window.__uiSdkCore;\n');
   window.eval(`(() => {\n${executable}\n})();`);
   t.after(() => { globalThis.HTMLElement = prevHtmlElement; window.dispatchEvent(new window.Event('pagehide')); window.close(); assert.deepEqual(errors, []); });
   await settle();
