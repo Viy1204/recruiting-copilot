@@ -8,7 +8,7 @@
 #    disabled，因为 preset 各自负责 per-agent 的 skill 发现；注释里写明
 #    "deployment-level providers —— repository plugins, a host skill-filesystem
 #    row —— register into its global layer"，我们正是这个用法）。
-# 2. 把本包内的 skills/ 目录注册为 customSkillDirs，使 7 个招聘 skill 出现在
+# 2. 把本包内的 skills/ 目录注册为 customSkillDirs，使 8 个招聘 skill 出现在
 #    该 profile 下所有 agent 的全局 skill 层。
 # 3. 挂载本包自身（host 插件 + 客户端面板）：host 侧通过 CDP 把 boss-cli /
 #    liepin-cli 的浏览器镜像成 JPEG 帧并暴露 /plugins/recruiting-view/* 路由；
