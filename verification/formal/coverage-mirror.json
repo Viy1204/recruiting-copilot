@@ -1,0 +1,42 @@
+{
+  "model": "Mirror.tla",
+  "contract": "mirror.test.mjs",
+  "knownFindings": [],
+  "reviewedWorkingTree": true,
+  "sources": [
+    {
+      "path": "lib/index.js",
+      "sha256": "f6d56d1d590be2fe1e88e05ff2ead2958fbf6910cc15d4bc6f8713974eb0a2c9"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "recover-during-risk",
+      "file": "lib/index.js",
+      "before": "if (this.state.risk === null && this._everConnected && this._watch && !this.state.launching && Date.now() - this._relaunchAt > 10000)",
+      "after": "if (this._everConnected && this._watch && !this.state.launching && Date.now() - this._relaunchAt > 10000)",
+      "expect": "FORMAL_MIRROR_NO_RECOVERY"
+    },
+    {
+      "name": "fit-during-risk",
+      "file": "lib/index.js",
+      "before": "    if (this.state.risk !== null) return;\n    const want = this._fitRequest;",
+      "after": "    const want = this._fitRequest;",
+      "expect": "FORMAL_MIRROR_NO_FIT"
+    },
+    {
+      "name": "replace-first-risk",
+      "file": "lib/index.js",
+      "before": "    if (this.state.risk !== null) return;\n    this.state.risk = { url, at: Date.now() };",
+      "after": "    this.state.risk = { url, at: Date.now() };",
+      "expect": "FORMAL_MIRROR_FIRST_RISK"
+    },
+    {
+      "name": "clear-after-risk-await",
+      "file": "lib/index.js",
+      "before": "        if (this.state.risk !== null) return;\n        await this._command(\"Emulation.clearDeviceMetricsOverride\", {});",
+      "after": "        await this._command(\"Emulation.clearDeviceMetricsOverride\", {});",
+      "expect": "FORMAL_MIRROR_ASYNC_RISK"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+---
+title: "事项依据不被旧版本覆盖 同一请求只登记一次"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 依据已登记
+    lg1: 等待后续依据
+  }
+  class lg0 teal
+  class lg1 blue
+  s0: 事项已登记#65292;等待新增依据
+  s1: 已登记一份新依据
+  s2: 两份依据均已登记
+  [*] --> s0
+  s0 --> s1: 版本一致#65292;登记一份新依据
+  s1 --> s2: 版本一致#65292;登记一份新依据
+  class s0 blue
+  class s1 blue
+  class s2 teal

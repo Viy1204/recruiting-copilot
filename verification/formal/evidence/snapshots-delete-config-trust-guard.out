@@ -1,0 +1,167 @@
+✔ 首次坏或缺台账显示人数未知，有效空台账才是零人 (21.6657ms)
+✖ 配置或其依据失效时整套保留最后可信视图，重复读取不混算，恢复后使用新源 (16.5497ms)
+✔ 阶段是台账读取投影，岗位别名不改变原人岗身份或合并同名人选 (0.7155ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 154.5294
+
+✖ failing tests:
+
+test at verification\formal\snapshots.test.mjs:78:1
+✖ 配置或其依据失效时整套保留最后可信视图，重复读取不混算，恢复后使用新源 (16.5497ms)
+  AssertionError [ERR_ASSERTION]: SNAPSHOTS_TRUSTED_VIEW_PRESERVED config-invalid
+  + actual - expected
+  ... Skipped lines
+  
+    {
+      candidates: [
+        {
+          conflict: false,
+  +       id: '["虚构新乙","虚构历史岗"]',
+  +       name: '虚构新乙',
+  -       id: '["虚构同名","虚构历史岗"]',
+  -       name: '虚构同名',
+          rating: 'A',
+          rawRole: '虚构历史岗',
+  +       rawStatus: '已排除',
+  +       role: '虚构历史岗',
+  +       stage: 'ended',
+  -       rawStatus: '已回复',
+  -       role: '虚构甲岗',
+  -       stage: 'decision',
+          statuses: [
+  +         '已排除'
+  -         '已回复'
+          ]
+        },
+  -     {
+  -       conflict: false,
+  -       id: '["虚构同名","虚构甲岗"]',
+  -       name: '虚构同名',
+  -       rating: 'A',
+  -       rawRole: '虚构甲岗',
+  -       rawStatus: '虚构待核状态',
+  -       role: '虚构甲岗',
+  -       stage: 'unclassified',
+  -       statuses: [
+  -         '虚构待核状态'
+  -       ]
+  -     }
+      ],
+  +   configStamp: null,
+  +   contextRevision: 'd84f4eb3492d504877f3643c947dcd8eda79d7090ca3bef59d6dc512f5423b98',
+  +   contextStamp: '2026-11-02T00:00:00.000Z',
+  +   ledgerStamp: '2026-11-02T00:00:00.000Z',
+  +   ledgerUpdatedAt: '2026-11-02T00:00:00.000Z',
+  -   configStamp: '2026-11-01T00:00:00.000Z',
+  -   contextRevision: 'c7f0dc9570ccd6995a1222bf9cab93b1c366f2607f54e35818f69b98fbc688fd',
+  -   contextStamp: '2026-11-01T00:00:00.000Z',
+  -   ledgerStamp: '2026-11-01T00:00:00.000Z',
+  -   ledgerUpdatedAt: '2026-11-01T00:00:00.000Z',
+      roles: [
+        {
+          configured: true,
+          name: '虚构甲岗',
+  +       priority: 'P2',
+  +       status: '已关闭'
+  -       priority: 'P0',
+  -       status: '在招'
+        },
+        {
+          configured: true,
+          name: '虚构乙岗',
+          priority: 'P1',
+          status: '暂停'
+        },
+  +     {
+  +       configured: false,
+  +       name: '虚构历史岗',
+  +       priority: null,
+  +       status: null
+  +     }
+      ],
+      stages: [
+        {
+          count: 0,
+          id: 'screen',
+  ...
+        {
+  +       count: 0,
+  -       count: 1,
+          id: 'decision',
+          label: '待决策'
+        },
+        {
+          count: 0,
+  ...
+        {
+  +       count: 1,
+  -       count: 0,
+          id: 'ended',
+          label: '已结束'
+        },
+        {
+  +       count: 0,
+  -       count: 1,
+          id: 'unclassified',
+          label: '未归类'
+        }
+      ],
+  +   unknownStatuses: []
+  -   unknownStatuses: [
+  -     {
+  -       count: 1,
+  -       status: '虚构待核状态'
+  -     }
+  -   ]
+    }
+  
+      at file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/snapshots.test.mjs:101:14
+      at async withWorkspace (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/snapshots.test.mjs:30:12)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/snapshots.test.mjs:79:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: {
+      candidates: [ [Object] ],
+      roles: [ [Object], [Object], [Object] ],
+      stages: [
+        [Object], [Object],
+        [Object], [Object],
+        [Object], [Object],
+        [Object], [Object],
+        [Object]
+      ],
+      unknownStatuses: [],
+      ledgerUpdatedAt: '2026-11-02T00:00:00.000Z',
+      contextRevision: 'd84f4eb3492d504877f3643c947dcd8eda79d7090ca3bef59d6dc512f5423b98',
+      ledgerStamp: '2026-11-02T00:00:00.000Z',
+      contextStamp: '2026-11-02T00:00:00.000Z',
+      configStamp: null
+    },
+    expected: {
+      candidates: [ [Object], [Object] ],
+      roles: [ [Object], [Object] ],
+      stages: [
+        [Object], [Object],
+        [Object], [Object],
+        [Object], [Object],
+        [Object], [Object],
+        [Object]
+      ],
+      unknownStatuses: [ [Object] ],
+      ledgerUpdatedAt: '2026-11-01T00:00:00.000Z',
+      contextRevision: 'c7f0dc9570ccd6995a1222bf9cab93b1c366f2607f54e35818f69b98fbc688fd',
+      ledgerStamp: '2026-11-01T00:00:00.000Z',
+      contextStamp: '2026-11-01T00:00:00.000Z',
+      configStamp: '2026-11-01T00:00:00.000Z'
+    },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,62 @@
+✖ 纯域转换：expectedRevision 阻止旧写，requestId 重放不增加修订或回滚依据 (4.403ms)
+✖ 公开存储入口：拒绝旧版本后文件不变，重放旧请求仍返回最新事项且逐字不重写 (85.7166ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 219.2994
+
+✖ failing tests:
+
+test at verification\formal\decisions.test.mjs:20:1
+✖ 纯域转换：expectedRevision 阻止旧写，requestId 重放不增加修订或回滚依据 (4.403ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted exception: DECISIONS_REPLAY_GUARD
+  Actual message: "事项版本冲突；当前版本 3，请重读后再决定"
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:32:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: 事项版本冲突；当前版本 3，请重读后再决定
+        at applyDecision (file:///C:/Users/zhuyifan/AppData/Local/Temp/recruit-formal-decisions-mM3k08/skills/recruit-board/decisions-domain.mjs:126:81)
+        at file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:32:42
+        at getActual (node:assert:611:5)
+        at strict.doesNotThrow (node:assert:779:32)
+        at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:32:12)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1106:25)
+        at Test.start (node:internal/test_runner/test:1003:17)
+        at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17),
+    expected: undefined,
+    operator: 'doesNotThrow',
+    diff: 'simple'
+  }
+
+test at verification\formal\decisions.test.mjs:43:1
+✖ 公开存储入口：拒绝旧版本后文件不变，重放旧请求仍返回最新事项且逐字不重写 (85.7166ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted rejection: DECISIONS_REPLAY_STORE_GUARD
+  Actual message: "事项版本冲突；当前版本 3，请重读后再决定"
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:58:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: 事项版本冲突；当前版本 3，请重读后再决定
+        at applyDecision (file:///C:/Users/zhuyifan/AppData/Local/Temp/recruit-formal-decisions-mM3k08/skills/recruit-board/decisions-domain.mjs:126:81)
+        at file:///C:/Users/zhuyifan/AppData/Local/Temp/recruit-formal-decisions-mM3k08/skills/recruit-board/scripts/decisions.mjs:81:21
+        at async withItemLock (file:///C:/Users/zhuyifan/AppData/Local/Temp/recruit-formal-decisions-mM3k08/skills/recruit-board/scripts/storage.mjs:84:12)
+        at async file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:58:55
+        at async waitForActual (node:assert:646:5)
+        at async strict.doesNotReject (node:assert:789:33)
+        at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:58:5)
+        at async Test.run (node:internal/test_runner/test:1113:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:788:7),
+    expected: undefined,
+    operator: 'doesNotReject',
+    diff: 'simple'
+  }

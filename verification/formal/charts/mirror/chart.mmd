@@ -1,0 +1,34 @@
+---
+title: "浏览器镜像 异步还原返回后重新核对熔断"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: 熔断
+    lg1: 正常
+  }
+  class lg0 orange
+  class lg1 teal
+  s0: 未熔断 可以自动维护
+  s1: 首条视口命令等待返回
+  s2: 已熔断 自动维护入口被拦截
+  s3: 还原命令已发出 等待返回
+  s4: 已熔断 首条视口命令仍在途
+  s5: 命令发出后才熔断 等待返回
+  [*] --> s0
+  s0 --> s1: 入口检查后开始视口还原
+  s0 --> s2: 观察到风险页
+  s1 --> s3: 首条返回 检查通过后发送清除命令
+  s1 --> s4: 观察到风险页
+  s2 --> s0: 用户处理后显式解除
+  s3 --> s0: 清除命令返回
+  s3 --> s5: 观察到风险页
+  s4 --> s1: 用户处理后显式解除
+  s4 --> s2: 首条返回 熔断中止后续还原
+  s5 --> s3: 用户处理后显式解除
+  s5 --> s2: 清除命令返回
+  class s0 teal
+  class s1 teal
+  class s2 orange
+  class s3 teal
+  class s4 orange
+  class s5 orange

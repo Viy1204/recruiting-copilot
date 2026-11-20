@@ -1,0 +1,33 @@
+✖ 所有至多四步的风险、人工解除和维护事件保持熔断及首次依据 (2.424ms)
+✔ 风险在首条视口命令等待期间置位后，不应再派发新的还原写入 (0.6229ms)
+✔ 熔断中断的还原在人工解除后可重试，成功后不重复还原 (0.2484ms)
+✔ 还原等待期间重新请求相同贴合，中断后不会复用失效的旧覆盖 (0.2688ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 124.4093
+
+✖ failing tests:
+
+test at verification\formal\mirror.test.mjs:19:1
+✖ 所有至多四步的风险、人工解除和维护事件保持熔断及首次依据 (2.424ms)
+  AssertionError [ERR_ASSERTION]: FORMAL_MIRROR_FIRST_RISK: verification -> restriction
+  + actual - expected
+  
+  + 'https://www.zhipin.com/web/common/403.html'
+  - 'https://www.zhipin.com/web/passport/zp/verify.html'
+  
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/mirror.test.mjs:55:18)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'https://www.zhipin.com/web/common/403.html',
+    expected: 'https://www.zhipin.com/web/passport/zp/verify.html',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

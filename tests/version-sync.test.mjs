@@ -15,7 +15,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,5 +43,26 @@ test("marketplace 只发布主插件，网页看板保留共享入口且不注�
   }
   for (const relative of ["SKILL.md", "model.mjs", "types/index.d.ts", "public/index.html", "scripts/connect.mjs", "scripts/server.mjs", "scripts/actions.mjs", "scripts/progress.mjs", "scripts/decisions.mjs"]) {
     assert.equal(existsSync(path.join(board, relative)), true, `网页及共享能力必须保留：${relative}`);
+  }
+});
+
+test("skills 与各 Agent 软链目录及 commands 入口保持一致", () => {
+  const skills = readdirSync(path.join(repoRoot, "skills"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(path.join(repoRoot, "skills", entry.name, "SKILL.md")))
+    .map((entry) => entry.name)
+    .sort();
+  assert.ok(skills.length >= 8, `skills 目录应至少包含 8 个技能，实际 ${skills.length}`);
+  const commandAlias = { "market-talent-mapping": "recruit-mapping" };
+  for (const skill of skills) {
+    for (const hostDir of [".claude/skills", ".agents/skills", ".qoder/skills"]) {
+      const target = path.join(repoRoot, hostDir, skill);
+      assert.equal(existsSync(target), true, `${hostDir} 缺少技能入口：${skill}`);
+    }
+    const commandName = commandAlias[skill] ?? skill;
+    assert.equal(
+      existsSync(path.join(repoRoot, "commands", `${commandName}.md`)),
+      true,
+      `commands 缺少命令入口：${commandName}.md`,
+    );
   }
 });

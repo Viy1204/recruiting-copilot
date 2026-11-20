@@ -1,0 +1,34 @@
+{
+  "model": "Decisions.tla",
+  "contract": "decisions.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/decisions-domain.mjs",
+      "sha256": "676be9edf456a5fc52ae6019ea5951791635e5ea5bb569fc9dcd8c2e3a834b37"
+    },
+    {
+      "path": "skills/recruit-board/scripts/decisions.mjs",
+      "sha256": "02509291e57954fae6cfb99fc27ebec15ff2961f50ea8396049470396740f075"
+    },
+    {
+      "path": "skills/recruit-board/scripts/storage.mjs",
+      "sha256": "34de725c933ac5c0e4dc1f2388e28c89ad1a99ce0ba0252efc4312585e6deb8c"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "remove-expected-revision-guard",
+      "file": "skills/recruit-board/decisions-domain.mjs",
+      "before": "  if ((previous?.revision ?? 0) !== input.expectedRevision) throw Object.assign(new Error(`事项版本冲突；当前版本 ${previous?.revision ?? 0}，请重读后再决定`), { code: 'DECISION_REVISION_CONFLICT', status: 409 });",
+      "after": "",
+      "expect": "DECISIONS_STALE_GUARD"
+    },
+    {
+      "name": "remove-request-replay-guard",
+      "file": "skills/recruit-board/decisions-domain.mjs",
+      "before": "  if (replay) {\n    if (replay.requestHash !== hash) throw Object.assign(new Error('请求 ID 已用于不同内容，请使用新的请求 ID'), { code: 'DECISION_REQUEST_CONFLICT', status: 409 });\n    return { item: previous, replayed: true, appliedRevision: replay.revision };\n  }",
+      "after": "",
+      "expect": "DECISIONS_REPLAY_GUARD"
+    }
+  ]
+}

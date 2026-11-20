@@ -483,13 +483,6 @@ window.__ModuleLoader__.load({
 				btn("＋", "新标签页", () => control("new-tab"), { disabled: !connected }),
 				btn(interactive ? "🖱" : "🔒", interactive ? "可操作（点画面直接操作浏览器）" : "只读（点击不再传给浏览器）", () => setInteractive((v) => !v), { "data-on": String(interactive) }),
 				btn("贴合", "贴合：页面视口固定 958×1149（截得全）；关掉则显示浏览器真实窗口画面", () => setFit((v) => !v), { "data-on": String(fit) }),
-				// 有头/无头切换按钮已摘掉（原 #24）。2026-08-18 真机实测：点它直接换来 24 小时
-				// 账号限制——切换必然是关掉浏览器再重开，于是同一个 profile、同一份 cookies、
-				// 同一个 IP 下 UA 在 HeadlessChrome 与 Chrome 之间突变，这是会话篡改的经典信号。
-				// host 的 setMode 实现保留着（见 lib/index.js），但不再有任何 UI 入口。
-				// 重新暴露它之前必须先解决 UA 突变：给两个模式对齐 UA
-				// （`Emulation.setUserAgentOverride` + userAgentMetadata），并把模式判据从
-				// /json/version 的 UA 换成 sidecar 文件——否则伪装会同时掀掉判据本身。
 				btn(mode === "max" ? "⇲" : "⇱", mode === "max" ? "还原为右侧面板" : "放大到整屏", () => setMode((m) => (m === "max" ? "side" : "max"))),
 				btn("—", "折叠", () => setCollapsed(true))
 			);

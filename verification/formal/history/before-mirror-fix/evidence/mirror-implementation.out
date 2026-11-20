@@ -1,0 +1,36 @@
+✔ 所有至多四步的风险、人工解除和维护事件保持熔断及首次依据 (7.56ms)
+✖ 风险在首条视口命令等待期间置位后，不应再派发新的还原写入 (1.3761ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 111.9277
+
+✖ failing tests:
+
+test at verification\formal\mirror.test.mjs:66:1
+✖ 风险在首条视口命令等待期间置位后，不应再派发新的还原写入 (1.3761ms)
+  AssertionError [ERR_ASSERTION]: FORMAL_MIRROR_ASYNC_RISK
+  + actual - expected
+  
+  + [
+  +   {
+  +     method: 'Emulation.clearDeviceMetricsOverride',
+  +     riskAtDispatch: true
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/mirror.test.mjs:79:10)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { method: 'Emulation.clearDeviceMetricsOverride', riskAtDispatch: true } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -24,6 +24,7 @@ skills/recruit-daily/          每日招聘流水线（+ 双通道命令参考�
 skills/market-talent-mapping/  某岗市场人才深度盘点（+ 渠道与统计参考、报告模板）
 skills/resume-review/          本地/飞书邮箱简历收取与评估（单份或批量）
 skills/interview-schedule/     面试预约：飞书日程+视频会议+拉面试官+档案同步
+skills/recruit-board/          本地招聘工作台：看板服务、模型、状态同步与前端界面
 skills/ask-viy/                总目录：不知道用哪个流程时问它
 docs/DESIGN.md                 设计思路与理念（为什么长这样）
 .claude-plugin/                Claude Code 插件清单（其他工具忽略即可）

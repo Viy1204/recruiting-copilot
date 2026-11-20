@@ -1,0 +1,28 @@
+✖ 所有至多五步的公开事件排列保持单飞，并丢弃暂停、失效、超时后的响应 (2.5425ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 114.9201
+
+✖ failing tests:
+
+test at verification\formal\live.test.mjs:16:1
+✖ 所有至多五步的公开事件排列保持单飞，并丢弃暂停、失效、超时后的响应 (2.5425ms)
+  AssertionError [ERR_ASSERTION]: FORMAL_LIVE_SINGLE_FLIGHT: resume -> resume
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/live.test.mjs:63:18)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,38 @@
+{
+  "model": "Events.tla",
+  "contract": "events.test.mjs",
+  "sources": [
+    {
+      "path": "skills/recruit-board/scripts/events.mjs",
+      "sha256": "4a8b5c2272014226a3f300397b4a283ad10f9533d57cdfefe0a958e7f2d8d19e"
+    },
+    {
+      "path": "skills/recruit-board/scripts/progress.mjs",
+      "sha256": "de1e6a0a8dd6c90a866a6926f236e9d8192df0e45c20551bfbfa8b94495cb6dc"
+    },
+    {
+      "path": "skills/recruit-board/model.mjs",
+      "sha256": "02b8a358c21f32f22a87987137587d3a7e400145f695019e661602a4046cf896"
+    },
+    {
+      "path": "skills/recruit-board/scripts/records.mjs",
+      "sha256": "d06bc8951119ceb2a987889ca0a683e318727c0dffb633450ec5c5a3f3ec323b"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "remove-calendar-archive-event-guard",
+      "file": "skills/recruit-board/scripts/progress.mjs",
+      "before": "        if (candidates.some(candidateId => events.diagnostics.some(item => item.candidateId === candidateId && ['PROGRESS_EVENT_INVALID', 'PROGRESS_SOURCE_UNAVAILABLE'].includes(item.code)) || !linked.some(event => event.context.candidateId === candidateId))) throw new Error('约面任务缺少已关联档案中的进展事件，请用 events.mjs 记录真实结果并关联来源任务后再完成');",
+      "after": "",
+      "expect": "EVENTS_CALENDAR_GUARD"
+    },
+    {
+      "name": "remove-archive-diagnostic-guard",
+      "file": "skills/recruit-board/scripts/progress.mjs",
+      "before": "events.diagnostics.some(item => item.candidateId === candidateId && ['PROGRESS_EVENT_INVALID', 'PROGRESS_SOURCE_UNAVAILABLE'].includes(item.code)) || ",
+      "after": "",
+      "expect": "EVENTS_DIAGNOSTIC_GUARD"
+    }
+  ]
+}

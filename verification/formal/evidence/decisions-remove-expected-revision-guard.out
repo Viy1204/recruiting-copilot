@@ -1,0 +1,40 @@
+✖ 纯域转换：expectedRevision 阻止旧写，requestId 重放不增加修订或回滚依据 (3.4203ms)
+✖ 公开存储入口：拒绝旧版本后文件不变，重放旧请求仍返回最新事项且逐字不重写 (64.2268ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 183.8192
+
+✖ failing tests:
+
+test at verification\formal\decisions.test.mjs:20:1
+✖ 纯域转换：expectedRevision 阻止旧写，requestId 重放不增加修订或回滚依据 (3.4203ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception: DECISIONS_STALE_GUARD
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:26:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.start (node:internal/test_runner/test:1003:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at verification\formal\decisions.test.mjs:43:1
+✖ 公开存储入口：拒绝旧版本后文件不变，重放旧请求仍返回最新事项且逐字不重写 (64.2268ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: DECISIONS_STALE_STORE_GUARD
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/decisions.test.mjs:52:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

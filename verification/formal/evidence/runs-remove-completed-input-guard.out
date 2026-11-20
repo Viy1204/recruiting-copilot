@@ -1,0 +1,31 @@
+✔ 两项代表步骤的所有可达顺序：禁止假完成，结束后禁止新进度写入 (28.939ms)
+✖ 所有真实工作流均允许任意步骤顺序、等待续办及不先写 summary 的正常完成 (0.7312ms)
+✔ recordProgress 拒绝未收尾任务与三类终态的新收据，失败写入不改变文件 (188.7619ms)
+✔ 终态可返回历史重点请求的回执，回放不改变任何持久化内容 (72.535ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 477.2845
+
+✖ failing tests:
+
+test at verification\formal\runs.test.mjs:66:1
+✖ 所有真实工作流均允许任意步骤顺序、等待续办及不先写 summary 的正常完成 (0.7312ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception (Error): RUNS_VALIDATE_COMPLETION_GUARD
+      at TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/runs.test.mjs:71:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:788:18)
+      at Test.postRun (node:internal/test_runner/test:1235:19)
+      at Test.run (node:internal/test_runner/test:1163:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

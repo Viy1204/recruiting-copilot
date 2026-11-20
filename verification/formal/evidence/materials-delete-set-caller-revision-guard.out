@@ -1,0 +1,29 @@
+✖ 旧版保存请求不能覆盖新清单，候选资料和文档标识按原人岗隔离 (81.0157ms)
+✔ 旧版导入请求不能在新清单上复活资料，成功归档可读且内容改变后阻断 (100.2588ms)
+✔ 同名跨原岗未确认时不自动串档，用户确认清空后不恢复隐式档案 (70.1055ms)
+✔ 同版保存和导入争用同一清单写锁，最多一个请求提交 (42.5847ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 405.573
+
+✖ failing tests:
+
+test at verification\formal\materials.test.mjs:48:1
+✖ 旧版保存请求不能覆盖新清单，候选资料和文档标识按原人岗隔离 (81.0157ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection: MATERIALS_STALE_SET_REJECTED
+      at async file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:53:5
+      at async withWorkspace (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:42:12)
+      at async TestContext.<anonymous> (file:///C:/Users/zhuyifan/recruiting-copilot/verification/formal/materials.test.mjs:49:3)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
