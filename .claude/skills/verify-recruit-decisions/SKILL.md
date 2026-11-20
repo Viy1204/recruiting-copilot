@@ -9,10 +9,11 @@ description: 修改招聘事项 expectedRevision、requestId、依据登记或�
 
 ## 覆盖与代码基线
 
-已核对的基线 commit 为 `80d623348799711ded9ea78eaf5c8961e1556a69`。
+已核对的基线 commit 为 `eb790519332fc30cde6157bcd029ef443f76dddc`。
 
 - `skills/recruit-board/decisions-domain.mjs`：`applyDecision`（120），请求哈希与回放（123–128）、版本冲突（129）、依据登记（156–158）与历史追加（202–204）。
 - `skills/recruit-board/scripts/decisions.mjs`：`readDecision`（41）、`applyDecisionCommand`（66），在单事项锁内读入当前记录并应用域转换，重放不重写事项 JSON。
+- `skills/recruit-board/scripts/server.mjs`：`POST /api/decisions`（`8c73002` 新增），经 CSRF、同源与 `WEB_DECISION_OPS` 白名单校验后直接委托 `applyDecisionCommand`，不绕过版本锁或重放守卫；若后续新增或放开 web 写入口，须复核是否仍经由 `applyDecisionCommand`。
 - `skills/recruit-board/scripts/storage.mjs`：`withItemLock`（55）、`writeJSONFile`（37），用于解释单事项正常写入边界。
 - 模型与中文视图：`verification/formal/models/Decisions.{tla,cfg,view.mjs}`；契约：`verification/formal/decisions.test.mjs`。
 - SHA-256 与变体：`verification/formal/coverage-decisions.json`。总入口 `verification/formal/coverage.json` 的 `subsystems.decisions` 引用此片段；`syncCommit` 只在总表维护。

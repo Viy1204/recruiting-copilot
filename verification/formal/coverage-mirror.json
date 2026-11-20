@@ -2,7 +2,6 @@
   "model": "Mirror.tla",
   "contract": "mirror.test.mjs",
   "knownFindings": [],
-  "reviewedWorkingTree": true,
   "sources": [
     {
       "path": "lib/index.js",

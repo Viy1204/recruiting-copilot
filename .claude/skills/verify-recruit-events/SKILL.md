@@ -9,7 +9,7 @@ description: 修改约面任务收尾、档案事件关联、事件读取诊断�
 
 ## 覆盖与代码基线
 
-已核对的基线 commit 为 `80d623348799711ded9ea78eaf5c8961e1556a69`。
+已核对的基线 commit 为 `eb790519332fc30cde6157bcd029ef443f76dddc`。
 
 - `skills/recruit-board/scripts/progress.mjs`：`recordProgress`（21），约面 summary/整轮 complete 的事件 guard（49–53）、导入重点（54–58）、内存转换和单 run 发布（60、68–74）。
 - `skills/recruit-board/scripts/events.mjs`：`readArchiveEvents`（61）、`recordCandidateEvent`（98），通过真实档案记录与读取事件；稳定 ID 重放及冲突检查（110–115）。

@@ -9,7 +9,7 @@ description: 修改招聘看板岗位别名、岗位状态、配置 revision 检
 
 损害：旧页面保存会撤销刚完成的岗位归并或重新改写岗位状态，使候选归组和在招范围偏离用户的最新决定。
 
-同步基线 syncCommit：`80d623348799711ded9ea78eaf5c8961e1556a69`。
+同步基线 syncCommit：`eb790519332fc30cde6157bcd029ef443f76dddc`。
 覆盖记录：`verification/formal/coverage-roles.json`；总表只引用片段，源码摘要在该片段唯一保存。
 
 ## 函数与模型对应
