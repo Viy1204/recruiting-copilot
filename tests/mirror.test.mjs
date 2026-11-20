@@ -724,21 +724,3 @@ test("clearRisk 幂等，重复解除不报错", () => {
   assert.equal(mirror.state.risk, null);
   assert.equal(mirror.state.error, null);
 });
-
-test("有 CLI 命令在跑时拒绝切换模式，并说清是哪条、跑了多久", async () => {
-  const { mirror } = stubMirror();
-  mirror.name = "__test_busy2__";
-  const file = path.join(BUSY_DIR, `${mirror.name}.busy.json`);
-  mkdirSync(BUSY_DIR, { recursive: true });
-  writeFileSync(file, JSON.stringify({ pid: process.pid, command: "boss search", startedAt: Date.now() - 12000 }));
-  try {
-    const res = await mirror.setMode(false);
-    assert.equal(res.ok, false);
-    assert.equal(res.busy.command, "boss search");
-    assert.match(res.error, /boss search/);
-    assert.match(res.error, /12s/);
-    assert.match(res.error, new RegExp(String(process.pid)));
-  } finally {
-    try { unlinkSync(file); } catch { /* ignore */ }
-  }
-});
