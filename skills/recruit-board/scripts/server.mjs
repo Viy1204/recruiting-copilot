@@ -11,6 +11,17 @@ import { listCandidateMaterials, setCandidateMaterials } from './materials.mjs';
 import { readRunActivity, readRunHighlights, readRunResults } from './results.mjs';
 import { readWorkspaceOverview } from './overview.mjs';
 import { actionError } from './actions.mjs';
+import { applyDecisionCommand } from './decisions.mjs';
+
+const WEB_DECISION_OPS = new Set(['decide', 'snooze', 'revise', 'reopen', 'cancel', 'resolve-history']);
+const DECISION_MESSAGES = {
+  decide: '决定已记录，待下一轮执行',
+  snooze: '事项已暂缓',
+  revise: '决定已修订，待下一轮执行',
+  reopen: '事项已重新打开',
+  cancel: '事项已取消',
+  'resolve-history': '历史事项已核对'
+};
 
 const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
 const vendorRoot = path.resolve(publicRoot, 'vendor', 'ui-sdk-core');
@@ -40,8 +51,8 @@ const securityHeaders = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 };
 
-async function readRoleRequest(request, fields = ['role', 'status', 'revision']) {
-  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers['content-type'] ?? '')) throw Object.assign(new Error('保存岗位状态必须使用 JSON'), { code: 'JSON_REQUIRED', status: 415 });
+async function readJsonRequest(request, fields = ['role', 'status', 'revision'], invalidCode = 'ROLE_INPUT_INVALID') {
+  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers['content-type'] ?? '')) throw Object.assign(new Error('保存请求必须使用 JSON'), { code: 'JSON_REQUIRED', status: 415 });
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -51,8 +62,8 @@ async function readRoleRequest(request, fields = ['role', 'status', 'revision'])
   }
   let value;
   try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { throw Object.assign(new Error('岗位请求不是有效 JSON'), { code: 'JSON_INVALID', status: 400 }); }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== fields.length || Object.keys(value).some(key => !fields.includes(key))) throw Object.assign(new Error(`保存请求仅接受 ${fields.join('、')}`), { code: 'ROLE_INPUT_INVALID', status: 400 });
+  catch { throw Object.assign(new Error('请求正文不是有效 JSON'), { code: 'JSON_INVALID', status: 400 }); }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== fields.length || Object.keys(value).some(key => !fields.includes(key))) throw Object.assign(new Error(`保存请求仅接受 ${fields.join('、')}`), { code: invalidCode, status: 400 });
   return value;
 }
 
@@ -111,14 +122,26 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
     const params = new URLSearchParams(url.searchParams);
     params.delete('workspace');
     const resource = `${url.pathname}${params.size ? `?${params}` : ''}`;
-    if (request.method === 'POST' && ['/api/roles/status', '/api/roles/alias', '/api/candidates/materials'].includes(resource)) {
+    if (request.method === 'POST' && ['/api/roles/status', '/api/roles/alias', '/api/candidates/materials', '/api/decisions'].includes(resource)) {
       const token = request.headers['x-csrf-token'];
       if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token) || !timingSafeEqual(Buffer.from(token), Buffer.from(csrfToken)) || (!sameOrigin && request.headers['sec-fetch-site'] !== 'same-origin')) {
-        send(403, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'CSRF_REJECTED', message: '请从本机看板重新打开岗位管理后保存' } })); return;
+        send(403, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'CSRF_REJECTED', message: '请从本机看板重新打开页面后再保存' } })); return;
       }
       try {
+        if (resource === '/api/decisions') {
+          const payload = await readJsonRequest(request, ['operation', 'input'], 'DECISION_INPUT_INVALID');
+          if (typeof payload.operation !== 'string' || !WEB_DECISION_OPS.has(payload.operation)) {
+            throw Object.assign(new Error('看板仅允许提交人类决策、暂缓或历史核对操作'), { code: 'DECISION_OP_FORBIDDEN', status: 400 });
+          }
+          const outcome = await applyDecisionCommand(root, payload.operation, payload.input, now);
+          previousOverview = null;
+          overviewQueue = overviewQueue.then(() => { previousOverview = null; });
+          const message = outcome.replayed ? '已返回先前提交的相同请求结果' : DECISION_MESSAGES[payload.operation];
+          send(200, 'application/json; charset=utf-8', JSON.stringify({ ...outcome, message }));
+          return;
+        }
         const materials = resource === '/api/candidates/materials', alias = resource === '/api/roles/alias';
-        const input = await readRoleRequest(request, materials ? ['candidateId', 'revision', 'files'] : alias ? ['role', 'target', 'revision'] : ['role', 'status', 'revision']);
+        const input = await readJsonRequest(request, materials ? ['candidateId', 'revision', 'files'] : alias ? ['role', 'target', 'revision'] : ['role', 'status', 'revision']);
         const result = await (materials ? setCandidateMaterials : alias ? setRoleAlias : setRoleStatus)({ workspace: root, ...input });
         const { backup, ...data } = result;
         send(200, 'application/json; charset=utf-8', JSON.stringify({ ...data, message: result.changed ? materials ? '资料关联已保存，原配置已备份' : alias ? '岗位归并已保存，原配置已备份' : '岗位状态已保存，原配置已备份' : '保存内容未变化' }));
@@ -130,7 +153,7 @@ export async function createBoardServer({ workspace, now, read = readSnapshot })
     }
     if (url.pathname === '/api/health') {
       if (params.size) { send(400, 'application/json; charset=utf-8', JSON.stringify({ error: { code: 'HEALTH_INPUT_INVALID', message: '健康检查不接受其他参数' } })); return; }
-      send(200, 'application/json; charset=utf-8', JSON.stringify({ service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity', 'workspace-overview', 'run-highlights'], workspaceKey })); return;
+      send(200, 'application/json; charset=utf-8', JSON.stringify({ service: 'recruiting-board', schemaVersion: 1, capabilities: ['snapshot', 'run-results', 'run-activity', 'workspace-overview', 'run-highlights', 'web-decisions'], workspaceKey })); return;
     }
     if (resource === '/api/session') {
       send(200, 'application/json; charset=utf-8', JSON.stringify({ csrfToken })); return;

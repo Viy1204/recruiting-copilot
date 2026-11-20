@@ -1,6 +1,6 @@
 ---
 name: recruit-board
-description: 招聘任务的默认网页看板，供 Claude Desktop、Codex App、WorkBuddy 查看每轮重点、跨轮待确认、后续执行及候选阶段。六个工作流与定时巡检开工时接入；用户说“打开招聘看板”“看本轮进度”“还有什么没确认”，或在聊天里回答、暂缓、取消、修订已有事项时也使用。所有 Agent 共用网页；记录决定但不执行招聘平台操作。
+description: 招聘任务的默认网页看板，供 Claude Desktop、Codex App、WorkBuddy 查看每轮重点、跨轮待确认、后续执行及候选阶段。六个工作流与定时巡检开工时接入；用户说“打开招聘看板”“看本轮进度”“还有什么没确认”，或在网页看板与聊天里回答、暂缓、取消、修订已有事项时也使用。所有 Agent 共用网页；记录决定但不执行招聘平台操作。
 ---
 
 # 招聘进展看板
@@ -35,11 +35,11 @@ Claude Desktop、Codex App、WorkBuddy 默认使用同一网页。先读取 [`re
 - 岗位旁“管理”可调整当前标准表中已配置岗位的状态，限在招、已下架、已关闭、暂停、待核；另列台账待归并名称及已有别名，可明确归到正式岗位、修正或取消归并，保留原人岗身份。状态保存更新 `CONTEXT.md` 的一个单元格，归并保存 `_shared/recruit-board.config.json`；保留其他配置并自动备份，不修改招聘平台岗位。取消不写入，版本冲突时重新读取后再保存。
 - `scripts/actions.mjs` 保留为共享 CLI，与网页共用资料解析和岗位写入；成功输出 JSON 数据，失败输出 JSON 错误并返回非零。`candidate`／`document`／`open-document` 只接原候选 ID 和资源 ID，`role-info` 读取版本，`role-set` 必须携带 revision。不能把任意路径或 shell 命令作为接口参数。
 
-## 聊天处理事项
+## 聊天与看板处理事项
 
-用户回答、暂缓、取消或修订旧问题时，读取 [`references/decisions.md`](references/decisions.md)，先获取当前事项及 revision，再按明确对象和范围记录决定。原 run 结束不影响处理，也不为一次答复新建完整招聘 run。答复存在歧义先消歧；点击查看、时间流逝和没有回应都不等于批准。
+用户可在网页看板（`POST /api/decisions`）或聊天（`scripts/decisions.mjs`）回答、暂缓、取消、重开、修订或核对已有事项，两条入口共用 `applyDecisionCommand`、同一 `expectedRevision` 乐观并发检查与 `requestId` 幂等控制。处理前须先获取当前事项及 `revision`，再按明确对象与 `item.identity.scope` 记录决定。原 run 结束不影响处理，也不为一次答复新建完整招聘 run。答复存在歧义先消歧，点击查看、时间流逝和没有回应都不等于批准。
 
-决定记录后同步实际需要更新的 `CONTEXT.md`、台账或档案；分别记录同步和执行结果。保存失败明确告知“同步未完成”；过期版本重新读取后核对，不覆盖新决定。面板和记录命令只保存事实，不执行平台动作，也不赋予额外授权。
+`POST /api/decisions` 仅允许 `decide`、`snooze`、`revise`、`reopen`、`cancel` 与 `resolve-history`，拒绝 `register`、`import`、`evidence`、`action`、`close` 与 `invalidate`。浏览器提交只将本地事项状态落盘为 `decided` 且后续动作为 `pending`。同步 `CONTEXT.md`、台账、档案以及在 BOSS、猎聘、飞书执行真实平台操作，仍须在下一轮已授权的工作流中完成并核实回执后再标记 `action` 状态。保存失败明确告知"同步未完成"，过期版本重新读取后再核对，不覆盖新决定。
 
 ## 工作流接入
 
