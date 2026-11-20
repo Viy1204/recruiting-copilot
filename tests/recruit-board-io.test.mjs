@@ -446,3 +446,40 @@ test('首页单run与workspace链接可访问，严格拒绝重复和越界query
   assert.equal((await request(port, `/api/snapshot?workspace=${key}`)).status, 200);
   assert.equal(reads, 3);
 });
+
+test('静态提供 vendor ui-sdk-core 模块并带 CSP，严格拒绝路径穿越与非 JS 请求', async t => {
+  const root = await workspace(t);
+  const server = await createBoardServer({ workspace: root, now: () => now });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+  const key = JSON.parse((await request(port, '/api/health')).body).workspaceKey;
+
+  const index = await request(port, '/vendor/ui-sdk-core/index.js');
+  assert.equal(index.status, 200);
+  assert.equal(index.headers['content-type'], 'text/javascript; charset=utf-8');
+  assert.match(index.headers['content-security-policy'], /\bscript-src 'self'/);
+  assert.match(index.body, /export function bindPart/);
+
+  const nested = await request(port, `/vendor/ui-sdk-core/foundation/text/text-match.js?workspace=${key}`);
+  assert.equal(nested.status, 200);
+  assert.equal(nested.headers['content-type'], 'text/javascript; charset=utf-8');
+
+  const head = await request(port, '/vendor/ui-sdk-core/index.js', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.body, '');
+
+  for (const bad of [
+    '/vendor/ui-sdk-core/../../scripts/server.mjs',
+    '/vendor/ui-sdk-core/%2e%2e/app.js',
+    '/vendor/ui-sdk-core/foundation/%2e%2e/%2e%2e/app.js',
+    '/vendor/ui-sdk-core/%5cindex.js',
+    '/vendor/ui-sdk-core/index.js%00.js',
+    '/vendor/ui-sdk-core/index.js?extra=1',
+    '/vendor/ui-sdk-core/missing.js',
+    '/vendor/ui-sdk-core/foundation/text'
+  ]) {
+    const res = await request(port, bad);
+    assert.equal(res.status, 404, bad);
+  }
+});
