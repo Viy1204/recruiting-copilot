@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import * as model from '../skills/recruit-board/model.mjs';
 import { createSnapshotController } from '../skills/recruit-board/public/live.mjs';
+import * as uiSdkCore from '../skills/recruit-board/public/vendor/ui-sdk-core/index.js';
 
 const [html, script] = await Promise.all([
   readFile(new URL('../skills/recruit-board/public/index.html', import.meta.url), 'utf8'),
@@ -45,8 +46,9 @@ async function page(t, { decisions = [], decisionReceipt = false, configure = ()
   if (!w.Element.prototype.replaceChildren) w.Element.prototype.replaceChildren = function (...children) { while (this.firstChild) this.removeChild(this.firstChild); this.append(...children); };
   w.HTMLElement.prototype.scrollIntoView = function () { scrolls.push(this.id); };
   w.HTMLElement.prototype.getClientRects = function () { return visible(this) ? [{}] : []; };
+  w.Element.prototype.checkVisibility ??= function () { return visible(this); };
   w.scrollTo = () => {}; w.scrollBy = () => {};
-  w.AbortController = AbortController; w.AbortSignal = AbortSignal; w.__model = model;
+  w.AbortController = AbortController; w.AbortSignal = AbortSignal; w.__model = model; w.__uiSdkCore = uiSdkCore;
   const controllers = [];
   w.__controller = settings => { const controller = createSnapshotController({ ...settings, setTimer: () => 1, clearTimer() {} }); controllers.push(controller); return controller; };
   w.fetch = async (resource, init = {}) => {
@@ -61,7 +63,7 @@ async function page(t, { decisions = [], decisionReceipt = false, configure = ()
     assert.ok(Object.hasOwn(payloads, url.pathname), url.pathname);
     return Response.json(payloads[url.pathname]);
   };
-  const executable = script.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__controller;\n');
+  const executable = script.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__controller;\n').replace(/^import \{([^}]+)\} from '\/vendor\/ui-sdk-core\/index\.js';\r?\n/m, 'const {$1} = window.__uiSdkCore;\n');
   w.eval(`(() => {${executable}\n})();`);
   t.after(() => { w.dispatchEvent(new w.Event('pagehide')); w.close(); assert.deepEqual(errors, []); });
   await settle();

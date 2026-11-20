@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import * as model from '../skills/recruit-board/model.mjs';
 import { createSnapshotController } from '../skills/recruit-board/public/live.mjs';
+import * as uiSdkCore from '../skills/recruit-board/public/vendor/ui-sdk-core/index.js';
 
 const [html, script] = await Promise.all([
   readFile(new URL('../skills/recruit-board/public/index.html', import.meta.url), 'utf8'),
@@ -21,7 +22,7 @@ const visible = element => {
 function decision(id, state = 'open') {
   const actions = state === 'decided' ? [{ id: 'sync', kind: 'sync', label: '同步已确认标准', status: 'pending', updatedAt: now }] : [];
   return {
-    id, title: `核对事项 ${id}`, state, effectiveState: state,
+    id, title: `核对事项 ${id}`, state, effectiveState: state, revision: 1,
     identity: { subjectKey: candidateId, questionKey: id, scope: '测试范围' },
     context: { scope: 'candidate', candidateId }, createdAt: earlier, updatedAt: now,
     deadline: null, blocking: false, snoozedUntil: null, reason: `事项依据 ${id}`,
@@ -39,7 +40,7 @@ function highlight(id, extra = {}) {
   };
 }
 
-async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok', rows = [], pinned = false, nativeDialog = false, candidateActivity = [], deferOverview = false } = {}) {
+async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok', rows = [], pinned = false, nativeDialog = false, candidateActivity = [], deferOverview = false, preview = null, workbenchWidth = null } = {}) {
   const run = model.createRun({ id: 'current', workflow: 'daily', now: earlier });
   const older = model.createRun({ id: 'older', workflow: 'resume-review', now: '2026-11-03T03:00:00.000Z' });
   const runs = new Map([[run.id, run], [older.id, older]]);
@@ -61,8 +62,12 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
   const overviewGate = deferOverview ? new Promise(resolve => { releaseOverview = resolve; }) : null;
   const errors = [], requests = [], scrolls = [], virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
-  const dom = new JSDOM(html, { url: `http://localhost:4401/?workspace=${key}${pinned ? '&run=current' : ''}`, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole });
+  const query = [`workspace=${key}`, ...(pinned ? ['run=current'] : []), ...(preview ? [`preview=${preview}`] : [])].join('&');
+  const dom = new JSDOM(html, { url: `http://localhost:4401/?${query}`, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole });
   const w = dom.window;
+  const prevHtmlElement = globalThis.HTMLElement;
+  globalThis.HTMLElement = w.HTMLElement;
+  if (workbenchWidth !== null) w.__workbenchWidth = workbenchWidth;
   if (nativeDialog) {
     w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
     w.HTMLDialogElement.prototype.close = function () {
@@ -78,22 +83,46 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
   let scrollY = 0;
   Object.defineProperty(w, 'scrollY', { get: () => scrollY });
   w.scrollTo = (x, y) => { scrollY = y; }; w.scrollBy = (x, y) => { scrollY += y; };
-  w.AbortController = AbortController; w.AbortSignal = AbortSignal; w.__model = model;
+  w.AbortController = AbortController; w.AbortSignal = AbortSignal; w.__model = model; w.__uiSdkCore = uiSdkCore;
   const controllers = [];
   w.__controller = settings => { const controller = createSnapshotController({ ...settings, setTimer: () => 1, clearTimer() {} }); controllers.push(controller); return controller; };
+  const candidateDocs = [
+    { id: 'd'.repeat(64), label: '原始简历', category: 'resume', status: 'ok', kind: 'pdf' },
+    { id: 'c'.repeat(64), label: '面试档案', category: 'archive', status: 'ok', kind: 'markdown' },
+    { id: 'e'.repeat(64), label: 'Word 原件', category: 'resume', status: 'ok', kind: 'docx', downloadOnly: true }
+  ];
   w.fetch = async (resource, init = {}) => {
     const url = new URL(resource, w.location.href);
-    requests.push({ url, method: init.method ?? 'GET', headers: init.headers });
+    requests.push({ url, method: init.method ?? 'GET', headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     if (url.pathname === '/api/snapshot') return Response.json(snapshot);
     if (url.pathname === '/api/workspace/overview') { if (overviewGate) await overviewGate; return Response.json(overview); }
     if (url.pathname === '/api/candidates/detail') {
       const candidate = snapshot.candidates.find(item => item.id === url.searchParams.get('candidate'));
       assert.ok(candidate);
-      return Response.json({ candidate, background: '已读取背景', notes: '已核实备注', warnings: [], documents: [
-        { id: 'd'.repeat(64), label: '原始简历', category: 'resume', status: 'ok', kind: 'pdf' },
-        { id: 'c'.repeat(64), label: '面试档案', category: 'archive', status: 'ok', kind: 'markdown' },
-        { id: 'e'.repeat(64), label: 'Word 原件', category: 'resume', status: 'ok', kind: 'docx', downloadOnly: true }
-      ], progress: { status: 'ok', records: [{ documentId: 'c'.repeat(64), label: '面试档案', currentStatus: '面试已安排', interviews: [{ round: '一面', time: '2026-11-06 10:00–11:00', format: '视频', interviewers: '合成面试官', status: '已约' }], nextAction: '回收面试反馈', conclusion: '待面试' }] } });
+      return Response.json({ candidate, background: '已读取背景', notes: '已核实备注', warnings: [], documents: candidateDocs, progress: { status: 'ok', records: [{ documentId: 'c'.repeat(64), label: '面试档案', currentStatus: '面试已安排', interviews: [{ round: '一面', time: '2026-11-06 10:00–11:00', format: '视频', interviewers: '合成面试官', status: '已约' }], nextAction: '回收面试反馈', conclusion: '待面试' }] } });
+    }
+    if (url.pathname === '/api/candidates/materials') {
+      if (init.method === 'POST') return Response.json({ changed: true, message: '资料关联已保存' });
+      return Response.json({ revision: 'b'.repeat(64), files: [{ path: 'runtime/resumes/a.pdf', label: '原始简历', category: 'resume', status: 'ok' }], options: [{ path: 'runtime/resumes/extra.pdf', label: '补充简历', category: 'resume', status: 'ok' }] });
+    }
+    if (url.pathname === '/api/candidates/document') return new Response('# 面试记录\n\n- 候选人表达清晰\n', { status: 200, headers: { 'Content-Type': 'text/markdown; charset=utf-8' } });
+    if (url.pathname === '/api/decisions' && init.method === 'POST') {
+      const payload = JSON.parse(init.body);
+      const target = overview.decisions?.find(d => d.id === payload.input?.id);
+      if (!target) return Response.json({ error: { code: 'DECISION_NOT_FOUND', message: '事项不存在' } }, { status: 404 });
+      if (payload.input.expectedRevision !== (target.revision ?? 1)) return Response.json({ error: { code: 'DECISION_REVISION_CONFLICT', message: '版本冲突' } }, { status: 409 });
+      if (payload.operation === 'snooze') {
+        target.state = 'snoozed'; target.effectiveState = 'snoozed'; target.snoozedUntil = payload.input.until; target.revision = (target.revision ?? 1) + 1;
+      } else {
+        assert.equal(payload.input.decision.scope, target.identity.scope);
+        target.state = 'decided'; target.effectiveState = 'decided'; target.decision = { ...payload.input.decision, recordedAt: now };
+        target.actions = (payload.input.actions ?? []).map(a => ({ ...a, status: 'pending', updatedAt: now }));
+        target.followUp = { status: target.actions.length ? 'pending' : 'none' };
+        target.revision = (target.revision ?? 1) + 1;
+      }
+      overview.counts = { open: overview.decisions.filter(i => i.effectiveState === 'open').length, snoozed: overview.decisions.filter(i => i.effectiveState === 'snoozed').length, history: overview.decisions.filter(i => i.effectiveState === 'history_review').length, followUp: overview.decisions.filter(i => i.state === 'decided').length };
+      overview.revision = String(Number(overview.revision) + 1);
+      return Response.json({ item: target, replayed: false, message: payload.operation === 'snooze' ? '事项已暂缓' : '已记录决定 · 待下一轮流程执行' });
     }
     if (url.pathname === '/api/roles') return Response.json({ roles: snapshot.roles.filter(role => role.configured), allowedStatuses: ['在招', '已关闭', '暂停'], unconfiguredRoles: [{ name: '台账旧称' }], roleAliases: {}, contextRevision: 'b'.repeat(64), configRevision: 'c'.repeat(64) });
     if (url.pathname === '/api/session') return Response.json({ csrfToken: 'f'.repeat(64) });
@@ -103,9 +132,9 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
     if (url.pathname === '/api/runs/highlights') return Response.json({ runId: selected.id, highlights: selected.highlights, revision: selected.highlightsRevision, updatedAt: selected.updatedAt });
     throw new Error(`未预期请求 ${url.pathname}`);
   };
-  const executable = script.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__controller;\n');
+  const executable = script.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__controller;\n').replace(/^import \{([^}]+)\} from '\/vendor\/ui-sdk-core\/index\.js';\r?\n/m, 'const {$1} = window.__uiSdkCore;\n');
   w.eval(`(() => {${executable}\n})();`);
-  t.after(() => { w.dispatchEvent(new w.Event('pagehide')); w.close(); assert.deepEqual(errors, []); });
+  t.after(() => { globalThis.HTMLElement = prevHtmlElement; w.dispatchEvent(new w.Event('pagehide')); w.close(); assert.deepEqual(errors, []); });
   await settle();
   return {
     w, $: selector => w.document.querySelector(selector), all: selector => [...w.document.querySelectorAll(selector)],
@@ -118,40 +147,42 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
 
 const navigate = async (p, view) => { p.$(`[data-nav-target="${view}"]`).click(); await settle(); };
 
-test('总览最多三条摘要，后续执行和历史各有真实入口，决定与执行状态分开', async t => {
+test('分拣队列展示全部待办，后续执行与全部事项均在工作台内联筛选，决定与执行状态分开', async t => {
   const items = [1, 2, 3, 4].map(id => decision(`open-${id}`));
   items.push(decision('history-1', 'history_review'), decision('history-2', 'history_review'), decision('follow', 'decided'), decision('later', 'snoozed'));
   const p = await page(t, { decisions: items, highlights: [1, 2, 3, 4].map(id => highlight(`event-${id}`)) });
-  assert.equal(p.all('#workspace-decision-list > li').length, 3);
+  assert.equal(p.all('#workspace-decision-list > li').length, 4);
   assert.equal(p.all('#workspace-highlight-list > li').length, 3);
   assert.match(p.$('#workspace-decisions-count').textContent, /^4$/);
   assert.match(p.$('#workspace-all-decisions').textContent, /8/);
   assert.equal(p.$('[data-overview-filter="followUp"]').hidden, false);
   assert.equal(p.$('#workspace-followup-link').hidden, false);
+  assert.equal(p.$('#triage-inspector').hidden, false);
   p.$('[data-overview-filter="followUp"]').click(); await settle();
   assert.equal(p.all('#workspace-decision-list > li').length, 1);
   assert.match(p.$('#workspace-decision-list').textContent, /已决定/);
   assert.match(p.$('#workspace-decision-list').textContent, /待执行/);
   p.$('#workspace-decision-list button').click(); await settle();
-  assert.ok(p.$('#workspace-drawer').open);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /已明确采用此标准/);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /资料待同步/);
-  p.$('#workspace-drawer-close').click();
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.match(p.$('#triage-inspector').textContent, /已明确采用此标准/);
+  assert.match(p.$('#triage-inspector').textContent, /资料待同步/);
   await navigate(p, 'roles'); await navigate(p, 'overview');
   assert.equal(p.$('[data-overview-filter="followUp"]').getAttribute('aria-pressed'), 'true');
   p.$('#workspace-all-decisions').click(); await settle();
-  p.select('#workspace-drawer-filter', 'all');
-  assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 8);
-  assert.ok(p.$('#workspace-drawer-list [data-role-group="测试在招岗"]'));
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 8);
+  assert.ok(p.$('#workspace-decision-list [data-role-group="测试在招岗"]'));
   assert.ok(p.requests.every(request => request.method === 'GET'));
 });
 
 test('没有当前待回答时直接显示历史待核对，正常空、未接入与失败不能混为零', async t => {
   const history = await page(t, { decisions: [decision('old', 'history_review')] });
+  assert.equal(history.$('#triage-workbench').hidden, false);
   assert.match(history.$('#workspace-decision-list').textContent, /核对事项 old/);
   assert.match(history.$('#workspace-decision-caption').textContent, /当前没有待回答事项/);
   assert.equal(history.$('[data-overview-filter="open"]').hidden, true);
   const empty = await page(t);
+  assert.equal(empty.$('#triage-workbench').hidden, true);
   assert.match(empty.$('#workspace-decision-empty').textContent, /当前没有待回答事项/);
   assert.equal(empty.$('#workspace-decision-filters').hidden, true);
   const missing = await page(t, { overviewStatus: 'missing' });
@@ -237,56 +268,47 @@ test('人选从名单即时进入同一面板，返回恢复筛选、名单、�
   assert.equal(visible(p.$('#candidate-list')), true);
 });
 
-test('进展到事项再到资料逐层返回，保留各层展开、滚动与焦点，Esc 回到初始入口', async t => {
+test('进展查看关联事项直达分拣台，右侧阅读原始档案打开抽屉并 Esc 回到原按钮', async t => {
   const item = decision('linked');
   const p = await page(t, { decisions: [item], highlights: [highlight('event', { decisionId: item.id })] });
   const trigger = p.$('#workspace-highlight-list button'); trigger.focus(); p.w.scrollTo(0, 180); trigger.click(); await settle();
   const evidence = p.$('#workspace-drawer-detail details'); evidence.querySelector('summary').click(); await settle();
   p.$('#workspace-drawer-content').scrollTop = 140;
   p.$('#workspace-drawer-detail [data-linked-item]').click(); await settle();
-  const sources = p.all('#workspace-drawer-detail details').find(element => element.textContent.includes('来源与记录信息'));
-  sources.querySelector('summary').click(); await settle(); p.$('#workspace-drawer-content').scrollTop = 210;
-  p.$('#workspace-drawer-detail [data-subject]').click(); await settle();
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.match(p.$('#triage-inspector').textContent, /核对事项 linked/);
+  const subjectBtn = p.$('#triage-inspector [data-subject]');
+  subjectBtn.focus(); subjectBtn.click(); await settle();
+  assert.equal(p.$('#workspace-drawer').open, true);
   assert.match(p.$('#record-content').textContent, /合成人选/);
-  p.$('#workspace-drawer-back').click(); await settle();
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 210);
-  assert.equal(p.w.document.activeElement.dataset.subject, candidateId);
-  assert.ok(p.all('#workspace-drawer-detail details').some(element => element.open && element.textContent.includes('来源与记录信息')));
-  p.$('#workspace-drawer-back').click(); await settle();
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 140);
-  assert.equal(p.w.document.activeElement.dataset.linkedItem, item.id);
-  assert.equal(p.$('#workspace-drawer-detail details').open, true);
   p.$('#workspace-drawer').dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
   assert.equal(p.$('#workspace-drawer').open, false);
-  assert.equal(p.w.document.activeElement, trigger);
-  assert.equal(p.w.scrollY, 180);
+  assert.equal(p.w.document.activeElement.dataset.subject, candidateId);
 });
 
-test('阅读时保留可信内容、提示真实更新，新任务不抢占，失败仍保留时间与重试', async t => {
+test('阅读面板细节时保留可信内容、提示真实更新，新任务不抢占，失败仍保留时间与重试', async t => {
   const p = await page(t, { decisions: [decision('reading')] });
-  p.$('#workspace-decision-list button').click(); await settle();
-  p.$('#workspace-drawer-content').scrollTop = 190;
+  const sources = p.all('#triage-inspector details').find(element => element.textContent.includes('来源与记录信息'));
+  sources.querySelector('summary').click(); await settle();
   p.overview.decisions[0].title = '已核实的新问题'; p.overview.revision = '2';
   const newer = model.createRun({ id: 'newer', workflow: 'interview-schedule', now: '2026-11-05T06:00:00.000Z' });
   p.runs.set(newer.id, newer); p.snapshot.runs.unshift(model.runSummary(newer));
   await p.refresh();
-  assert.match(p.$('#workspace-drawer-detail').textContent, /核对事项 reading/);
-  assert.doesNotMatch(p.$('#workspace-drawer-detail').textContent, /已核实的新问题/);
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 190);
-  assert.equal(p.$('#workspace-drawer-update').hidden, false);
+  assert.match(p.$('#triage-inspector').textContent, /核对事项 reading/);
+  assert.doesNotMatch(p.$('#triage-inspector').textContent, /已核实的新问题/);
+  assert.equal(p.$('#workspace-apply-updates').hidden, false);
   assert.equal(p.$('#run').value, 'current');
   assert.equal(p.$('#workspace-return-overview').hidden, false);
-  p.$('#workspace-drawer-update').click(); await settle();
-  assert.match(p.$('#workspace-drawer-detail').textContent, /已核实的新问题/);
+  p.$('#workspace-apply-updates').click(); await settle();
+  assert.match(p.$('#triage-inspector').textContent, /已核实的新问题/);
   p.overview.status = 'error'; p.overview.decisions = null; p.overview.highlights = null;
   p.overview.counts = { open: null, snoozed: null, history: null, followUp: null };
   p.overview.diagnostics = [{ message: '事项源暂不可读' }];
   await p.refresh();
-  assert.match(p.$('#workspace-drawer-detail').textContent, /已核实的新问题/);
-  assert.match(p.$('#workspace-drawer-notice').textContent, /保留最后成功读取/);
+  assert.match(p.$('#triage-inspector').textContent, /已核实的新问题/);
+  assert.match(p.$('#workspace-overview-status').textContent, /保留最后成功读取/);
   assert.match(p.$('#workspace-overview-recorded').textContent, /最后成功读取/);
   assert.equal(p.$('#retry-workspace-overview').hidden, false);
-  p.$('#workspace-drawer-close').click();
   p.$('#workspace-return-overview').click(); await settle();
   assert.equal(p.$('#run').value, 'newer');
 });
@@ -582,4 +604,191 @@ test('被动切换到岗位与人选时不冻结总览更新，点击具体阶�
   assert.equal(p.$('#workspace-reading-notice').hidden, true);
   assert.equal(p.$('#workspace-decisions-count').textContent, '3');
   assert.equal(p.all('#workspace-decision-list > li').length, 3);
+});
+
+test('Split B 漫游焦点、单键 1/S 提交推进、输入护栏与 Shift 批量暂缓', async t => {
+  const items = [1, 2, 3].map(i => decision(`d-${i}`));
+  const p = await page(t, { decisions: items });
+  assert.equal(p.$('#triage-queue-head').hidden, false);
+  assert.match(p.$('#triage-queue-title').textContent, /分拣队列 \(3\)/);
+  assert.equal(p.all('#triage-inspector .triage-fact-grid .triage-fact-box').length, 3);
+  assert.match(p.$('#triage-inspector .triage-fact-grid').textContent, /沟通中 · A 级/);
+  assert.ok(p.$('#triage-inspector .evidence-callout'));
+  assert.ok(p.$('#triage-inspector .dossier-archive-bar [data-subject]'));
+  const rows = p.all('#workspace-decision-list [data-triage-row]');
+  assert.equal(rows[0].getAttribute('tabindex'), '0');
+  assert.equal(rows[1].getAttribute('tabindex'), '-1');
+  rows[0].focus();
+  rows[0].dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.w.document.activeElement, rows[1]);
+  assert.match(p.$('#triage-inspector').textContent, /核对事项 d-2/);
+
+  const composerInput = p.$('#triage-inspector .decision-composer-input');
+  composerInput.focus();
+  const inputKey = new p.w.KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true });
+  composerInput.dispatchEvent(inputKey);
+  assert.equal(inputKey.defaultPrevented, false);
+  assert.equal(p.requests.filter(r => r.url.pathname === '/api/decisions').length, 0);
+
+  p.$('#workspace-decisions-heading').focus();
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+  await settle();
+  const post1 = p.requests.filter(r => r.url.pathname === '/api/decisions').at(-1);
+  assert.equal(post1.body.operation, 'decide');
+  assert.equal(post1.body.input.id, 'd-2');
+  assert.equal(post1.body.input.decision.scope, '测试范围');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.match(p.$('#triage-inspector').textContent, /核对事项 d-1/);
+
+  const remaining = p.all('#workspace-decision-list [data-triage-row]');
+  assert.equal(remaining.length, 2);
+  remaining[0].focus();
+  remaining[0].dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#triage-batch-bar').hidden, false);
+  p.$('#triage-batch-bar button').click();
+  await settle();
+  const snoozes = p.requests.filter(r => r.url.pathname === '/api/decisions' && r.body.operation === 'snooze');
+  assert.equal(snoozes.length, 2);
+  assert.match(p.$('#workspace-snoozed-link').textContent, /已暂缓 · 2/);
+  p.$('[data-overview-filter="followUp"]').click(); await settle();
+  p.$('#workspace-snoozed-link').click(); await settle();
+  assert.equal(p.all('#workspace-decision-list > li').length, 2);
+});
+
+test('Inline C 窄窗口内联展开、切换宽度保留草稿以及提交后折叠回执与推进', async t => {
+  const items = [decision('c-1'), decision('c-2')];
+  const p = await page(t, { decisions: items, preview: 'narrow' });
+  assert.equal(p.$('#triage-inspector').hidden, true);
+  assert.equal(p.$('#triage-queue-head').hidden, true);
+  assert.ok(p.$('[data-decision="c-1"].triage-stream-card.is-expanded'));
+  assert.ok(p.$('[data-decision="c-1"] .triage-inline-body'));
+  assert.ok(p.$('[data-decision="c-1"] .triage-inline-body .triage-fact-grid'));
+  assert.ok(p.$('[data-decision="c-1"] .triage-inline-body .evidence-callout'));
+  assert.equal(p.$('[data-decision="c-1"] .triage-inline-body h3'), null);
+  assert.equal(p.$('[data-decision="c-2"] .triage-inline-body'), null);
+
+  p.input('[data-decision="c-1"] .decision-composer-input', '先问清到岗时间');
+  p.$('[data-preview-mode="wide"]').click();
+  await settle();
+  assert.equal(p.$('#triage-inspector').hidden, false);
+  assert.equal(p.$('#triage-inspector .decision-composer-input').value, '先问清到岗时间');
+
+  p.$('[data-preview-mode="narrow"]').click();
+  await settle();
+  assert.equal(p.$('[data-decision="c-1"] .decision-composer-input').value, '先问清到岗时间');
+
+  p.$('#workspace-all-decisions').click(); await settle();
+  p.$('[data-decision="c-1"] [data-preset="1"]').click(); await settle();
+  assert.ok(p.$('[data-decision="c-1"].triage-decided-compact'));
+  assert.match(p.$('[data-decision="c-1"]').textContent, /已决定 · 待下一轮执行/);
+  assert.ok(p.$('[data-decision="c-2"] .triage-inline-body'));
+});
+
+test('资料弹窗嵌套 Esc 逐层剥离与原地保存均保留已展开文档预览与抽屉滚动位置', async t => {
+  const p = await page(t, { decisions: [decision('archive-link')] });
+  p.$('#triage-inspector [data-subject]').click(); await settle();
+  assert.equal(p.$('#workspace-drawer').open, true);
+  p.all('#record-content button').find(b => b.textContent === '查看').click(); await settle();
+  assert.equal(p.$('#record-content .document-preview').hidden, false);
+  assert.match(p.$('#record-content .document-preview').textContent, /候选人表达清晰/);
+  const content = p.$('#workspace-drawer-content');
+  content.scrollTop = 240;
+  const trigger = p.all('#record-content button').find(b => b.textContent === '关联资料');
+  trigger.click(); await settle();
+  assert.ok(p.$('#material-picker'));
+  assert.equal(content.scrollTop, 240);
+
+  p.$('#material-picker').dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#material-picker'), null);
+  assert.equal(p.$('#workspace-drawer').open, true);
+  assert.equal(p.$('#record-content .document-preview').hidden, false);
+  assert.equal(content.scrollTop, 240);
+  assert.equal(p.w.document.activeElement, trigger);
+
+  trigger.click(); await settle();
+  const cbs = p.all('#material-picker input[type="checkbox"]');
+  cbs[1].click();
+  p.$('#material-picker .primary-button').click(); await settle();
+  assert.equal(p.$('#material-picker'), null);
+  assert.equal(p.$('#workspace-drawer').open, true);
+  assert.equal(p.$('#record-content .document-preview').hidden, false);
+  assert.match(p.$('#record-content .document-preview').textContent, /候选人表达清晰/);
+  assert.equal(content.scrollTop, 240);
+
+  p.$('#workspace-drawer').dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#workspace-drawer').open, false);
+});
+
+test('布局调整键盘抓起方向键移动并 Enter 提交持久化至 localStorage', async t => {
+  const p = await page(t);
+  p.$('#edit-layout').click(); await settle();
+  const handle = p.$('#layout-handle-tasks');
+  handle.focus();
+  handle.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+  await settle();
+  assert.deepEqual(p.all('#layout-root > [data-layout-item]').map(el => el.dataset.layoutItem), ['assistant', 'tasks', 'roles']);
+  handle.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  const saved = JSON.parse(p.w.localStorage.getItem(`recruiting-board:layout:v1:${key}`));
+  assert.deepEqual(saved.orders.board, ['assistant', 'tasks', 'roles']);
+});
+
+test('布局调整指针拖拽排序更新 DOM 并持久化至 localStorage', async t => {
+  const p = await page(t);
+  p.$('#edit-layout').click(); await settle();
+  const rectByItem = { assistant: { top: 0, bottom: 100, height: 100, left: 0, right: 400 }, roles: { top: 100, bottom: 200, height: 100, left: 0, right: 400 }, tasks: { top: 200, bottom: 300, height: 100, left: 0, right: 400 } };
+  for (const el of p.all('#layout-root > [data-layout-item]')) el.getBoundingClientRect = () => rectByItem[el.dataset.layoutItem];
+  const handle = p.$('#layout-handle-tasks');
+  const pointer = (type, clientY, buttons = 1) => Object.assign(new p.w.Event(type, { bubbles: true, cancelable: true }), { button: 0, buttons, isPrimary: true, pointerId: 1, pointerType: 'mouse', clientX: 20, clientY });
+  handle.dispatchEvent(pointer('pointerdown', 220, 1));
+  p.w.document.dispatchEvent(pointer('pointermove', 20, 1));
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.deepEqual(p.all('#layout-root > [data-layout-item]').map(el => el.dataset.layoutItem), ['tasks', 'assistant', 'roles']);
+  p.w.document.dispatchEvent(pointer('pointerup', 20, 0));
+  await settle();
+  const saved = JSON.parse(p.w.localStorage.getItem(`recruiting-board:layout:v1:${key}`));
+  assert.deepEqual(saved.orders.board, ['tasks', 'assistant', 'roles']);
+});
+
+test('星级与文本评级不附加级字，已关闭历史事项隐藏历史收据待核对标签', async t => {
+  const starId = JSON.stringify(['星级人选', '测试在招岗']);
+  const textId = JSON.stringify(['文本人选', '测试在招岗']);
+  const starOpen = { ...decision('star-open', 'open'), identity: { subjectKey: starId, questionKey: 'star', scope: '测试范围' }, context: { scope: 'candidate', candidateId: starId } };
+  const textOpen = { ...decision('text-open', 'open'), identity: { subjectKey: textId, questionKey: 'text', scope: '测试范围' }, context: { scope: 'candidate', candidateId: textId } };
+  const letterOpen = decision('letter-open', 'open');
+  const legacyClosed = { ...decision('legacy-closed', 'closed'), identity: { subjectKey: candidateId, questionKey: 'legacy', scope: '历史收据待核对' }, decision: { text: '已确认推进', scope: '历史收据待核对', recordedAt: now } };
+  const legacyReview = { ...decision('legacy-review', 'history_review'), identity: { subjectKey: candidateId, questionKey: 'legacy-rev', scope: '历史收据待核对' } };
+  const p = await page(t, {
+    decisions: [starOpen, textOpen, letterOpen, legacyClosed, legacyReview],
+    rows: [
+      '5,星级人选,测试在招岗,,⭐⭐⭐⭐,已回复,测试来源,,',
+      '6,文本人选,测试在招岗,,不推进,已回复,测试来源,,'
+    ]
+  });
+  const starText = p.$('[data-decision="star-open"]').textContent;
+  assert.match(starText, /星级人选 · ⭐⭐⭐⭐/);
+  assert.doesNotMatch(starText, /⭐⭐⭐⭐级/);
+  assert.match(p.$('#triage-inspector .triage-fact-grid').textContent, /沟通中 · ⭐⭐⭐⭐/);
+  assert.doesNotMatch(p.$('#triage-inspector .triage-fact-grid').textContent, /⭐⭐⭐⭐ 级/);
+
+  p.$('[data-decision="text-open"] [data-triage-row]').click(); await settle();
+  const textRow = p.$('[data-decision="text-open"]').textContent;
+  assert.match(textRow, /文本人选 · 不推进/);
+  assert.doesNotMatch(textRow, /不推进级/);
+  assert.match(p.$('#triage-inspector .triage-fact-grid').textContent, /沟通中 · 不推进/);
+
+  p.$('[data-decision="letter-open"] [data-triage-row]').click(); await settle();
+  assert.match(p.$('[data-decision="letter-open"]').textContent, /合成人选 · A级/);
+  assert.match(p.$('#triage-inspector .triage-fact-grid').textContent, /沟通中 · A 级/);
+
+  p.$('#workspace-all-decisions').click(); await settle();
+  assert.doesNotMatch(p.$('[data-decision="legacy-closed"] .triage-row-role').textContent, /历史收据待核对/);
+  assert.match(p.$('[data-decision="legacy-closed"] .triage-row-role').textContent, /^测试在招岗$/);
+  p.$('[data-decision="legacy-closed"] [data-triage-row]').click(); await settle();
+  assert.doesNotMatch(p.$('#triage-inspector .triage-fact-grid').textContent, /历史收据待核对/);
+  assert.match(p.$('[data-decision="legacy-review"] .triage-row-role').textContent, /历史收据待核对/);
 });

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import * as model from '../skills/recruit-board/model.mjs';
 import { createSnapshotController } from '../skills/recruit-board/public/live.mjs';
+import * as uiSdkCore from '../skills/recruit-board/public/vendor/ui-sdk-core/index.js';
 
 const [html, source] = await Promise.all([
   readFile(new URL('../skills/recruit-board/public/index.html', import.meta.url), 'utf8'),
@@ -59,7 +60,7 @@ function fixture() {
 }
 
 async function settle() {
-  for (let index = 0; index < 4; index++) await new Promise(resolve => setTimeout(resolve, 0));
+  for (let index = 0; index < 8; index++) await new Promise(resolve => setTimeout(resolve, 0));
 }
 
 function visible(element) {
@@ -77,15 +78,19 @@ async function page(t, data = fixture(), options = {}) {
   console.on('jsdomError', error => errors.push(error));
   const dom = new JSDOM(html, { url: `http://localhost:4397/?workspace=${workspaceKey}${options.query ?? ''}`, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: console });
   const window = dom.window;
+  const prevHtmlElement = globalThis.HTMLElement;
+  globalThis.HTMLElement = window.HTMLElement;
   window.addEventListener('error', event => errors.push(event.error));
   window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   if (!window.Element.prototype.replaceChildren) window.Element.prototype.replaceChildren = function (...children) { while (this.firstChild) this.removeChild(this.firstChild); this.append(...children); };
   window.HTMLElement.prototype.scrollIntoView = function () { scrolls.push(this.id || this.className); };
   window.HTMLElement.prototype.getClientRects = function () { return visible(this) ? [{}] : []; };
+  window.Element.prototype.checkVisibility ??= function () { return visible(this); };
   window.scrollBy = (...args) => scrolls.push(args);
   window.scrollTo = (x, y) => { scrolls.push([x, y]); window.scrollY = y; };
   window.AbortController = AbortController; window.AbortSignal = AbortSignal;
   window.__model = model;
+  window.__uiSdkCore = uiSdkCore;
   window.__createSnapshotController = settings => {
     const controller = createSnapshotController({ ...settings, setTimer: () => 1, clearTimer() {} });
     controllers.push(controller); return controller;
@@ -108,9 +113,9 @@ async function page(t, data = fixture(), options = {}) {
     }
     return Response.json(structuredClone(payload));
   };
-  const executable = source.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__createSnapshotController;\n');
+  const executable = source.replace(/^import .* from '\/model\.mjs';\r?\n/, 'const { candidateStatus, candidateSubject, validateContext, ROLE_SCOPES, RUN_LABELS, searchCandidates, selectRoles, selectTask, STAGES, STEP_LABELS } = window.__model;\n').replace(/^import .* from '\/live\.mjs';\r?\n/m, 'const createSnapshotController = window.__createSnapshotController;\n').replace(/^import .* from '\/vendor\/ui-sdk-core\/index\.js';\r?\n/m, 'const { bindLayer, bindPart, createChange, createReorder, createRovingFocus, createSelection, definePrimitive, keepFocus } = window.__uiSdkCore;\n');
   window.eval(`(() => {\n${executable}\n})();`);
-  t.after(() => { window.dispatchEvent(new window.Event('pagehide')); window.close(); assert.deepEqual(errors, []); });
+  t.after(() => { globalThis.HTMLElement = prevHtmlElement; window.dispatchEvent(new window.Event('pagehide')); window.close(); assert.deepEqual(errors, []); });
   await settle();
   const $ = selector => window.document.querySelector(selector);
   const all = selector => [...window.document.querySelectorAll(selector)];
@@ -118,15 +123,13 @@ async function page(t, data = fixture(), options = {}) {
   const refresh = async () => { await Promise.all(controllers.map(controller => controller.refresh({ invalidate: true }))); await settle(); };
   const nav = target => click(`#workspace-nav [data-nav-target="${target}"]`);
   const selectRun = async id => { await nav('tasks'); $('#run').value = id; $('#run').dispatchEvent(new window.Event('change')); await settle(); };
-  const group = async value => { assert.ok(visible($('#workspace-drawer-filter'))); $('#workspace-drawer-filter').value = value; $('#workspace-drawer-filter').dispatchEvent(new window.Event('change')); await settle(); };
   const assertView = id => assert.deepEqual(all('#layout-root > section').filter(visible).map(element => element.id), [id]);
-  return { data, window, $, all, click, refresh, selectRun, calls, scrolls, nav, group, assertView };
+  return { data, window, $, all, click, refresh, selectRun, calls, scrolls, nav, assertView };
 }
 
-const homeDecision = id => `#workspace-decision-list [data-decision="${id}"] button`;
-const drawerDecision = id => `#workspace-drawer-list [data-decision="${id}"] button`;
+const homeDecision = id => `#workspace-decision-list [data-decision="${id}"] [data-triage-row]`;
 
-test('未接入显示未知；全部事项中的六个分组可访问且无批准按钮', async t => {
+test('未接入显示未知；全部事项内联可访问且无批准按钮', async t => {
   const data = fixture();
   data.overview = { ...overview(), status: 'missing', decisions: null, highlights: null, counts: { open: null, snoozed: null, history: null, followUp: null } };
   const p = await page(t, data);
@@ -135,12 +138,13 @@ test('未接入显示未知；全部事项中的六个分组可访问且无批�
   assert.match(p.$('#workspace-all-decisions').textContent, /未知/);
   assert.equal(p.$('#workspace-followup-link').hidden, true);
   await p.click('#workspace-all-decisions');
-  assert.equal(p.$('#workspace-drawer').open, true);
-  assert.equal(p.all('#workspace-drawer-filter option').length, 6);
-  assert.ok(p.all('#workspace-drawer-filter option').every(option => option.textContent.includes('未知')));
-  await p.group('followUp');
-  assert.match(p.$('#workspace-drawer-empty').textContent, /未知/);
-  assert.equal(p.all('#workspace-drawer button').some(button => /^(批准|拒绝|同意)$/.test(button.textContent)), false);
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.$('[data-overview-filter="all"]').getAttribute('aria-pressed'), 'true');
+  assert.match(p.$('[data-overview-filter="all"]').textContent, /全部事项.*未知/);
+  assert.match(p.$('#workspace-decision-summary').textContent, /事项数量未知/);
+  assert.equal(p.$('#workspace-decision-empty').hidden, true);
+  assert.equal(p.$('#triage-inspector').hidden, true);
+  assert.equal(p.all('#assistant button').some(button => /^(批准|拒绝|同意)$/.test(button.textContent)), false);
   assert.equal(p.calls.some(call => call.path === '/api/runs/highlights'), false);
   assert.ok(p.calls.every(call => call.key === workspaceKey));
 });
@@ -159,19 +163,22 @@ test('工作区事项不随岗位轮次筛选；首页保留服务端处理优�
   assert.equal(p.$('[data-overview-filter="open"]').textContent, '待确认 4');
   assert.equal(p.$('#workspace-decisions-count').textContent, '4');
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 6');
-  assert.deepEqual(p.all('#workspace-decision-list > li').map(item => item.dataset.decision), ['blocking', 'ordinary', 'first']);
+  assert.deepEqual(p.all('#workspace-decision-list > li').map(item => item.dataset.decision), ['blocking', 'ordinary', 'first', 'later']);
   assert.doesNotMatch(p.$('#workspace-decision-list').textContent, /role:internal/);
   await p.nav('roles');
   p.$('#role').value = '合成产品岗'; p.$('#role').dispatchEvent(new p.window.Event('change'));
   await p.selectRun('old-round'); await p.nav('overview');
   assert.equal(p.$('#role').value, '合成产品岗');
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 6');
-  await p.click('#workspace-all-decisions'); await p.group('open');
-  assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 4);
-  await p.group('snoozed');
-  assert.deepEqual(p.all('#workspace-drawer-list [data-decision]').map(item => item.dataset.decision), ['snoozed']);
-  await p.group('history_review');
-  assert.deepEqual(p.all('#workspace-drawer-list [data-decision]').map(item => item.dataset.decision), ['history']);
+  await p.click('#workspace-all-decisions');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 6);
+  await p.click('[data-overview-filter="open"]');
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 4);
+  await p.click('[data-overview-filter="snoozed"]');
+  assert.deepEqual(p.all('#workspace-decision-list [data-decision]').map(item => item.dataset.decision), ['snoozed']);
+  await p.click('[data-overview-filter="history_review"]');
+  assert.deepEqual(p.all('#workspace-decision-list [data-decision]').map(item => item.dataset.decision), ['history']);
 });
 
 test('无待确认时直接预览后续执行；详情保留动作原因与处理历史', async t => {
@@ -191,63 +198,65 @@ test('无待确认时直接预览后续执行；详情保留动作原因与处�
   assert.equal(p.$('#workspace-followup-link').hidden, true);
   assert.doesNotMatch(p.$('#assistant').textContent, /0 项未解决/);
   await p.click(homeDecision('follow'));
-  assert.ok(visible(p.$('#workspace-drawer-detail')));
-  assert.match(p.$('#workspace-drawer-detail').textContent, /资料待同步/);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /执行失败/);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /接口拒绝/);
-  assert.doesNotMatch(p.$('#workspace-drawer-detail').textContent, /完成依据：收到失败响应/);
-  assert.equal(p.$('#workspace-drawer-detail .workspace-decision-sources').open, false);
-  await p.click('#workspace-drawer-back'); await p.group('closed'); await p.click(drawerDecision('closed'));
-  assert.doesNotMatch(p.$('#workspace-drawer-detail').textContent, /有后续动作等待该决定/);
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.ok(visible(p.$('#triage-inspector')));
+  assert.match(p.$('#triage-inspector').textContent, /资料待同步/);
+  assert.match(p.$('#triage-inspector').textContent, /执行失败/);
+  assert.match(p.$('#triage-inspector').textContent, /接口拒绝/);
+  assert.doesNotMatch(p.$('#triage-inspector').textContent, /完成依据：收到失败响应/);
+  assert.equal(p.$('#triage-inspector .workspace-decision-sources').open, false);
+  await p.click('#workspace-all-decisions'); await p.click(homeDecision('closed'));
+  assert.doesNotMatch(p.$('#triage-inspector').textContent, /有后续动作等待该决定/);
 });
 
-test('抽屉阅读期间轮询保留节点位置，新内容和新轮次仅在实际变更时提示', async t => {
+test('阅读期间轮询保留节点位置，新内容和新轮次仅在实际变更时提示', async t => {
   const data = fixture();
   data.overview = overview([decision('kept')], [highlight('recent-event', { runId: 'old-round', trigger: 'manual', sourceRunIds: ['old-round'] })]);
   const p = await page(t, data);
   p.$(homeDecision('kept')).focus(); await p.refresh();
   assert.equal(p.$('#workspace-reading-notice').hidden, true);
-  await p.click('#workspace-all-decisions'); await p.group('open');
-  assert.equal(p.$('#workspace-drawer-update').hidden, true);
-  const row = p.$('#workspace-drawer-list > li');
-  p.$('#workspace-drawer-content').scrollTop = 120;
-  await p.click(drawerDecision('kept'));
-  await p.click('#workspace-drawer-detail .workspace-decision-history > summary');
-  const detail = p.$('#workspace-drawer-detail > div'), history = detail.querySelector('details.workspace-decision-history');
-  history.querySelector('summary').focus(); p.$('#workspace-drawer-content').scrollTop = 330;
-  const scrolls = p.scrolls.length;
+  await p.click('#triage-inspector .workspace-decision-history > summary');
+  const detail = p.$('#triage-inspector > div'), history = detail.querySelector('details.workspace-decision-history');
+  history.querySelector('summary').focus();
   await p.refresh();
-  assert.equal(p.$('#workspace-drawer-detail > div'), detail);
+  assert.equal(p.$('#triage-inspector > div'), detail);
   assert.equal(p.window.document.activeElement, history.querySelector('summary'));
-  assert.equal(p.$('#workspace-drawer-update').hidden, true);
+  assert.equal(p.$('#workspace-apply-updates').hidden, true);
   const newer = run('new-round', '2026-11-04T05:00:00.000Z', { trigger: 'scheduled', summaryState: 'no_change' });
   data.runs.set(newer.id, newer); data.snapshot.runs.unshift(model.runSummary(newer));
   data.overview = overview([decision('kept', { title: '更新后的决定标题', revision: 2 }), decision('new')], data.overview.highlights);
   await p.refresh();
-  assert.equal(p.$('#workspace-drawer-detail > div'), detail);
+  assert.doesNotMatch(p.$('#triage-inspector').textContent, /更新后的决定标题/);
+  assert.match(p.$('#triage-inspector').textContent, /合成事项 kept/);
   assert.equal(p.$('#run').value, 'recent-round');
+  assert.equal(p.$('#workspace-apply-updates').hidden, false);
+  await p.click('#workspace-apply-updates');
+  assert.match(p.$('#triage-inspector h3').textContent, /更新后的决定标题/);
+  assert.equal(p.$('#triage-inspector .workspace-decision-history').open, true);
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 2);
+  assert.equal(p.$('#workspace-return-overview').hidden, false);
+  await p.click('#workspace-highlight-list button');
+  p.$('#workspace-drawer-content').scrollTop = 120;
+  await p.click('#workspace-drawer-detail .workspace-highlight-evidence > summary');
+  const scrolls = p.scrolls.length;
+  data.overview = overview(data.overview.decisions, [highlight('recent-event', { text: '更新后的进展标题', runId: 'old-round', trigger: 'manual', sourceRunIds: ['old-round'] })]);
+  await p.refresh();
   assert.equal(p.$('#workspace-drawer-update').hidden, false);
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 330);
+  assert.equal(p.$('#workspace-drawer-content').scrollTop, 120);
   assert.equal(p.scrolls.length, scrolls);
   await p.click('#workspace-drawer-update');
-  assert.match(p.$('#workspace-drawer-detail h3').textContent, /更新后的决定标题/);
-  assert.equal(p.$('#workspace-drawer-detail .workspace-decision-history').open, true);
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 330);
-  await p.click('#workspace-drawer-back');
-  assert.equal(p.$('#workspace-drawer-filter').value, 'open');
+  assert.match(p.$('#workspace-drawer-detail h3').textContent, /更新后的进展标题/);
   assert.equal(p.$('#workspace-drawer-content').scrollTop, 120);
-  assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 2);
-  assert.notEqual(p.$('#workspace-drawer-list > li'), row);
   await p.click('#workspace-drawer-close');
-  assert.equal(p.$('#workspace-return-overview').hidden, false);
   await p.click('#workspace-return-overview');
   p.assertView('tasks'); assert.equal(p.$('#run').value, 'new-round');
 });
 
 test('读取失败保留最后内容与读取时间，恢复后未接入不能伪装为零', async t => {
-  const data = fixture(); data.overview = overview([decision('kept')]);
+  const data = fixture(); data.overview = overview([decision('kept')], [highlight('kept-event', { runId: 'old-round' })]);
   const p = await page(t, data);
   const original = p.$('#workspace-decision-list > li');
+  assert.ok(original);
   data.overrides.set('/api/workspace/overview', () => Response.json({ error: { message: '合成读取故障' } }, { status: 503 }));
   await p.refresh();
   assert.equal(p.$('#workspace-decision-list > li'), original);
@@ -255,26 +264,25 @@ test('读取失败保留最后内容与读取时间，恢复后未接入不能�
   await p.click('#source-details > summary');
   assert.match(p.$('#workspace-overview-recorded').textContent, /最后成功读取/);
   await p.click('#source-details > summary');
-  await p.click(homeDecision('kept'));
+  await p.click('#workspace-highlight-list button');
   assert.match(p.$('#workspace-drawer-notice').textContent, /合成读取故障/);
   data.overrides.delete('/api/workspace/overview');
   data.overview = { ...overview(), status: 'missing', decisions: null, highlights: null, counts: { open: null, snoozed: null, history: null, followUp: null } };
   await p.refresh();
-  assert.match(p.$('#workspace-drawer-detail h3').textContent, /合成事项 kept/);
+  assert.match(p.$('#triage-inspector h3').textContent, /合成事项 kept/);
   assert.match(p.$('#workspace-drawer-notice').textContent, /陈旧/);
   await p.click('#workspace-drawer-close');
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 1');
 });
 
-test('抽屉来源链接关闭面板进入原轮次，超过七天重点仍可读且更新保留依据', async t => {
+test('来源链接进入原轮次，超过七天重点仍可读且更新保留依据', async t => {
   const data = fixture(); data.overview = overview([decision('source')]);
   const p = await page(t, data);
-  await p.click(homeDecision('source'));
-  await p.click('#workspace-drawer-detail .workspace-decision-sources > summary');
-  const link = p.$('#workspace-drawer-detail .workspace-run-link');
+  await p.click('#triage-inspector .workspace-decision-sources > summary');
+  const link = p.$('#triage-inspector .workspace-run-link');
   assert.equal(new URL(link.href).searchParams.get('workspace'), workspaceKey);
   assert.equal(new URL(link.href).searchParams.get('run'), 'old-round');
-  await p.click('#workspace-drawer-detail .workspace-run-link');
+  await p.click('#triage-inspector .workspace-run-link');
   assert.equal(p.$('#workspace-drawer').open, false); p.assertView('tasks');
   assert.equal(p.$('#run').value, 'old-round');
   assert.match(p.$('#run-highlight-list').textContent, /超过七天的原轮次重点/);
@@ -346,7 +354,7 @@ test('近期进展三行摘要，抽屉和历史轮次可回查全部版本与�
   assert.equal(p.$('#run-highlight-list [data-event="legacy"] .workspace-highlight-history'), null);
 });
 
-test('历史收据保留当时结论，关联事项进入同一抽屉显示当前状态', async t => {
+test('历史收据保留当时结论，关联事项跳转工作台显示当前状态', async t => {
   const data = fixture();
   const value = data.runs.get('old-round');
   value.results = [{ id: 'receipt', stepId: 'screen', candidateId: data.snapshot.candidates[0].id, action: '当时提出待确认', outcome: '当时尚未作出决定', attention: 'decision', nextAction: '等待聊天决定', updatedAt: old, decisionId: 'linked' }];
@@ -359,10 +367,11 @@ test('历史收据保留当时结论，关联事项进入同一抽屉显示当�
   assert.match(p.$('#result-list').textContent, /关联事项现在：已完成/);
   await p.click('#result-list .result-history > summary');
   await p.click('#result-list [data-linked-decision] button');
-  assert.equal(p.$('#workspace-drawer').open, true);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /已完成/);
-  await p.click('#workspace-drawer-close'); p.assertView('tasks');
-  assert.equal(p.window.document.activeElement, p.$('#result-list [data-linked-decision] button'));
+  assert.equal(p.$('#workspace-drawer').open, false);
+  p.assertView('assistant');
+  assert.match(p.$('#triage-inspector').textContent, /已完成/);
+  assert.equal(p.window.document.activeElement, p.$(homeDecision('linked')));
+  await p.nav('tasks');
   data.overrides.set('/api/snapshot', () => { throw new Error('合成断连'); }); await p.refresh();
   assert.equal(p.$('#show-run-decisions').hidden, false);
   assert.match(p.$('#result-list').textContent, /当时尚未作出决定/);
@@ -376,9 +385,10 @@ test('旧轮次未接入与明确无变化分开显示，所有外部文本安�
   assert.equal(p.$('#workspace-decision-list img'), null); assert.equal(p.$('#workspace-highlight-list script'), null);
   assert.match(p.$('#workspace-highlight-list').textContent, /<script>bad\(\)<\/script>/);
   await p.click(homeDecision('escape'));
-  assert.equal(p.$('#workspace-drawer-detail img'), null);
-  assert.match(p.$('#workspace-drawer-detail h3').textContent, /<img src=x/);
-  await p.click('#workspace-drawer-close'); await p.selectRun('old-round');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.$('#triage-inspector img'), null);
+  assert.match(p.$('#triage-inspector h3').textContent, /<img src=x/);
+  await p.selectRun('old-round');
   assert.match(p.$('#run-highlights-status').textContent, /尚未接入/);
   assert.doesNotMatch(p.$('#run-highlights-status').textContent, /无重要变化/);
   await p.selectRun('recent-round');
@@ -440,7 +450,7 @@ test('重点接口工作区冲突停止更新且保留已知工作区与事项',
   assert.equal(new URL(p.window.location.href).searchParams.get('workspace'), workspaceKey);
 });
 
-test('截图状态open0/history10/closed4进入即见三条待核对，全部历史通过抽屉可达', async t => {
+test('截图状态open0/history10/closed4进入即见待核对，全部历史通过工作台筛选可达', async t => {
   const data = fixture();
   data.overview = overview([
     ...Array.from({ length: 10 }, (_, index) => decision(`history-${index}`, { state: 'history_review', effectiveState: 'history_review', identity: { subjectKey: `legacy:${index}`, questionKey: 'receipt-review', scope: '历史收据待核对' } })),
@@ -451,20 +461,23 @@ test('截图状态open0/history10/closed4进入即见三条待核对，全部历
   assert.equal(p.$('#workspace-decisions-heading').textContent, '待你关注');
   assert.equal(p.$('[data-overview-filter="history_review"]').getAttribute('aria-pressed'), 'true');
   assert.equal(p.$('[data-overview-filter="history_review"]').textContent, '历史待核对 10');
-  assert.equal(p.all('#workspace-decision-list > li').length, 3);
+  assert.equal(p.all('#workspace-decision-list > li').length, 10);
   assert.equal(p.$('#workspace-decision-list .workspace-preview-scope'), null);
   assert.match(p.$('#workspace-decision-caption').textContent, /没有待回答事项.*10 条历史待核对/);
   assert.equal(p.$('#workspace-all-decisions').textContent, '全部事项 · 14');
-  assert.equal(p.all('#assistant select, #assistant details').filter(visible).length, 0);
+  assert.equal(p.all('#assistant select, #assistant details[open]').filter(visible).length, 0);
   assert.equal(p.$('#workspace-followup-link').hidden, true); assert.equal(p.$('#workspace-snoozed-link').hidden, true);
   assert.equal(p.$('#workspace-overview-status').hidden, true); assert.equal(p.$('#workspace-reading-notice').hidden, true);
   assert.equal(p.all('#workspace-task-list > li').length, 1);
   await p.click('#workspace-all-decisions');
-  assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 14);
-  assert.ok(p.all('#workspace-drawer-filter option').some(option => option.textContent === '当前待处理 · 0'));
-  await p.group('history_review'); assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 10);
-  await p.group('closed'); assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 4);
-  await p.click(drawerDecision('closed-3')); assert.match(p.$('#workspace-drawer-detail h3').textContent, /closed-3/);
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 14);
+  assert.equal(p.$('[data-overview-filter="open"]').hidden, true);
+  await p.click('[data-overview-filter="history_review"]');
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 10);
+  await p.click('#workspace-all-decisions');
+  await p.click(homeDecision('closed-3'));
+  assert.match(p.$('#triage-inspector h3').textContent, /closed-3/);
 });
 
 test('已知零只有一句空态和固定全部入口；无活动步骤的running显示未收尾记录', async t => {
@@ -482,52 +495,53 @@ test('已知零只有一句空态和固定全部入口；无活动步骤的runni
   await p.nav('tasks'); assert.match(p.$('#run-state').textContent, /进行中/);
 });
 
-test('抽屉长历史不插入首页；列表返回位置、焦点循环、Escape与背景关闭可用', async t => {
+test('工作台长历史不插入队列行；抽屉列表返回位置、焦点循环、Escape与背景关闭可用', async t => {
   const data = fixture();
   const history = Array.from({ length: 40 }, (_, index) => ({ at: now, state: 'open', decision: null, actions: [], source: null, evidence: `第${index}条长证据`.repeat(20), reason: `历史原因${index}` }));
-  data.overview = overview([decision('long', { history }), decision('other')]);
+  data.overview = overview([decision('long', { history }), decision('other')], [1, 2, 3, 4].map(id => highlight(`h-${id}`, { runId: 'old-round' })));
   const p = await page(t, data);
-  const initial = p.$('#assistant').textContent;
+  const initial = p.$('#workspace-decision-list').textContent;
+  await p.click(homeDecision('long'));
+  await p.click('#triage-inspector .workspace-decision-history > summary');
+  assert.equal(p.all('#triage-inspector .workspace-history-item').length, 40);
+  assert.equal(p.$('#workspace-decision-list').textContent, initial);
   p.window.scrollY = 190;
-  await p.click('#workspace-all-decisions'); await p.group('open');
-  const trigger = p.$(drawerDecision('long'));
+  await p.click('#workspace-show-highlights');
+  const trigger = p.$('#workspace-drawer-list [data-event="h-1"] button');
   p.$('#workspace-drawer-content').scrollTop = 180;
-  await p.click(drawerDecision('long'));
+  await p.click('#workspace-drawer-list [data-event="h-1"] button');
   assert.ok(p.window.document.documentElement.classList.contains('drawer-open'));
-  await p.click('#workspace-drawer-detail .workspace-decision-history > summary');
-  assert.equal(p.all('#workspace-drawer-detail .workspace-history-item').length, 40);
-  assert.equal(p.$('#assistant').textContent, initial);
-  const last = p.$('#workspace-drawer-detail .workspace-decision-history > summary'); last.focus();
+  await p.click('#workspace-drawer-detail .workspace-highlight-evidence > summary');
+  const last = p.$('#workspace-drawer-detail .workspace-highlight-sources > summary'); last.focus();
   last.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
   assert.equal(p.window.document.activeElement, p.$('#workspace-drawer-back'));
   p.$('#workspace-drawer-back').dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
   assert.equal(p.window.document.activeElement, last);
   await p.click('#workspace-drawer-back');
   assert.equal(p.$('#workspace-drawer-content').scrollTop, 180); assert.equal(p.window.document.activeElement, trigger);
-  assert.equal(p.$('#workspace-drawer-filter').value, 'open');
   p.$('#workspace-drawer').dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle();
   assert.equal(p.$('#workspace-drawer').open, false); assert.equal(p.window.scrollY, 190);
-  assert.equal(p.window.document.activeElement, p.$('#workspace-all-decisions'));
+  assert.equal(p.window.document.activeElement, p.$('#workspace-show-highlights'));
   assert.equal(p.window.document.documentElement.classList.contains('drawer-open'), false);
-  await p.click(homeDecision('long')); await p.click('#workspace-drawer-backdrop');
-  assert.equal(p.window.document.activeElement, p.$(homeDecision('long')));
+  await p.click('#workspace-highlight-list [data-event="h-1"] button'); await p.click('#workspace-drawer-backdrop');
+  assert.equal(p.window.document.activeElement, p.$('#workspace-highlight-list [data-event="h-1"] button'));
 });
 
-test('近期进展关联事项复用同一抽屉，返回进展入口含义明确', async t => {
+test('近期进展回退列表与关联事项跳转工作台行为清晰', async t => {
   const data = fixture(); data.overview = overview([decision('linked')], [highlight('related', { runId: 'old-round', decisionId: 'linked' })]);
   const p = await page(t, data);
   await p.click('#workspace-highlight-list [data-event="related"] button');
-  await p.click('#workspace-drawer-detail > div > button');
-  assert.equal(p.all('dialog[open]').length, 1);
-  assert.match(p.$('#workspace-drawer-detail h3').textContent, /linked/);
-  assert.equal(p.$('#workspace-drawer-back').textContent, '返回进展');
-  await p.click('#workspace-drawer-back');
   assert.equal(p.$('#workspace-drawer-title').textContent, '进展详情');
-  assert.match(p.$('#workspace-drawer-detail h3').textContent, /related/);
+  assert.equal(p.$('#workspace-drawer-back').textContent, '返回进展列表');
   await p.click('#workspace-drawer-back');
   assert.equal(p.$('#workspace-drawer-title').textContent, '近期进展');
   assert.equal(p.$('#workspace-drawer-filter').hidden, true);
   assert.equal(p.all('#workspace-drawer-list [data-event]').length, 1);
+  await p.click('#workspace-drawer-list [data-event="related"] button');
+  await p.click('#workspace-drawer-detail [data-linked-item]');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.match(p.$('#triage-inspector h3').textContent, /linked/);
+  assert.equal(p.window.document.activeElement, p.$(homeDecision('linked')));
 });
 
 test('run深链直接进入执行记录，旧布局存储只影响显式布局编辑', async t => {
@@ -544,14 +558,18 @@ test('run深链直接进入执行记录，旧布局存储只影响显式布局�
   await p.nav('tasks'); assert.equal(p.$('#run').value, 'old-round');
 });
 
-test('主动显示更新后关闭详情，焦点恢复到同一事项的新摘要行', async t => {
-  const data = fixture(); data.overview = overview([decision('revised')]);
+test('主动显示更新后关闭抽屉详情，焦点恢复到同一条目的新摘要行', async t => {
+  const data = fixture(); data.overview = overview([decision('revised')], [highlight('revised-h', { runId: 'old-round' })]);
   const p = await page(t, data);
-  await p.click(homeDecision('revised'));
-  data.overview = overview([decision('revised', { title: '已修订的事项', revision: 2 })]);
-  await p.refresh(); await p.click('#workspace-drawer-update'); await p.click('#workspace-drawer-close');
-  assert.equal(p.window.document.activeElement, p.$(homeDecision('revised')));
+  await p.click('#triage-inspector .workspace-decision-sources > summary');
+  data.overview = overview([decision('revised', { title: '已修订的事项', revision: 2 })], [highlight('revised-h', { text: '已修订的进展', runId: 'old-round' })]);
+  await p.refresh(); await p.click('#workspace-apply-updates');
   assert.match(p.$(homeDecision('revised')).textContent, /已修订的事项/);
+  await p.click('#workspace-highlight-list [data-event="revised-h"] button');
+  data.overview = overview(data.overview.decisions, [highlight('revised-h', { text: '再次修订的进展', runId: 'old-round' })]);
+  await p.refresh(); await p.click('#workspace-drawer-update'); await p.click('#workspace-drawer-close');
+  assert.equal(p.window.document.activeElement, p.$('#workspace-highlight-list [data-event="revised-h"] button'));
+  assert.match(p.$('#workspace-highlight-list [data-event="revised-h"] button').textContent, /再次修订的进展/);
 });
 
 test('岗位保存期间导航保持岗位视图和所选轮次', async t => {
@@ -583,15 +601,16 @@ test('新事项展示人岗和背景，完整列表按岗位分组且不重复�
   const p = await page(t, data);
   assert.match(p.$(homeDecision('first')).textContent, /合成甲.*合成工程岗.*具备经历但地点待确认/);
   await p.click('#workspace-all-decisions');
-  assert.deepEqual(p.all('.decision-role-heading h3').map(element => element.textContent), ['合成工程岗', '合成历史岗', '工作区事项', '岗位待确认']);
-  assert.equal(p.all('#workspace-drawer-list [data-decision]').length, 5);
-  await p.click(drawerDecision('old'));
-  assert.match(p.$('#workspace-drawer-detail').textContent, /合成历史岗/);
-  assert.match(p.$('#workspace-drawer-detail').textContent, /当前资料不可用/);
-  assert.equal(p.all('#workspace-drawer-detail [data-subject]').length, 0);
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.deepEqual(p.all('#workspace-decision-list .decision-role-heading h3').map(element => element.textContent), ['合成工程岗', '合成历史岗', '工作区事项', '岗位待确认']);
+  assert.equal(p.all('#workspace-decision-list [data-decision]').length, 5);
+  await p.click(homeDecision('old'));
+  assert.match(p.$('#triage-inspector').textContent, /合成历史岗/);
+  assert.match(p.$('#triage-inspector').textContent, /当前资料不可用/);
+  assert.equal(p.all('#triage-inspector [data-subject]').length, 0);
 });
 
-test('进展到关联事项再到人选资料可逐层返回，保留详情位置与焦点', async t => {
+test('进展到人选资料可逐层返回保留位置与焦点，进展直达分拣台后再看人选可返回分拣台', async t => {
   const data = fixture(), subject = model.candidateSubject(JSON.stringify(['合成甲', '合成工程岗']));
   const association = { subjects: [subject], associationStatus: 'resolved', associationMessages: [] };
   data.overview = overview([decision('linked', association)], [highlight('related', { runId: 'old-round', decisionId: 'linked', ...association, details: [{ label: '预约时段', value: '明日 14:00–15:00' }, { label: '面试官', value: '合成面试官' }] })]);
@@ -600,20 +619,25 @@ test('进展到关联事项再到人选资料可逐层返回，保留详情位�
   await p.click('#workspace-highlight-list button');
   assert.match(p.$('#workspace-drawer-detail').textContent, /预约时段明日 14:00–15:00/);
   p.$('#workspace-drawer-content').scrollTop = 90;
-  await p.click('#workspace-drawer-detail [data-linked-item]');
-  p.$('#workspace-drawer-content').scrollTop = 130;
   await p.click('#workspace-drawer-detail [data-subject]');
   assert.equal(p.$('#workspace-drawer-title').textContent, '人选资料');
   assert.equal(p.all('dialog[open]').length, 1);
   assert.equal(p.$('#record-content .record-name').textContent, '合成甲');
   await p.click('#workspace-drawer-back');
-  assert.equal(p.$('#workspace-drawer-title').textContent, '事项详情');
-  assert.equal(p.$('#workspace-drawer-content').scrollTop, 130);
-  assert.equal(p.window.document.activeElement, p.$('#workspace-drawer-detail [data-subject]'));
-  await p.click('#workspace-drawer-back');
   assert.equal(p.$('#workspace-drawer-title').textContent, '进展详情');
   assert.equal(p.$('#workspace-drawer-content').scrollTop, 90);
-  assert.equal(p.window.document.activeElement, p.$('#workspace-drawer-detail [data-linked-item]'));
+  assert.equal(p.window.document.activeElement, p.$('#workspace-drawer-detail [data-subject]'));
+  await p.click('#workspace-drawer-detail [data-linked-item]');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.match(p.$('#triage-inspector h3').textContent, /linked/);
+  const subjectBtn = p.$('#triage-inspector [data-subject]');
+  await p.click('#triage-inspector [data-subject]');
+  assert.equal(p.$('#workspace-drawer').open, true);
+  assert.equal(p.$('#workspace-drawer-title').textContent, '人选资料');
+  assert.equal(p.$('#workspace-drawer-back').textContent, '返回分拣台');
+  await p.click('#workspace-drawer-back');
+  assert.equal(p.$('#workspace-drawer').open, false);
+  assert.equal(p.window.document.activeElement, subjectBtn);
 });
 
 test('在招严格筛选，切范围保留有效岗位并清除范围外岗位，未知入口可达', async t => {
