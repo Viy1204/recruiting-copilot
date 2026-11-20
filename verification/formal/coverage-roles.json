@@ -4,15 +4,15 @@
   "sources": [
     {
       "path": "skills/recruit-board/scripts/roles.mjs",
-      "sha256": "7aa1ada4fcb6cb088c53b1c99ddbfe86354a1fa185070151868ac91c6ac71851"
+      "sha256": "65f16795fdd22a1a4ff4f40a041080cd624a40c7382a783793a0c1ed30c5a1c1"
     },
     {
       "path": "skills/recruit-board/model.mjs",
-      "sha256": "be2f6b16fbef5f0bd43fe46392e922480fac49d78d6283f80d1942a956f38f31"
+      "sha256": "02b8a358c21f32f22a87987137587d3a7e400145f695019e661602a4046cf896"
     },
     {
       "path": "skills/recruit-board/scripts/reader.mjs",
-      "sha256": "5e0c643d181b5f49907baf220c0da3ac6e6d400c97964d9aa3040c987064d65a"
+      "sha256": "0c74f87eb6bc240a076597823205c85d81d0a49d2853f7ad88afc6f6494ff5d4"
     }
   ],
   "mutations": [

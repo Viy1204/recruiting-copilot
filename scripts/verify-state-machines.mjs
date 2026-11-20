@@ -89,7 +89,8 @@ for (const target of targets) {
   console.log(`\n${target}`);
   let drift = false;
   for (const source of area.sources) {
-    const actual = digest(await fs.readFile(path.join(root, source.path)));
+    const text = (await fs.readFile(path.join(root, source.path), 'utf8')).replaceAll('\r\n', '\n');
+    const actual = digest(Buffer.from(text, 'utf8'));
     if (actual !== source.sha256) {
       drift = true;
       console.warn(`COVERAGE DRIFT: ${source.path}; review model against sync commit ${manifest.syncCommit}`);
