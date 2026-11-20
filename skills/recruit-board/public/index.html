@@ -44,6 +44,7 @@
           </div>
           <div class="header-actions">
             <span id="sync" class="sync-status" role="status" aria-live="polite">正在读取</span>
+            <button id="open-command-palette" class="command-palette-trigger" type="button" aria-label="快速跳转" title="快速跳转" aria-haspopup="dialog" aria-expanded="false" aria-controls="command-palette"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><span class="command-palette-trigger-label">快速跳转</span><kbd id="command-palette-shortcut">Ctrl+K</kbd></button>
             <button id="refresh-board" class="icon-button" type="button" aria-label="刷新" title="刷新"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 11-1l3 6M4 12l3 6a7 7 0 0 0 11-1"/></svg></button>
             <button id="edit-layout" class="icon-button layout-edit-button" type="button" aria-label="调整布局" title="调整布局" aria-expanded="false" aria-controls="layout-editor"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></svg></button>
             <button id="theme" class="icon-button theme-button" type="button" aria-label="切换深色主题" aria-pressed="false" title="切换深色主题">
@@ -377,6 +378,23 @@
       </section>
     </div>
     <footer id="workspace-drawer-footer" class="workspace-drawer-footer">资料与关注来自当前工作区。</footer>
+  </dialog>
+  <div id="command-palette-backdrop" class="command-palette-backdrop" hidden></div>
+  <dialog id="command-palette" class="command-palette" aria-labelledby="command-palette-title" aria-modal="true" tabindex="-1">
+    <div class="command-palette-header">
+      <h2 id="command-palette-title" class="sr-only">快速跳转</h2>
+      <label class="sr-only" for="command-palette-input">搜索事项、候选人、岗位或执行记录</label>
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="command-palette-input" class="command-palette-input" type="search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-palette-list" placeholder="搜索事项、人选、岗位或任务…（多词用空格分隔）" autocomplete="off">
+      <button id="command-palette-close" class="icon-button" type="button" aria-label="关闭快速跳转" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    </div>
+    <p id="command-palette-status" class="command-palette-status" role="status" aria-live="polite"></p>
+    <ul id="command-palette-list" class="command-palette-list" role="listbox" aria-label="快速跳转结果"></ul>
+    <footer class="command-palette-footer">
+      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+      <span><kbd>Enter</kbd> 打开</span>
+      <span><kbd>Esc</kbd> 关闭</span>
+    </footer>
   </dialog>
   <template id="stage-template">
     <button class="stage-button" type="button" aria-expanded="false" aria-controls="candidate-detail">

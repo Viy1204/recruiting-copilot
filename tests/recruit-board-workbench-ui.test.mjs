@@ -60,7 +60,7 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
   };
   let releaseOverview = () => {};
   const overviewGate = deferOverview ? new Promise(resolve => { releaseOverview = resolve; }) : null;
-  const errors = [], requests = [], scrolls = [], virtualConsole = new VirtualConsole();
+  const errors = [], requests = [], scrolls = [], scrollCalls = [], virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
   const query = [`workspace=${key}`, ...(pinned ? ['run=current'] : []), ...(preview ? [`preview=${preview}`] : [])].join('&');
   const dom = new JSDOM(html, { url: `http://localhost:4401/?${query}`, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole });
@@ -77,7 +77,7 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
     };
   }
   w.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
-  w.HTMLElement.prototype.scrollIntoView = function () { scrolls.push(this.id); };
+  w.HTMLElement.prototype.scrollIntoView = function (opts) { const key = this.id || this.dataset.decision || this.className; scrolls.push(key); scrollCalls.push({ key, opts: opts ? { ...opts } : undefined }); };
   w.HTMLElement.prototype.getClientRects = function () { return visible(this) ? [{}] : []; };
   w.Element.prototype.checkVisibility ??= function () { return visible(this); };
   let scrollY = 0;
@@ -138,7 +138,7 @@ async function page(t, { decisions = [], highlights = [], overviewStatus = 'ok',
   await settle();
   return {
     w, $: selector => w.document.querySelector(selector), all: selector => [...w.document.querySelectorAll(selector)],
-    snapshot, overview, runs, requests, scrolls, releaseOverview,
+    snapshot, overview, runs, requests, scrolls, scrollCalls, releaseOverview,
     refresh: async () => { await Promise.all(controllers.map(controller => controller.refresh({ invalidate: true }))); await settle(); },
     input: (selector, value) => { const element = w.document.querySelector(selector); element.value = value; element.dispatchEvent(new w.Event('input', { bubbles: true })); },
     select: (selector, value) => { const element = w.document.querySelector(selector); element.value = value; element.dispatchEvent(new w.Event('change', { bubbles: true })); }
@@ -791,4 +791,190 @@ test('星级与文本评级不附加级字，已关闭历史事项隐藏历史�
   p.$('[data-decision="legacy-closed"] [data-triage-row]').click(); await settle();
   assert.doesNotMatch(p.$('#triage-inspector .triage-fact-grid').textContent, /历史收据待核对/);
   assert.match(p.$('[data-decision="legacy-review"] .triage-row-role').textContent, /历史收据待核对/);
+});
+
+test('Mod+K 唤醒快速跳转，支持多词模糊召回与 mark 高亮且不写入 URL 或 localStorage', async t => {
+  const rows = [
+    '5,陈默,东京分布式存储岗,,A,待初筛,测试来源,,',
+    '6,李四,Rust 存储引擎岗,,B,待初筛,测试来源,,'
+  ];
+  const p = await page(t, { rows, decisions: [decision('d-palette')] });
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  const palette = p.$('#command-palette');
+  assert.equal(palette.open, true);
+  assert.equal(p.w.document.activeElement, p.$('#command-palette-input'));
+
+  p.input('#command-palette-input', '陈默 东京');
+  await settle();
+  const top = p.$('#command-palette-list [role="option"]');
+  assert.ok(top);
+  assert.equal(top.dataset.paletteKind, 'candidate');
+  assert.match(top.textContent, /陈默/);
+  assert.match(top.textContent, /东京分布式存储岗/);
+  const marks = [...top.querySelectorAll('mark.palette-match')].map(m => m.textContent);
+  assert.ok(marks.includes('陈默'));
+  assert.ok(marks.includes('东京'));
+
+  p.input('#command-palette-input', '东京 陈默');
+  await settle();
+  assert.match(p.$('#command-palette-list [role="option"]').textContent, /陈默/);
+
+  p.input('#command-palette-input', '陈rust');
+  await settle();
+  const emptyMixed = p.$('#command-palette-list [role="option"]');
+  assert.equal(emptyMixed, null);
+
+  p.$('#command-palette-close').click();
+  await settle();
+  assert.equal(palette.open, false);
+  p.$('#open-command-palette').click();
+  await settle();
+  assert.equal(palette.open, true);
+
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(palette.open, false);
+  assert.equal(p.w.location.href.includes('陈默'), false);
+  assert.equal(p.w.location.href.includes('东京'), false);
+  for (let i = 0; i < p.w.localStorage.length; i++) {
+    const val = p.w.localStorage.getItem(p.w.localStorage.key(i));
+    assert.equal(val.includes('陈默'), false);
+  }
+});
+
+test('快速跳转支持陈rust 跨标题副标题匹配并按 B+C 路由到分拣台、内联卡片或档案抽屉', async t => {
+  const rows = [
+    '5,陈默,Rust 存储岗,,A,待初筛,测试来源,,',
+    '6,合成丙,测试在招岗,,B,待初筛,测试来源,,'
+  ];
+  const wide = await page(t, { rows, decisions: [decision('d-1'), decision('d-2')] });
+  wide.$('#open-command-palette').click();
+  await settle();
+  wide.input('#command-palette-input', '陈rust');
+  await settle();
+  const rustOption = wide.$('#command-palette-list [role="option"]');
+  assert.ok(rustOption);
+  assert.match(rustOption.textContent, /陈默/);
+  const rustMarks = [...rustOption.querySelectorAll('mark.palette-match')].map(m => m.textContent);
+  assert.ok(rustMarks.includes('陈'));
+  assert.ok(rustMarks.some(m => /rust/i.test(m)));
+
+  wide.input('#command-palette-input', 'd-2');
+  await settle();
+  wide.$('#command-palette-input').dispatchEvent(new wide.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(wide.$('#command-palette').open, false);
+  assert.equal(wide.$('#workspace-drawer').open, false);
+  assert.match(wide.$('#triage-inspector').textContent, /核对事项 d-2/);
+
+  wide.$('#open-command-palette').click();
+  await settle();
+  wide.input('#command-palette-input', '陈默 Rust');
+  await settle();
+  wide.$('#command-palette-input').dispatchEvent(new wide.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(wide.$('#command-palette').open, false);
+  assert.equal(wide.$('#workspace-drawer').open, true);
+  assert.match(wide.$('#record-content').textContent, /陈默/);
+
+  const narrow = await page(t, { rows, decisions: [decision('c-1'), decision('c-2')], preview: 'narrow' });
+  narrow.$('#open-command-palette').click();
+  await settle();
+  narrow.input('#command-palette-input', 'c-2');
+  await settle();
+  narrow.$('#command-palette-input').dispatchEvent(new narrow.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(narrow.$('#command-palette').open, false);
+  assert.equal(narrow.$('#workspace-drawer').open, false);
+  assert.ok(narrow.$('[data-decision="c-2"] .triage-inline-body'));
+  assert.ok(narrow.scrolls.includes('c-2'));
+  assert.deepEqual(narrow.scrollCalls.at(-1), { key: 'c-2', opts: { block: 'start', behavior: 'instant' } });
+
+  wide.$('#open-command-palette').click();
+  await settle();
+  wide.input('#command-palette-input', '测试历史岗');
+  await settle();
+  const roleIdx = wide.all('#command-palette-list [role="option"]').findIndex(el => el.dataset.paletteKind === 'role');
+  assert.ok(roleIdx >= 0);
+  for (let i = 0; i < roleIdx; i++) {
+    wide.$('#command-palette-input').dispatchEvent(new wide.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  }
+  wide.$('#command-palette-input').dispatchEvent(new wide.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(wide.$('#role').value, '测试历史岗');
+
+  wide.$('#open-command-palette').click();
+  await settle();
+  wide.input('#command-palette-input', 'older');
+  await settle();
+  assert.equal(wide.$('#command-palette-list [role="option"]').dataset.paletteKind, 'run');
+  wide.$('#command-palette-input').dispatchEvent(new wide.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(wide.$('#run').value, 'older');
+});
+
+test('抽屉上方打开快速跳转时 Esc 仅剥离跳转层并保留滚动，IME 组合输入不提前触发 Enter 且拦截单键 1/S', async t => {
+  const p = await page(t, { decisions: [decision('d-layer')] });
+  p.$('#triage-inspector [data-subject]').click();
+  await settle();
+  assert.equal(p.$('#workspace-drawer').open, true);
+  const content = p.$('#workspace-drawer-content');
+  content.scrollTop = 180;
+
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#command-palette').open, true);
+  assert.equal(p.$('#workspace-drawer').open, true);
+
+  const input = p.$('#command-palette-input');
+  input.dispatchEvent(new p.w.CompositionEvent('compositionstart', { bubbles: true }));
+  input.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#command-palette').open, true);
+  input.dispatchEvent(new p.w.CompositionEvent('compositionend', { bubbles: true }));
+
+  p.w.document.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.requests.filter(r => r.url.pathname === '/api/decisions').length, 0);
+
+  input.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.$('#command-palette').open, false);
+  assert.equal(p.$('#workspace-drawer').open, true);
+  assert.equal(content.scrollTop, 180);
+});
+
+test('候选名单与搜索结果采用单 Tab 停靠点与 ArrowDown/ArrowUp 漫游焦点', async t => {
+  const rows = Array.from({ length: 6 }, (_, i) => `${i + 5},合成人${i},测试在招岗,,B,待初筛,测试来源,,`);
+  const p = await page(t, { rows });
+  await navigate(p, 'roles');
+  const stageButtons = p.all('#candidate-list .candidate-list-button');
+  assert.equal(stageButtons.length, 8);
+  assert.equal(stageButtons.filter(b => b.getAttribute('tabindex') === '0').length, 1);
+  assert.equal(stageButtons[0].getAttribute('tabindex'), '0');
+  assert.equal(stageButtons[1].getAttribute('tabindex'), '-1');
+
+  stageButtons[0].focus();
+  stageButtons[0].dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.w.document.activeElement, stageButtons[1]);
+  assert.equal(stageButtons[0].getAttribute('tabindex'), '-1');
+  assert.equal(stageButtons[1].getAttribute('tabindex'), '0');
+
+  stageButtons[1].dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.w.document.activeElement, stageButtons[0]);
+  assert.equal(stageButtons[0].getAttribute('tabindex'), '0');
+
+  p.input('#candidate-query', '合成人');
+  await settle();
+  const searchButtons = p.all('#candidate-search-list .candidate-list-button');
+  assert.equal(searchButtons.length, 8);
+  assert.equal(searchButtons.filter(b => b.getAttribute('tabindex') === '0').length, 1);
+  searchButtons[0].focus();
+  searchButtons[0].dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(p.w.document.activeElement, searchButtons[1]);
+  assert.equal(searchButtons[1].getAttribute('tabindex'), '0');
 });
