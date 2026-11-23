@@ -94,6 +94,16 @@
           <button id="workspace-return-overview" class="text-button" type="button" hidden>查看最新任务</button>
         </div>
         <div class="overview-columns">
+          <section class="workspace-highlights" aria-labelledby="workspace-highlights-heading">
+            <div class="board-group-heading"><h2 id="workspace-highlights-heading">近期进展</h2><span class="workspace-overview-caption">最近 7 天</span></div>
+            <p id="workspace-highlights-status" class="workspace-overview-note" hidden></p>
+            <details id="progress-coverage" class="result-history" hidden><summary id="progress-coverage-summary" class="result-history-summary">进展记录待核对</summary><ul id="progress-coverage-list" class="document-list"></ul></details>
+            <ul id="workspace-highlight-list" class="workspace-highlight-list" aria-label="近期已记录重点"></ul>
+            <div class="workspace-decision-entries">
+              <button id="workspace-show-highlights" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer" hidden>全部近期进展</button>
+              <button id="workspace-highlight-history" class="text-button" type="button" aria-controls="tasks">执行记录</button>
+            </div>
+          </section>
           <section class="workspace-decisions" aria-labelledby="workspace-decisions-heading">
             <div class="board-group-heading assistant-heading"><h2 id="workspace-decisions-heading" tabindex="-1">待你关注</h2><span id="workspace-decisions-count" class="count-badge" hidden></span><span class="section-extra">跨轮持续跟进</span></div>
             <div id="workspace-decision-filters" class="workspace-decision-filters" role="group" aria-label="总览事项分类" hidden>
@@ -116,21 +126,11 @@
             </div>
             <div class="workspace-decision-entries overview-list-footer">
               <p id="workspace-decision-summary" class="workspace-overview-caption"></p>
-              <button id="workspace-all-decisions" class="text-button" type="button" aria-controls="workspace-decision-list">全部事项</button>
+              <button id="workspace-all-decisions" class="text-button" type="button" aria-controls="workspace-decision-list" aria-expanded="false">全部事项</button>
             </div>
             <div class="workspace-secondary-entries">
               <button id="workspace-snoozed-link" class="text-button" type="button" aria-controls="workspace-decision-list" hidden></button>
               <button id="workspace-followup-link" class="text-button" type="button" aria-controls="workspace-decision-list" hidden></button>
-            </div>
-          </section>
-          <section class="workspace-highlights" aria-labelledby="workspace-highlights-heading">
-            <div class="board-group-heading"><h2 id="workspace-highlights-heading">近期进展</h2><span class="workspace-overview-caption">最近 7 天</span></div>
-            <p id="workspace-highlights-status" class="workspace-overview-note" hidden></p>
-            <details id="progress-coverage" class="result-history" hidden><summary id="progress-coverage-summary" class="result-history-summary">进展记录待核对</summary><ul id="progress-coverage-list" class="document-list"></ul></details>
-            <ul id="workspace-highlight-list" class="workspace-highlight-list" aria-label="近期已记录重点"></ul>
-            <div class="workspace-decision-entries">
-              <button id="workspace-show-highlights" class="text-button" type="button" aria-haspopup="dialog" aria-controls="workspace-drawer" hidden>全部近期进展</button>
-              <button id="workspace-highlight-history" class="text-button" type="button" aria-controls="tasks">执行记录</button>
             </div>
           </section>
         </div>

@@ -978,3 +978,53 @@ test('候选名单与搜索结果采用单 Tab 停靠点与 ArrowDown/ArrowUp �
   assert.equal(p.w.document.activeElement, searchButtons[1]);
   assert.equal(searchButtons[1].getAttribute('tabindex'), '0');
 });
+
+test('总览将近期进展置于待你关注之前，全部事项支持展开与二次点击收起并恢复原筛选', async t => {
+  const closed = Array.from({ length: 4 }, (_, i) => ({
+    ...decision(`closed-${i + 1}`, 'closed'),
+    decision: { text: '已确认结论', scope: '测试范围', recordedAt: now }
+  }));
+  const zeroOpen = await page(t, { decisions: closed, highlights: [highlight('recent-1')] });
+  const sections = zeroOpen.all('.overview-columns > section').map(el => el.className);
+  assert.deepEqual(sections, ['workspace-highlights', 'workspace-decisions']);
+  const toggle = zeroOpen.$('#workspace-all-decisions');
+  assert.equal(zeroOpen.$('#triage-workbench').hidden, true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.textContent, '全部事项 · 4');
+
+  toggle.click(); await settle();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.textContent, '收起全部事项 · 4');
+  assert.equal(zeroOpen.$('#triage-workbench').hidden, false);
+  assert.equal(zeroOpen.all('#workspace-decision-list [data-decision]').length, 4);
+
+  toggle.click(); await settle();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.textContent, '全部事项 · 4');
+  assert.equal(zeroOpen.$('#triage-workbench').hidden, true);
+
+  toggle.click(); await settle();
+  assert.equal(zeroOpen.$('#triage-workbench').hidden, false);
+  zeroOpen.$('[data-overview-filter="all"]').click(); await settle();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(zeroOpen.$('#triage-workbench').hidden, true);
+
+  const mixed = await page(t, { decisions: [decision('open-1'), decision('follow-1', 'decided'), ...closed] });
+  mixed.$('[data-overview-filter="followUp"]').click(); await settle();
+  assert.equal(mixed.all('#workspace-decision-list [data-decision]').length, 1);
+
+  mixed.$('#workspace-all-decisions').click(); await settle();
+  assert.equal(mixed.$('#workspace-all-decisions').getAttribute('aria-expanded'), 'true');
+  assert.equal(mixed.all('#workspace-decision-list [data-decision]').length, 6);
+
+  mixed.$('#workspace-all-decisions').click(); await settle();
+  assert.equal(mixed.$('#workspace-all-decisions').getAttribute('aria-expanded'), 'false');
+  assert.equal(mixed.$('[data-overview-filter="followUp"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(mixed.all('#workspace-decision-list [data-decision]').length, 1);
+
+  mixed.$('#workspace-all-decisions').click(); await settle();
+  mixed.$('[data-overview-filter="all"]').click(); await settle();
+  assert.equal(mixed.$('#workspace-all-decisions').getAttribute('aria-expanded'), 'false');
+  assert.equal(mixed.$('[data-overview-filter="followUp"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(mixed.all('#workspace-decision-list [data-decision]').length, 1);
+});
