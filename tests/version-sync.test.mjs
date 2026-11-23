@@ -20,7 +20,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const readJson = (rel) => JSON.parse(readFileSync(path.join(repoRoot, rel), "utf8"));
+const readText = (rel) => readFileSync(path.join(repoRoot, rel), "utf8");
+const readJson = (rel) => JSON.parse(readText(rel));
 
 test("主包与主插件版本号一致", () => {
   const pkg = readJson("package.json");
@@ -63,6 +64,51 @@ test("skills 与各 Agent 软链目录及 commands 入口保持一致", () => {
       existsSync(path.join(repoRoot, "commands", `${commandName}.md`)),
       true,
       `commands 缺少命令入口：${commandName}.md`,
+    );
+  }
+});
+
+test("README、初始化说明、发版文档与默认 BOSS CLI 版本保持同步", () => {
+  const pkg = readJson("package.json");
+  const releaseTag = `v${pkg.version}`;
+  const releaseDoc = `docs/releases/${releaseTag}.md`;
+  assert.equal(
+    existsSync(path.join(repoRoot, releaseDoc)),
+    true,
+    `缺少当前正式版说明文档：${releaseDoc}`,
+  );
+
+  const installer = readText(path.join("skills", "recruit-init", "scripts", "install-dependencies.sh"));
+  const bossSourceMatch = installer.match(/^BOSS_CLI_SOURCE=\$\{BOSS_CLI_SOURCE:-([^}]+)\}/m);
+  assert.ok(bossSourceMatch, "install-dependencies.sh 缺少默认 BOSS_CLI_SOURCE 定义");
+  const bossCliSource = bossSourceMatch[1];
+  const bossVersionMatch = bossCliSource.match(/^@viyzhu\/boss-cli-fork@(\d+\.\d+\.\d+)$/);
+  assert.ok(bossVersionMatch, `默认 BOSS_CLI_SOURCE 格式不符合预期：${bossCliSource}`);
+  const bossCliVersion = bossVersionMatch[1];
+
+  const syncChecks = [
+    { file: "README.md", label: "顶部当前正式版声明", pattern: `当前正式版为 **${releaseTag}**` },
+    { file: "README.md", label: "git clone 固定版本分支", pattern: `git clone --branch ${releaseTag}` },
+    {
+      file: "README.md",
+      label: "DeepSeek Harness 插件安装版本",
+      pattern: `dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#${releaseTag}`,
+    },
+    { file: "README.md", label: "正式版说明文档链接", pattern: releaseDoc },
+    { file: path.join("skills", "recruit-init", "SKILL.md"), label: "初始化技能默认 BOSS CLI", pattern: bossCliSource },
+    { file: "README.md", label: "README 默认依赖安装器 BOSS CLI", pattern: bossCliSource },
+    { file: "README.md", label: "README Step 3 默认已安装 BOSS CLI", pattern: `默认依赖安装器已安装 BOSS CLI ${bossCliVersion}` },
+    { file: "README.md", label: "README 单独升级 BOSS CLI 命令", pattern: `npm install -g ${bossCliSource}` },
+    { file: "README.md", label: "README boss version 预期输出", pattern: `版本为 \`${bossCliVersion}\`` },
+  ];
+
+  const fileCache = new Map();
+  for (const { file, label, pattern } of syncChecks) {
+    if (!fileCache.has(file)) fileCache.set(file, readText(file));
+    assert.equal(
+      fileCache.get(file).includes(pattern),
+      true,
+      `${file} 的${label}未同步，预期包含：${pattern}`,
     );
   }
 });
