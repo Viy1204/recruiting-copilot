@@ -94,8 +94,8 @@
 
 `BOSS_BROWSER_NO_FOREGROUND` 用于控制有头会话是否抢占前台，不改变有头模式：
 
-- `boss-cli` `0.7.2` 到 `0.8.9` 的常规命令默认前置窗口。跑 `list`、`search`、`recommend`、`greet` 时显式加上 `BOSS_BROWSER_NO_FOREGROUND=true`（例如 `BOSS_BROWSER_NO_FOREGROUND=true boss list --unread`）。
-- 后续将常规会话默认改为不前置的 `boss-cli` 版本，常规命令默认不抢占前台。需要恢复前置时设置 `BOSS_BROWSER_NO_FOREGROUND=false`（已最小化的窗口仍保持最小化）。
+- `boss-cli` `0.8.10` 起常规命令默认不抢占前台。需要恢复前置时设置 `BOSS_BROWSER_NO_FOREGROUND=false`（已最小化的窗口仍保持最小化）。
+- 旧版本 `boss-cli`（`0.7.2` 到 `0.8.9`）的常规命令默认前置窗口。跑 `list`、`search`、`recommend`、`greet` 时显式加上 `BOSS_BROWSER_NO_FOREGROUND=true`（例如 `BOSS_BROWSER_NO_FOREGROUND=true boss list --unread`）。
 - 首次启动浏览器、`boss login` 人工登录，以及在线简历截图（`preview` / `action resume` 需要可见窗口合成帧来渲染 `<canvas>`）属于例外，仍可能显示或前置窗口。不要承诺整个流程始终不出现窗口，也不要把用户切换其他应用直接认定为干扰。
 
 ### ⛔ 禁止事项：不要开无头

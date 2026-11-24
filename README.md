@@ -4,7 +4,7 @@
 
 支持 Claude Code、Codex、WorkBuddy、Qoder、MiniMax Code、ZCode 等能读取项目文件的 AI 工具。招聘标准、候选台账和面试档案保存在你自己的工作区，换工具也能接着做。
 
-当前正式版为 **v0.8.4**。[开始使用](#开始使用) · [完整 Skill 目录](#完整-skill-目录) · [已有工作区升级](docs/releases/v0.8.4.md#升级已有工作区)
+当前正式版为 **v0.8.5**。[开始使用](#开始使用) · [完整 Skill 目录](#完整-skill-目录) · [已有工作区升级](docs/releases/v0.8.5.md#升级已有工作区)
 
 ## 宣传片
 
@@ -80,7 +80,7 @@ boss favorite --remove --index 1
 #### 1. 下载固定版本并安装依赖
 
 ```bash
-git clone --branch v0.8.4 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
+git clone --branch v0.8.5 --depth 1 https://github.com/Viy1204/recruiting-copilot.git
 ```
 
 进入源码目录。
@@ -95,7 +95,7 @@ cd recruiting-copilot
 sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
-安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.9` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
+安装器默认使用 BOSS 维护包 `@viyzhu/boss-cli-fork@0.8.10` 和猎聘包 `@viyzhu/liepin-cli`。BOSS 的源码仓库是 [Viy1204/boss-cli](https://github.com/Viy1204/boss-cli)，安装后的命令仍叫 `boss`。需要自定来源时使用 `BOSS_CLI_SOURCE` 或 `LIEPIN_CLI_SOURCE`。
 
 收藏功能与本次预览修正需要 BOSS CLI **0.8.8 或更高版本**。已有安装按[升级 BOSS CLI](#升级-boss-cli-以使用收藏)单独升级。
 
@@ -109,11 +109,11 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 
 AI 会询问工作区位置，建立模板和各工具的 Skill 入口，再逐个岗位梳理真实要求。**本仓库是工具源码，岗位数据和候选资料放在新建的独立工作区。**
 
-已有工作区先按[升级说明](docs/releases/v0.8.4.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
+已有工作区先按[升级说明](docs/releases/v0.8.5.md#升级已有工作区)同步工具文件，保留原有标准、台账和档案。
 
 #### 3. 核对 BOSS CLI 版本并完成人工登录
 
-默认依赖安装器已安装 BOSS CLI 0.8.9。可执行 `boss version` 确认版本，再继续下方登录。
+默认依赖安装器已安装 BOSS CLI 0.8.10。可执行 `boss version` 确认版本，再继续下方登录。
 
 BOSS 使用：
 
@@ -137,12 +137,12 @@ liepin login
 
 ### 升级 BOSS CLI 以使用收藏
 
-BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 起提供，招聘工作流的正式版为 v0.8.4。已有工作区可按下方命令单独升级 BOSS CLI。
+BOSS CLI 与 recruiting-copilot 独立发版。收藏功能从 BOSS CLI 0.8.8 起提供，招聘工作流的正式版为 v0.8.5。已有工作区可按下方命令单独升级 BOSS CLI。
 
 安装或升级 BOSS CLI。
 
 ```bash
-npm install -g @viyzhu/boss-cli-fork@0.8.9 --registry=https://registry.npmjs.org/
+npm install -g @viyzhu/boss-cli-fork@0.8.10 --registry=https://registry.npmjs.org/
 ```
 
 核对输出中的包名和版本。
@@ -151,9 +151,9 @@ npm install -g @viyzhu/boss-cli-fork@0.8.9 --registry=https://registry.npmjs.org
 boss version
 ```
 
-应看到 `@viyzhu/boss-cli-fork`，版本为 `0.8.9`。这一版在 0.8.8 基础上适配了搜索池新版详情面板的账号权益按钮（见 [BOSS CLI 0.8.9 正式版](https://github.com/Viy1204/boss-cli/releases/tag/v0.8.9)）。`boss preview` 成功时输出 PNG 路径，不再附加固定每日额度提醒。OCR 失败仍报错，同时保留已保存截图的绝对路径和原始原因。在线简历的权限与额度仍以账号权益和平台实际提示为准。
+应看到 `@viyzhu/boss-cli-fork`，版本为 `0.8.10`。这一版在有头模式下默认不主动将常规命令前置到前台，避免窗口在后台未最小化时打断其他应用（见 [BOSS CLI 0.8.10 正式版](https://github.com/Viy1204/boss-cli/releases/tag/v0.8.10)）。`boss preview` 成功时输出 PNG 路径，不再附加固定每日额度提醒。OCR 失败仍报错，同时保留已保存截图的绝对路径和原始原因。在线简历的权限与额度仍以账号权益和平台实际提示为准。
 
-工作区与 Skill 文件的升级仍按[已有工作区升级说明](docs/releases/v0.8.4.md#升级已有工作区)执行。
+工作区与 Skill 文件的升级仍按[已有工作区升级说明](docs/releases/v0.8.5.md#升级已有工作区)执行。
 
 ### Claude Code 插件入口
 
@@ -169,14 +169,14 @@ claude plugin marketplace add "/绝对路径/recruiting-copilot"
 claude plugin install recruiting-copilot@recruiting-copilot
 ```
 
-如果已配置同名 marketplace，先核对来源再按原来源更新，见[正式版安装说明](docs/releases/v0.8.4.md#固定版本安装)。重新打开会话后，先用 `/recruiting-copilot:recruit-init` 建立招聘工作区。后续在自己的工作区使用下表的插件命令，也可以继续用自然语言。
+如果已配置同名 marketplace，先核对来源再按原来源更新，见[正式版安装说明](docs/releases/v0.8.5.md#固定版本安装)。重新打开会话后，先用 `/recruiting-copilot:recruit-init` 建立招聘工作区。后续在自己的工作区使用下表的插件命令，也可以继续用自然语言。
 
 ### DeepSeek Harness 入口
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用户在使用 Web profile 的环境中安装：
 
 ```bash
-dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.8.4
+dsh plugin --profile web add git+https://github.com/Viy1204/recruiting-copilot.git#v0.8.5
 ```
 
 重新打开 DSH 会话后，8 个招聘 Skill 在任意工作区可用。首次仍从“帮我初始化招聘工作区”开始，之后打开新建的招聘工作区处理日常任务。
@@ -252,13 +252,13 @@ DSH 另有独立的 **招聘浏览器**，用于观察两个 CLI 的平台页面
 
 看板读取已写入工作区的数据，不连接招聘平台。读取正常不代表 AI 进程仍在运行；候选台账保持只读，岗位保存只更新本地 `CONTEXT.md` 并备份，不改变平台职位。旧工作区缺少进度脚本时，招聘流程仍可继续，并说明本轮未记录进度。
 
-Claude Desktop、Codex App、WorkBuddy 等工具共用这一网页，也可直接用普通浏览器打开。完整操作见[招聘工作台使用说明](docs/recruit-board.md)；已有工作区按[升级说明](docs/releases/v0.8.4.md#升级已有工作区)同步工具文件，保留原有招聘标准、台账和档案。
+Claude Desktop、Codex App、WorkBuddy 等工具共用这一网页，也可直接用普通浏览器打开。完整操作见[招聘工作台使用说明](docs/recruit-board.md)；已有工作区按[升级说明](docs/releases/v0.8.5.md#升级已有工作区)同步工具文件，保留原有招聘标准、台账和档案。
 
 ## 使用边界
 
 - 打招呼、拒绝、通知候选人、发 offer 等对外动作默认先获得你的确认，不自动拒人。本轮打招呼授权只在本轮有效。
 - 创建面试日程前，先确认时间、人选、面试官与标题。候选人邀约默认只生成话术，明确要求代发后才发送。
-- 两个平台的操作一律通过 `boss` / `liepin` CLI 执行，不使用宿主浏览器扩展等通用浏览器工具替代。两个平台默认使用可见浏览器，不设 `RECRUIT_BROWSER_HIDDEN=true`；在 `boss-cli` `0.7.2` 到 `0.8.9` 上执行后台读取可加 `BOSS_BROWSER_NO_FOREGROUND=true`（不开启无头模式）。遇到验证码、安全验证、账号限制或不明发送结果时停止，先人工核验，不反复刷新、重登或重发。
+- 两个平台的操作一律通过 `boss` / `liepin` CLI 执行，不使用宿主浏览器扩展等通用浏览器工具替代。两个平台默认使用可见浏览器，不设 `RECRUIT_BROWSER_HIDDEN=true`；`boss-cli` `0.8.10` 起常规命令默认不抢占前台（旧版 `0.7.2` 到 `0.8.9` 可加 `BOSS_BROWSER_NO_FOREGROUND=true`）。遇到验证码、安全验证、账号限制或不明发送结果时停止，先人工核验，不反复刷新、重登或重发。
 - 对内寻源策略、排除信号和商业敏感资料保留在内部笔记中，按已确认口径生成对外 JD、话术与报告。
 - 飞书邮箱仅作为简历输入渠道，按指定范围只读收取，不标已读、不移动或删除、不回复或转发。风险附件不自动下载。
 
@@ -266,7 +266,7 @@ Claude Desktop、Codex App、WorkBuddy 等工具共用这一网页，也可直�
 
 | 入口 | 内容 |
 | --- | --- |
-| [v0.8.4 正式版说明](docs/releases/v0.8.4.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
+| [v0.8.5 正式版说明](docs/releases/v0.8.5.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
 | [流程总目录](skills/ask-viy/SKILL.md) | 从首次初始化到每日招聘，以及简历、人才盘点和面试的流程选择 |
 | [设计思路与理念](docs/DESIGN.md) | 为什么先梳理岗位、使用本地文件、区分内外资料并保留人工确认 |
 | [BOSS CLI 维护 fork](https://github.com/Viy1204/boss-cli) | `@viyzhu/boss-cli-fork` 的安装、命令和平台操作边界 |
