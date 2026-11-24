@@ -33,6 +33,8 @@ description: >
 
 ## 主流程（按需跳步）
 
+Boss 与猎聘的寻源、查未读和读简历必须通过 `boss` / `liepin` CLI 执行，不得降级为宿主自带浏览器工具（如 Cindy `user-browser`），原因与后台运行规则见 [`references/channels.md`](references/channels.md)。
+
 1. **查未处理**：
    - `boss list --unread`（角标 > 0 才有）
    - `liepin chatlist --json`，过滤 `unread_count` 非 "0"。
