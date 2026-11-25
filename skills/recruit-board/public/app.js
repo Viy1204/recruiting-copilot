@@ -17,7 +17,7 @@ let rolePreferences = { scope: 'active', following: [], role: '' }, preferenceKe
 let resultsRequest = 0;
 const freshResults = runId => ({ runId, open: true, filter: 'all', data: undefined, status: 'idle', error: null, requestedVersion: null, loadedVersion: null, updatedAt: null, expanded: new Set() });
 let resultsState = freshResults(null);
-const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null, filter: 'auto' };
+const overviewState = { data: null, status: 'idle', error: '', stale: false, missing: false, readAt: null, pending: null, pendingRunId: null, filter: 'auto', previousFilter: 'auto' };
 const triageState = { activeId: null, expandedId: null, drafts: new Map(), status: '', statusError: false, submittingId: null, userCollapsed: false };
 let triageCleanups = [], triageInst = null, bypassOverviewFreeze = false, drawerLayerCleanup = null, pickerLayerCleanup = null, paletteLayerCleanup = null;
 const paletteState = { open: false, query: '', activeIndex: 0, results: [], composing: false, returnFocus: null };
@@ -808,6 +808,22 @@ function renderWorkspaceTasks() {
 
 const autoDecisionFilter = groups => groups.open?.length ? 'open' : groups.history_review?.length ? 'history_review' : groups.followUp?.length ? 'followUp' : 'open';
 
+function setOverviewFilter(nextFilter, { toggleAll = false } = {}) {
+  if (nextFilter === 'all') {
+    if (toggleAll && overviewState.filter === 'all') {
+      const groups = workspaceDecisionGroups(overviewState.data);
+      const previous = overviewState.previousFilter;
+      overviewState.filter = previous === 'auto' || groups[previous]?.length ? previous : 'auto';
+      return;
+    }
+    if (overviewState.filter !== 'all') overviewState.previousFilter = overviewState.filter;
+    overviewState.filter = 'all';
+    return;
+  }
+  overviewState.filter = nextFilter;
+  overviewState.previousFilter = nextFilter;
+}
+
 function renderTriageInspector(item) {
   const inspector = byId('triage-inspector');
   if (isCompactTriage() || !item) { inspector.hidden = true; delete inspector.dataset.decision; delete inspector.dataset.signature; inspector.replaceChildren(); return; }
@@ -902,7 +918,9 @@ function renderWorkspaceOverview() {
   empty.hidden = items === null || Boolean(items.length);
   renderTriageWorkbench(items, group);
   text('workspace-decision-summary', items === null ? '事项数量未知' : `${items.length} 项${{ open: '等待确认', followUp: '后续动作未完成', history_review: '历史记录待核对', snoozed: '已暂缓提醒', all: '工作区事项' }[group]}`);
-  text('workspace-all-decisions', `全部事项 · ${groups.all === null ? '未知' : groups.all.length}`);
+  const allDecisions = byId('workspace-all-decisions');
+  allDecisions.setAttribute('aria-expanded', String(state.filter === 'all'));
+  text(allDecisions, `${state.filter === 'all' ? '收起全部事项' : '全部事项'} · ${groups.all === null ? '未知' : groups.all.length}`);
   for (const [id, key] of [['workspace-snoozed-link', 'snoozed'], ['workspace-followup-link', 'followUp']]) {
     byId(id).hidden = !groups[key]?.length || group === key;
     text(id, `${DECISION_GROUPS[key]} · ${groups[key]?.length ?? 0}${key === 'followUp' ? ' · 已决定，无需重复回答' : ''}`);
@@ -1033,7 +1051,7 @@ function showWorkspaceDrawer(trigger) {
 }
 
 function openWorkspaceList(kind = 'highlights', group = drawerState.group, trigger = document.activeElement) {
-  if (kind === 'decisions') { if (drawerState.page) closeWorkspaceDrawer(false); overviewState.filter = group; setWorkspaceNavTarget('overview'); renderWorkspaceOverview(); focusWorkbenchTarget(byId('workspace-decisions-heading')); return; }
+  if (kind === 'decisions') { if (drawerState.page) closeWorkspaceDrawer(false); setOverviewFilter(group); setWorkspaceNavTarget('overview'); renderWorkspaceOverview(); focusWorkbenchTarget(byId('workspace-decisions-heading')); return; }
   if (drawerState.listKind !== kind || drawerState.group !== group) { drawerState.listScroll = 0; drawerState.listFocus = null; }
   if (drawerState.page === 'candidate') closeCandidate();
   drawerState.stack = []; drawerState.page = 'list'; drawerState.listKind = 'highlights'; drawerState.group = group;
@@ -1080,7 +1098,7 @@ function openWorkspaceDecision(id) {
   if (overviewState.pending) applyWorkspaceUpdates();
   if (overviewState.data?.decisions?.some(value => value.id === id)) {
     const groups = workspaceDecisionGroups(overviewState.data), activeKey = overviewState.filter === 'auto' ? autoDecisionFilter(groups) : overviewState.filter;
-    if (!groups[activeKey]?.some(d => d.id === id)) overviewState.filter = ['open', 'history_review', 'followUp', 'snoozed'].find(k => groups[k]?.some(d => d.id === id)) ?? 'all';
+    if (!groups[activeKey]?.some(d => d.id === id)) setOverviewFilter(['open', 'history_review', 'followUp', 'snoozed'].find(k => groups[k]?.some(d => d.id === id)) ?? 'all');
     triageState.activeId = id; triageState.expandedId = id; triageState.userCollapsed = false;
   }
   setWorkspaceNavTarget('overview'); renderWorkspaceOverview();
@@ -1196,12 +1214,13 @@ function renderLinkedDecisions() {
 }
 
 for (const button of byId('workspace-decision-filters').querySelectorAll('button')) button.addEventListener('click', () => {
-  overviewState.filter = button.dataset.overviewFilter;
+  const filter = button.dataset.overviewFilter;
+  setOverviewFilter(filter, { toggleAll: filter === 'all' });
   renderWorkspaceOverview();
 });
-byId('workspace-all-decisions').addEventListener('click', () => { overviewState.filter = 'all'; renderWorkspaceOverview(); });
-byId('workspace-followup-link').addEventListener('click', () => { overviewState.filter = 'followUp'; renderWorkspaceOverview(); });
-byId('workspace-snoozed-link').addEventListener('click', () => { overviewState.filter = 'snoozed'; renderWorkspaceOverview(); });
+byId('workspace-all-decisions').addEventListener('click', () => { setOverviewFilter('all', { toggleAll: true }); renderWorkspaceOverview(); });
+byId('workspace-followup-link').addEventListener('click', () => { setOverviewFilter('followUp'); renderWorkspaceOverview(); });
+byId('workspace-snoozed-link').addEventListener('click', () => { setOverviewFilter('snoozed'); renderWorkspaceOverview(); });
 byId('workspace-show-highlights').addEventListener('click', event => openWorkspaceList('highlights', drawerState.group, event.currentTarget));
 document.addEventListener('keydown', event => {
   if (activeView !== 'overview' || drawerState.page || paletteState.open || layoutState.editing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;

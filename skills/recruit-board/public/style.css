@@ -256,6 +256,11 @@ summary::-webkit-details-marker { display: none; }
 .workspace-decision { min-width: 0; }
 .triage-workbench { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 .triage-queue-pane { min-width: 0; }
+.triage-queue-pane #workspace-decision-list { max-height: min(56vh, 520px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.triage-queue-pane .workspace-decision-list { gap: 8px; }
+.triage-queue-pane .decision-role-group { margin: 0 0 12px; }
+.triage-queue-pane .decision-role-group:last-child { margin-bottom: 0; }
+.triage-queue-pane .decision-role-heading { padding: 6px 0; margin-bottom: 8px; }
 .triage-queue-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .triage-queue-title { font-size: var(--fs-title); font-weight: 600; color: var(--fg); }
 .triage-queue-hint { font-size: var(--fs-caption); color: var(--muted); white-space: nowrap; }
@@ -323,6 +328,7 @@ summary::-webkit-details-marker { display: none; }
   .triage-workbench { grid-template-columns: minmax(0, 1fr); }
   .triage-inspector { display: none; }
   .triage-fact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .triage-queue-pane #workspace-decision-list { max-height: min(65vh, 580px); }
 }
 .workspace-detail-summary { position: relative; min-height: 44px; padding: 10px 22px 10px 0; border-radius: var(--r-xs); font-size: var(--fs-meta); color: var(--muted); }
 .workspace-detail-summary::after { content: ""; position: absolute; top: 18px; right: 6px; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); }
