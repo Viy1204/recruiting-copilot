@@ -236,7 +236,17 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
   const ledgerRes = await readSafeFile(root, '02-sourcing/dedup-ledger.csv', '02-sourcing/dedup-ledger.csv');
   if (ledgerRes.status === 'ok') {
     try {
-      candidates = readCandidates(ledgerRes.text, config).candidates;
+      const parsedLedger = readCandidates(ledgerRes.text, config);
+      candidates = parsedLedger.candidates;
+      if (parsedLedger.unknownStatuses.length > 0) {
+        const unmappedTotal = parsedLedger.unknownStatuses.reduce((sum, item) => sum + item.count, 0);
+        const sample = parsedLedger.unknownStatuses.slice(0, 5).map(item => `${item.status || '空状态'}（${item.count}）`).join('、');
+        pushWarning(
+          'UNMAPPED_LEDGER_STATUS',
+          `台账有 ${unmappedTotal} 条记录（${parsedLedger.unknownStatuses.length} 种状态）未映射到看板阶段：${sample}；建议补齐 _shared/recruit-board.config.json 的 statusStages`,
+          { path: '02-sourcing/dedup-ledger.csv', count: unmappedTotal, distinct: parsedLedger.unknownStatuses.length }
+        );
+      }
     } catch (error) {
       pushError('LEDGER_INVALID', error.message, { path: '02-sourcing/dedup-ledger.csv' });
     }
@@ -306,6 +316,19 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
     pushWarning('CHANGELOG_MISSING', '缺少 docs/CHANGELOG.md，可运行 workspace.mjs migrate 初始化', { path: 'docs/CHANGELOG.md', level: 'info' });
   } else if (changelogCheck.status === 'unsafe') {
     pushError(changelogCheck.code, 'docs/CHANGELOG.md 路径不安全', { path: 'docs/CHANGELOG.md' });
+  }
+
+  const agentsRes = await readSafeFile(root, 'AGENTS.md', 'AGENTS.md');
+  if (agentsRes.status === 'ok') {
+    const hasDeprecatedTools = /tools\/(?:validate-context|ledger-upsert)\.mjs/.test(agentsRes.text);
+    const hasNewCli = /skills\/recruit-board\/scripts\/(?:roles|ledger|role-context|workspace)\.mjs/.test(agentsRes.text);
+    if (hasDeprecatedTools || !hasNewCli) {
+      pushWarning(
+        'LEGACY_AGENTS_MD',
+        'AGENTS.md 仍指向旧脚本或尚未接入新版确定性 CLI（roles/ledger/role-context/workspace.mjs），建议同步并清理与 CONTEXT.md 重复的硬规则',
+        { path: 'AGENTS.md' }
+      );
+    }
   }
 
   const boardSelection = selectRoles({ roles, candidates }, { scope: 'active' });

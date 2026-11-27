@@ -415,3 +415,45 @@ test('CLI 调用 role-context.mjs 与 workspace.mjs（含退出码与路径脱�
     }
   );
 });
+
+test('validateWorkspace 检出未映射历史台账状态（UNMAPPED_LEDGER_STATUS）与旧版 AGENTS.md（LEGACY_AGENTS_MD）', async t => {
+  const ws = await makeTempWorkspace('rc-upgrade-warn-');
+  t.after(() => rm(ws, { recursive: true, force: true }));
+
+  await mkdir(path.join(ws, '01-jd/_internal'), { recursive: true });
+  await mkdir(path.join(ws, '02-sourcing'), { recursive: true });
+  await mkdir(path.join(ws, 'docs'), { recursive: true });
+  await writeFile(path.join(ws, '01-jd/ue5-ta.md'), '# JD\n', 'utf8');
+  await writeFile(path.join(ws, '01-jd/_internal/ue5-ta.md'), '# Internal\n', 'utf8');
+  await writeFile(path.join(ws, 'docs/CHANGELOG.md'), '# Changelog\n', 'utf8');
+  await writeFile(
+    path.join(ws, 'CONTEXT.md'),
+    [
+      '# CONTEXT.md',
+      '## 四、在招岗位与优先级',
+      '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |',
+      '|---|---|---|---|---|---|---|',
+      '| UE5-TA | UE5 技术美术 | P0 | 在招 | `01-jd/ue5-ta.md` | `01-jd/_internal/ue5-ta.md` | — |'
+    ].join('\n'),
+    'utf8'
+  );
+  await writeFile(
+    path.join(ws, '02-sourcing/dedup-ledger.csv'),
+    `${LEDGER_COLUMNS.join(',')}\n1,张三,UE5 技术美术,背景,⭐,已排除-学院硬卡,R1,,\n`,
+    'utf8'
+  );
+  await writeFile(path.join(ws, 'AGENTS.md'), '# AGENTS\n修改后运行 node tools/validate-context.mjs\n', 'utf8');
+
+  const res = await validateWorkspace(ws);
+  assert.equal(res.ok, true);
+  assert.ok(res.warnings.some(w => w.code === 'UNMAPPED_LEDGER_STATUS' && w.count === 1));
+  assert.ok(res.warnings.some(w => w.code === 'LEGACY_AGENTS_MD'));
+
+  await writeFile(
+    path.join(ws, 'AGENTS.md'),
+    '# AGENTS\n运行 node skills/recruit-board/scripts/workspace.mjs validate --workspace .\n',
+    'utf8'
+  );
+  const resAfter = await validateWorkspace(ws);
+  assert.ok(!resAfter.warnings.some(w => w.code === 'LEGACY_AGENTS_MD'));
+});

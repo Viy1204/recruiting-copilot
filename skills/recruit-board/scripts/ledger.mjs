@@ -239,6 +239,12 @@ function resolveRawRole(rawRole, roleIndex) {
   return { canonicalRole: trimmed, roleId: null };
 }
 
+const LEGACY_TERMINAL_PREFIX = /^(?:已排除|初筛不合适|已拒|已放弃|已归档|已结束|已入职|非本项目)(?:$|[-—–·\s（(])/;
+
+function isTerminalStatus(status, stage) {
+  return TERMINAL_STAGE_IDS.includes(stage) || (stage === 'unclassified' && LEGACY_TERMINAL_PREFIX.test(status));
+}
+
 function formatMatchRow(cells, rowNum, roleIndex) {
   const rawRole = cells[2].trim();
   const resolved = resolveRawRole(rawRole, roleIndex);
@@ -255,7 +261,7 @@ function formatMatchRow(cells, rowNum, roleIndex) {
     rating: cells[4].trim(),
     status,
     stage,
-    terminal: TERMINAL_STAGE_IDS.includes(stage),
+    terminal: isTerminalStatus(status, stage),
     round: cells[6].trim(),
     resume: cells[7].trim(),
     note: cells[8].trim()

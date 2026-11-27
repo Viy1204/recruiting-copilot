@@ -410,3 +410,37 @@ test('符号链接跨工作区保护：拒绝 symlink/junction 读写', async t 
     error => error.code === 'WORKSPACE_PATH_UNSAFE'
   );
 });
+
+test('未映射的历史自由文本终态（如 已排除-学院硬卡、初筛不合适-异地）仍触发终态兜底拦截', async t => {
+  const csvBytes = Buffer.from(
+    serializeCSV(LEDGER_COLUMNS, [
+      ['1', '合成旧排', '技术美术TA（UE5）', '某厂', '⭐', '已排除-学院硬卡', 'R1', '', '旧记录'],
+      ['2', '合成旧拒', '技术美术TA（UE5）', '某厂', '⭐', '初筛不合适-异地', 'R2', '', '旧记录']
+    ]),
+    'utf8'
+  );
+  const root = await createWorkspace(t, { csvBytes });
+
+  const found = await lookupCandidates({ workspace: root, name: '合成旧' });
+  assert.equal(found.count, 2);
+  assert.equal(found.hasTerminalOrContacted, true);
+  assert.ok(found.matches.every(m => m.stage === 'unclassified' && m.terminal === true));
+
+  for (const name of ['合成旧排', '合成旧拒']) {
+    await assert.rejects(
+      upsertCandidate({ workspace: root, role: 'UE-TA', name, status: '已打招呼' }),
+      error => error.code === 'LEDGER_TERMINAL_BLOCKED' && error.exitCode === 3
+    );
+  }
+
+  const forced = await upsertCandidate({
+    workspace: root,
+    role: 'UE-TA',
+    name: '合成旧排',
+    status: '观望',
+    forceUpdate: true
+  });
+  assert.equal(forced.action, 'update');
+  assert.equal(forced.status, '观望');
+  assert.equal(forced.previousStatus, '已排除-学院硬卡');
+});

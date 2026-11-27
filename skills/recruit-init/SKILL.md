@@ -102,6 +102,9 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 3. 确认后执行幂等迁移并校验结果：
    `node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"`
    `node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`
+4. 逐项处理 `validate` 输出的升级告警，避免新旧口径打架：
+   - 出现 `UNMAPPED_LEDGER_STATUS`：把历史自由文本状态补入 `_shared/recruit-board.config.json` 的 `statusStages`（不改台账原记录），确保看板与终态保护一致。
+   - 出现 `LEGACY_AGENTS_MD`：核对本地 `AGENTS.md`，将岗位/台账/校验入口切至 `skills/recruit-board/scripts/` 下的确定性命令，并删除与 `CONTEXT.md` 重复或冲突的初筛硬规则与硬编码岗位轮转名单（修复模式不自动覆盖旧 `AGENTS.md`）。
 
 复制完成后，定位本 `SKILL.md` 同目录下的 `scripts/register-workspace-skills.sh`，执行：
 
