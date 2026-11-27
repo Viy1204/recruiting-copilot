@@ -25,8 +25,14 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
-      - run: npm test
-      - run: node --test verification/rounds-web-behavior.mjs
-      - run: node --test verification/deploy-ui.test.mjs
-      - run: sh tests/install-dependencies.test.sh
-      - run: sh tests/register-workspace-skills.test.sh
+      - run: npm run check -- --require-shell
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run check -- --skip-shell

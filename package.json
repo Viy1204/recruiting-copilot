@@ -25,6 +25,8 @@
   },
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\"",
+    "lint:guardrails": "node scripts/check-repo-guardrails.mjs",
+    "check": "node scripts/check-all.mjs",
     "board": "node skills/recruit-board/scripts/server.mjs",
     "board:progress": "node skills/recruit-board/scripts/progress.mjs"
   },
