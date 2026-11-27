@@ -4,11 +4,11 @@
   "sources": [
     {
       "path": "skills/recruit-board/scripts/roles.mjs",
-      "sha256": "65f16795fdd22a1a4ff4f40a041080cd624a40c7382a783793a0c1ed30c5a1c1"
+      "sha256": "eebbfda71a4c329378b849c738ef637d8c4e8efb553bacf60e03f7d467b27f87"
     },
     {
       "path": "skills/recruit-board/model.mjs",
-      "sha256": "02b8a358c21f32f22a87987137587d3a7e400145f695019e661602a4046cf896"
+      "sha256": "54dbe2f809b01092be8e2727453da907348b49a6b5e8d1f3baaac88d2908b258"
     },
     {
       "path": "skills/recruit-board/scripts/reader.mjs",
