@@ -30,14 +30,14 @@ https://github.com/user-attachments/assets/8dbf02ed-b83d-4d2b-beaa-dd693fb5a297
 
 > 处理今天的招聘。
 
-`recruit-daily` 每次先读最新的 `CONTEXT.md`、工作约定和各岗对内笔记，再按岗位优先级执行：
+`recruit-daily` 每次先读薄版 `CONTEXT.md` 和工作约定，进入具体岗位时按路径指针或 `role-context.mjs` 只加载该岗热态标准，再按岗位优先级执行：
 
 1. 查 BOSS 和猎聘的未读与未处理人选，按标准核对需要跟进的事项。
 2. 在两个平台主动寻源。每个目标岗位都覆盖搜索和推荐入口；已有渠道无效结论时，注明原因后跳过。
 3. 按硬门槛、命脉技能和排除信号初筛，记录匹配证据、风险与建议动作。
-4. 核对联系授权和既有台账，再联系合适的人选。逐人回报结果，未核实发送成功时不记为已联系。
-5. 更新 `02-sourcing/dedup-ledger.csv`，按姓名与应聘岗位去重。需要推进的人选补面试档案，日报列出按岗人选和待你确认的事项。
-6. 从本轮命中的真实简历提取有效搜索词，回填各岗对内笔记的关键词迭代表，供下一轮使用。
+4. 核对联系授权和既有台账，先用 `ledger.mjs lookup` 跨别名查重，再联系合适的人选。逐人回报结果，未核实发送成功时不记为已联系。
+5. 用 `ledger.mjs upsert` 更新 `02-sourcing/dedup-ledger.csv`，按 `role_id` 映射标准岗位名、校验 17 个标准状态并拦截终态覆盖。需要推进的人选补面试档案，日报列出按岗人选和待你确认的事项。
+6. 把本轮寻源明细追加到 `01-jd/_internal/logs/<slug>-sourcing-log.md`，仅在有效词或排除信号变化时原地更新目标岗的「当前搜索词卡片」。
 
 打招呼默认等你确认。你可以在本轮明确说“合适的直接打招呼”，AI 在该轮授权范围内执行并逐一回报；下一轮或第二天不自动沿用授权。
 
@@ -66,7 +66,7 @@ boss favorite --remove --index 1
 ### 新开岗位或修改标准
 
 - 新开岗位时说“帮我梳理 XX 岗位”。先完成该岗的 `recruit-grill`，再加入每日招聘。
-- 修改要求时说清岗位和变化，例如“XX 岗的地点要求改成深圳坐班”。AI 按已确认的需求更新 `CONTEXT.md` 和相关岗位资料，并在“已对齐决策”中记下带日期的变更。
+- 修改要求时说清岗位和变化，例如“XX 岗的地点要求改成深圳坐班”。AI 先将变更原因记入 `docs/CHANGELOG.md`，再通过 `roles.mjs` 或原地覆写更新 `CONTEXT.md` 与对应岗位档案，最后运行 `workspace.mjs validate` 校验，不在 `CONTEXT.md` 里堆叠历史沿革。
 - 寻源几轮后人选总不对，带着台账重梳硬门槛和命脉技能；对市场供给没把握时，先做一次人才盘点。
 
 收到猎头、内推或直投简历时，用 `resume-review` 评估并并入同一套台账；人选进入面试时，用 `interview-schedule` 安排日程。完整入口见下方 Skill 目录。不确定下一步时，直接问“这套工具怎么用”。
@@ -206,11 +206,11 @@ DSH 另有独立的 **招聘浏览器**，用于观察两个 CLI 的平台页面
 
 ## 数据保存在你的工作区
 
-工作区的主要目录如下，任务记录和备份随流程运行产生。`CONTEXT.md` 保存筛选标准、术语和已确认决策，`02-sourcing/dedup-ledger.csv` 保存候选台账；AI 每次开工都从文件读取。
+工作区采用热状态与冷日志分离结构。`CONTEXT.md` 只保留当前生效的通用规则和带 `role_id`、路径指针的七列岗位总表，`02-sourcing/dedup-ledger.csv` 保存候选台账，变更留痕和寻源流水分别追加到 `docs/CHANGELOG.md` 和 `01-jd/_internal/logs/`（日常任务不读取）。岗位更新、台账写入、单岗切片和工作区校验迁移统一通过 `skills/recruit-board/scripts/` 下的 `roles.mjs`、`ledger.mjs`、`role-context.mjs` 和 `workspace.mjs` 执行，降低不同模型手改 Markdown 或 CSV 的出错风险。
 
 ```text
 你的工作区/
-├── CONTEXT.md            招聘标准、在招岗位与优先级
+├── CONTEXT.md            薄版热入口：通用硬规则、术语与七列岗位总表（含 role_id 与路径指针）
 ├── AGENTS.md             告诉 AI 如何选择流程和遵守工作约定
 ├── skills/               同一份招聘流程和看板脚本
 ├── .agents/skills/       Codex / Agent Skills 发现入口
@@ -268,6 +268,7 @@ Claude Desktop、Codex App、WorkBuddy 等工具共用这一网页，也可直�
 | 入口 | 内容 |
 | --- | --- |
 | [v0.9.0 正式版说明](docs/releases/v0.9.0.md) | 固定版本安装、已有工作区升级、回退与兼容边界 |
+| [ADR 0007 状态日志分离与确定性 CLI](docs/adr/0007-state-log-separation-and-deterministic-workspace-cli.md) | `role_id`、热冷分离、宽容读取与四组工作区脚本的设计依据 |
 | [流程总目录](skills/ask-viy/SKILL.md) | 从首次初始化到每日招聘，以及简历、人才盘点和面试的流程选择 |
 | [设计思路与理念](docs/DESIGN.md) | 为什么先梳理岗位、使用本地文件、区分内外资料并保留人工确认 |
 | [BOSS CLI 维护 fork](https://github.com/Viy1204/boss-cli) | `@viyzhu/boss-cli-fork` 的安装、命令和平台操作边界 |
