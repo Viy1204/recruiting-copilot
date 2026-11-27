@@ -1,13 +1,133 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { readCandidates, readConfig, readRoles, SCHEMA_VERSION } from '../model.mjs';
+import { pathToFileURL } from 'node:url';
+import {
+  KNOWN_ROLE_STATUSES,
+  ROLE_ID_PATTERN,
+  readCandidates,
+  readConfig,
+  readRoleTable,
+  readRoles,
+  SCHEMA_VERSION
+} from '../model.mjs';
 import { insideWorkspace, MAX_FILE_BYTES, readSource, resolveWorkspace } from './reader.mjs';
 
 export const ROLE_STATUSES = Object.freeze(['在招', '已下架', '已关闭', '暂停', '待核']);
 export const contextRevision = bytes => createHash('sha256').update(bytes).digest('hex');
 const failure = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 const cellText = value => value.trim().replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '').trim();
+const CHANGELOG_HEADER = '# CHANGELOG — 招聘工作区变更日志\n\n';
+const PLACEHOLDER_ROLE_RE = /^(?:[（(]?(?:待梳理|待填写|岗位名|role)[）)]?|<role>)$/i;
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f\u0085\p{Zl}\p{Zp}]/u;
+
+function validateSingleLine(value, label, max, { allowPipe = false } = {}) {
+  if (typeof value !== 'string' || !value.trim() || value.length > max || CONTROL_CHAR_RE.test(value) || (!allowPipe && value.includes('|'))) {
+    throw failure('ROLE_INPUT_INVALID', `${label} 必须为 1–${max} 字符的合法单行文本`);
+  }
+  return value.trim();
+}
+
+function resolveDateStamp(now) {
+  const iso = typeof now === 'function' ? now() : (now ?? new Date().toISOString());
+  if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(iso)) throw failure('ROLE_INPUT_INVALID', '变更日期格式无效');
+  return iso.slice(0, 10);
+}
+
+function validateRelativeWorkspacePath(root, value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '—' || value === '-') return null;
+  const trimmed = validateSingleLine(value, label, 300);
+  if (
+    /^[/\\]/.test(trimmed) ||
+    /^[a-zA-Z]:/.test(trimmed) ||
+    trimmed.includes('://') ||
+    trimmed.split(/[/\\]/).includes('..') ||
+    path.isAbsolute(trimmed) ||
+    path.win32.isAbsolute(trimmed) ||
+    path.posix.isAbsolute(trimmed) ||
+    !insideWorkspace(root, path.resolve(root, trimmed))
+  ) {
+    throw failure('ROLE_INPUT_INVALID', `${label} 必须是工作区内的安全相对路径`);
+  }
+  return trimmed.replaceAll('\\', '/');
+}
+
+function findRoleRow(table, roleOrId) {
+  return table.rows.find(row => row.name === roleOrId || (row.roleId !== null && row.roleId === roleOrId)) ?? null;
+}
+
+function parseTableLines(text) {
+  let inSection = false, header = null, separator = null, offset = 0;
+  const dataRows = [];
+  for (const match of text.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g)) {
+    const raw = match[0];
+    if (!raw) continue;
+    const line = raw.replace(/[\r\n]+$/, '');
+    const eol = raw.slice(line.length);
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      if (inSection) break;
+      inSection = /^(?:[一二三四五六七八九十\d]+[、.．]\s*)?在招岗位与优先级$/.test(heading[2].trim());
+    } else if (inSection && line.trim().startsWith('|')) {
+      const pipes = [...line.matchAll(/\|/g)].map(item => item.index);
+      const hasEnd = line.trimEnd().endsWith('|');
+      const ends = hasEnd ? pipes.slice(1) : [...pipes.slice(1), line.length];
+      const cells = ends.map((end, index) => ({ start: pipes[index] + 1, end, text: line.slice(pipes[index] + 1, end) }));
+      if (!header) {
+        const names = cells.map(cell => cellText(cell.text));
+        const nameCol = names.indexOf('岗位');
+        const priorityCol = names.indexOf('优先级');
+        const statusCol = names.indexOf('状态');
+        if (nameCol >= 0 && priorityCol >= 0 && statusCol >= 0) {
+          const internalArchiveCol = names.indexOf('对内档案');
+          header = {
+            start: offset,
+            end: offset + raw.length,
+            line,
+            eol,
+            cells,
+            names,
+            cols: {
+              roleId: names.indexOf('role_id'),
+              name: nameCol,
+              priority: priorityCol,
+              status: statusCol,
+              jd: names.indexOf('对外 JD'),
+              internal: internalArchiveCol >= 0 ? internalArchiveCol : names.indexOf('对内笔记'),
+              lastChange: names.indexOf('最近变更')
+            }
+          };
+        }
+      } else if (!separator) {
+        if (!cells.every(cell => /^:?-{3,}:?$/.test(cell.text.trim()))) {
+          header = null;
+        } else {
+          separator = { start: offset, end: offset + raw.length, line, eol, cells };
+        }
+      } else {
+        const name = cellText(cells[header.cols.name]?.text ?? '');
+        const isPlaceholder = !name || PLACEHOLDER_ROLE_RE.test(name);
+        dataRows.push({ start: offset, end: offset + raw.length, raw, line, eol, cells, name, isPlaceholder });
+      }
+    } else if (header && separator) {
+      break;
+    }
+    offset += raw.length;
+  }
+  if (!header || !separator) throw failure('ROLE_NOT_CONFIGURED', '未定位到当前标准岗位表的状态单元格', 404);
+  return { header, separator, dataRows };
+}
+
+function applyRowCellEdits(text, rowStart, edits) {
+  let updated = text;
+  for (const { cell, value } of [...edits].sort((a, b) => b.cell.start - a.cell.start)) {
+    const leading = cell.text.match(/^\s*/)[0];
+    const trailing = cell.text.slice(leading.length).match(/\s*$/)[0];
+    updated = updated.slice(0, rowStart + cell.start) + leading + value + trailing + updated.slice(rowStart + cell.end);
+  }
+  return updated;
+}
 
 function decodeContext(bytes) {
   let encoding = 'utf8', bom = Buffer.alloc(0), body = bytes;
@@ -24,40 +144,22 @@ function decodeContext(bytes) {
   } catch { throw failure('CONTEXT_ENCODING', '岗位配置编码无法安全保留，请使用有效的 UTF-8 或带 BOM 的 UTF-16 文本'); }
 }
 
-export function replaceRoleStatus(text, role, status) {
+export function replaceRoleStatus(text, roleOrId, status, { lastChange } = {}) {
   if (!ROLE_STATUSES.includes(status)) throw failure('ROLE_STATUS_INVALID', '岗位状态仅支持在招、已下架、已关闭、暂停或待核');
-  const configured = readRoles(text);
-  if (!configured.some(item => item.name === role)) throw failure('ROLE_NOT_CONFIGURED', '只能调整当前标准岗位表中已配置的岗位', 404);
-  let inSection = false, columns = null, offset = 0, headerSeen = false;
-  for (const match of text.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g)) {
-    const raw = match[0];
-    if (!raw) continue;
-    const line = raw.replace(/[\r\n]+$/, '');
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (heading) {
-      if (inSection) break;
-      inSection = /^(?:[一二三四五六七八九十\d]+[、.．]\s*)?在招岗位与优先级$/.test(heading[2].trim());
-    } else if (inSection && line.trim().startsWith('|')) {
-      const pipes = [...line.matchAll(/\|/g)].map(item => item.index);
-      const hasEnd = line.trimEnd().endsWith('|');
-      const ends = hasEnd ? pipes.slice(1) : [...pipes.slice(1), line.length];
-      const cells = ends.map((end, index) => ({ start: pipes[index] + 1, end, text: line.slice(pipes[index] + 1, end) }));
-      if (!columns) {
-        const names = cells.map(cell => cellText(cell.text));
-        const found = ['岗位', '优先级', '状态'].map(name => names.indexOf(name));
-        if (found.every(index => index >= 0)) { columns = found; headerSeen = true; }
-      } else if (headerSeen) {
-        if (!cells.every(cell => /^:?-{3,}:?$/.test(cell.text.trim()))) { columns = null; }
-        headerSeen = false;
-      } else if (cellText(cells[columns[0]]?.text ?? '') === role) {
-        const cell = cells[columns[2]];
-        const leading = cell.text.match(/^\s*/)[0], trailing = cell.text.slice(leading.length).match(/\s*$/)[0];
-        return text.slice(0, offset + cell.start) + leading + status + trailing + text.slice(offset + cell.end);
-      }
-    } else if (columns && !headerSeen) break;
-    offset += raw.length;
+  const table = readRoleTable(text);
+  const target = findRoleRow(table, roleOrId);
+  if (!target) throw failure('ROLE_NOT_CONFIGURED', '只能调整当前标准岗位表中已配置的岗位', 404);
+  const normalizedLastChange = typeof lastChange === 'string' && lastChange.trim()
+    ? lastChange.trim().replace(/[\r\n]+/g, ' ').replaceAll('|', '｜')
+    : null;
+  const { header, dataRows } = parseTableLines(text);
+  const row = dataRows.find(item => !item.isPlaceholder && item.name === target.name);
+  if (!row) throw failure('ROLE_NOT_CONFIGURED', '未定位到当前标准岗位表的状态单元格', 404);
+  const edits = [{ cell: row.cells[header.cols.status], value: status }];
+  if (normalizedLastChange !== null && header.cols.lastChange >= 0 && row.cells[header.cols.lastChange]) {
+    edits.push({ cell: row.cells[header.cols.lastChange], value: normalizedLastChange });
   }
-  throw failure('ROLE_NOT_CONFIGURED', '未定位到当前标准岗位表的状态单元格', 404);
+  return applyRowCellEdits(text, row.start, edits);
 }
 
 async function contextFile(root) {
@@ -210,9 +312,7 @@ export async function setRoleAlias({ workspace, role, target, revision }) {
   }
 }
 
-export async function setRoleStatus({ workspace, role, status, revision }) {
-  if (typeof role !== 'string' || !role.trim() || role !== role.trim() || role.length > 300 || !ROLE_STATUSES.includes(status) || typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) throw failure('ROLE_INPUT_INVALID', '岗位、状态或配置版本无效');
-  const root = await resolveWorkspace(workspace);
+async function withContextLock(root, operation) {
   const directory = await controlDirectory(root);
   const lockFile = path.join(directory, 'context.lock');
   let lock;
@@ -221,28 +321,338 @@ export async function setRoleStatus({ workspace, role, status, revision }) {
     if (error.code === 'EEXIST') throw failure('ROLE_LOCKED', '岗位配置正在修改或仍有写入锁，请确认后重试', 409);
     throw error;
   }
-  let temporary;
-  try {
-    const context = await contextFile(root);
-    if (contextRevision(context.bytes) !== revision) throw failure('CONTEXT_CONFLICT', '岗位配置已被修改，请重新读取后保存', 409);
-    const next = replaceRoleStatus(context.text, role, status);
-    if (next === context.text) return { changed: false, role, status, backup: null, contextRevision: revision, roles: readRoles(next), allowedStatuses: [...ROLE_STATUSES] };
-    const backup = path.join(directory, `CONTEXT-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.md`);
-    const saved = await open(backup, 'wx');
-    try { await saved.writeFile(context.bytes); await saved.sync(); }
-    finally { await saved.close(); }
-    temporary = path.join(root, `.CONTEXT-${randomUUID()}.tmp`);
-    const output = await open(temporary, 'wx', context.info.mode & 0o777);
-    const bytes = context.encode(next);
-    try { await output.writeFile(bytes); await output.sync(); }
-    finally { await output.close(); }
-    const current = await contextFile(root);
-    if (contextRevision(current.bytes) !== revision) throw failure('CONTEXT_CONFLICT', '保存前检测到岗位配置变化，请重新读取后保存', 409);
-    await rename(temporary, context.file);
-    return { changed: true, role, status, backup: path.relative(root, backup).split(path.sep).join('/'), contextRevision: contextRevision(bytes), roles: readRoles(next), allowedStatuses: [...ROLE_STATUSES] };
-  } finally {
-    if (temporary) await rm(temporary, { force: true });
+  try { return await operation(directory); }
+  finally {
     await lock.close();
     await rm(lockFile);
   }
+}
+
+async function writeContextWithBackup(root, directory, context, nextText, expectedRevision) {
+  const bytes = context.encode(nextText);
+  if (bytes.length > MAX_FILE_BYTES) throw failure('CONTEXT_TOO_LARGE', '岗位配置超过读取上限');
+  const backup = path.join(directory, `CONTEXT-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.md`);
+  const saved = await open(backup, 'wx');
+  try { await saved.writeFile(context.bytes); await saved.sync(); }
+  finally { await saved.close(); }
+  let temporary = path.join(root, `.CONTEXT-${randomUUID()}.tmp`);
+  try {
+    const output = await open(temporary, 'wx', context.info.mode & 0o777);
+    try { await output.writeFile(bytes); await output.sync(); }
+    finally { await output.close(); }
+    if (expectedRevision !== undefined) {
+      const current = await contextFile(root);
+      if (contextRevision(current.bytes) !== expectedRevision) throw failure('CONTEXT_CONFLICT', '保存前检测到岗位配置变化，请重新读取后保存', 409);
+    }
+    await rename(temporary, context.file);
+    temporary = null;
+    return {
+      backup: path.relative(root, backup).split(path.sep).join('/'),
+      contextRevision: contextRevision(bytes)
+    };
+  } finally {
+    if (temporary) await rm(temporary, { force: true });
+  }
+}
+
+async function appendChangelog(root, entry, defaultMode = 0o644) {
+  const docsDir = path.join(root, 'docs');
+  let dirInfo;
+  try { dirInfo = await lstat(docsDir); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw failure('CHANGELOG_UNREADABLE', '无法读取变更日志目录', 422);
+    await mkdir(docsDir, { recursive: true });
+    dirInfo = await lstat(docsDir);
+  }
+  if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink() || !insideWorkspace(root, await realpath(docsDir))) {
+    throw failure('CHANGELOG_UNSAFE', '变更日志目录必须位于工作区内且不能是符号链接', 422);
+  }
+  const changelogFile = path.join(docsDir, 'CHANGELOG.md');
+  let existing = CHANGELOG_HEADER, fileMode = defaultMode || 0o644;
+  let fileInfo = null;
+  try { fileInfo = await lstat(changelogFile); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw failure('CHANGELOG_UNREADABLE', '无法读取变更日志', 422);
+  }
+  if (fileInfo) {
+    if (!fileInfo.isFile() || fileInfo.isSymbolicLink() || !insideWorkspace(root, await realpath(changelogFile))) {
+      throw failure('CHANGELOG_UNSAFE', '变更日志必须是工作区内的普通文件', 422);
+    }
+    if (fileInfo.size > MAX_FILE_BYTES) throw failure('CHANGELOG_TOO_LARGE', '变更日志超过大小上限', 422);
+    const raw = await readFile(changelogFile);
+    if (raw.length > MAX_FILE_BYTES) throw failure('CHANGELOG_TOO_LARGE', '变更日志超过大小上限', 422);
+    existing = decodeContext(raw).text;
+    fileMode = fileInfo.mode & 0o777;
+  }
+  const prefix = existing.length > 0 && !existing.endsWith('\n') ? `${existing}\n` : existing;
+  const next = prefix + entry;
+  if (Buffer.byteLength(next, 'utf8') > MAX_FILE_BYTES) throw failure('CHANGELOG_TOO_LARGE', '变更日志超过大小上限', 422);
+  let temporary = path.join(docsDir, `.CHANGELOG-${randomUUID()}.tmp`);
+  try {
+    const output = await open(temporary, 'wx', fileMode);
+    try { await output.writeFile(next, 'utf8'); await output.sync(); }
+    finally { await output.close(); }
+    await rename(temporary, changelogFile);
+    temporary = null;
+  } finally {
+    if (temporary) await rm(temporary, { force: true });
+  }
+}
+
+export async function setRoleStatus({ workspace, role, status, revision, reason, now }) {
+  if (typeof role !== 'string' || !role.trim() || role !== role.trim() || role.length > 300 || !ROLE_STATUSES.includes(status) || typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) {
+    throw failure('ROLE_INPUT_INVALID', '岗位、状态或配置版本无效');
+  }
+  const hasReason = reason !== undefined && reason !== null;
+  const normalizedReason = hasReason ? validateSingleLine(reason, '变更原因', 300) : null;
+  const date = hasReason ? resolveDateStamp(now) : null;
+  const lastChange = hasReason ? `${date} ${normalizedReason}` : undefined;
+  const root = await resolveWorkspace(workspace);
+  return withContextLock(root, async directory => {
+    const context = await contextFile(root);
+    if (contextRevision(context.bytes) !== revision) throw failure('CONTEXT_CONFLICT', '岗位配置已被修改，请重新读取后保存', 409);
+    const table = readRoleTable(context.text);
+    const target = findRoleRow(table, role);
+    if (!target) throw failure('ROLE_NOT_CONFIGURED', '只能调整当前标准岗位表中已配置的岗位', 404);
+    const canonicalName = target.name;
+    const roleId = target.roleId;
+    const prevStatus = target.status;
+    const next = replaceRoleStatus(context.text, canonicalName, status, { lastChange });
+    if (next === context.text) {
+      return {
+        changed: false,
+        role: canonicalName,
+        ...(roleId ? { roleId } : {}),
+        status,
+        backup: null,
+        contextRevision: revision,
+        roles: readRoles(next),
+        allowedStatuses: [...ROLE_STATUSES],
+        ...(hasReason ? { changelogUpdated: false } : {})
+      };
+    }
+    const saved = await writeContextWithBackup(root, directory, context, next, revision);
+    if (hasReason) {
+      const entry = `- ${date} | ${roleId ?? canonicalName}（${canonicalName}）| 状态：${prevStatus ?? '无'} -> ${status} | ${normalizedReason}\n`;
+      await appendChangelog(root, entry, context.info.mode & 0o777);
+    }
+    return {
+      changed: true,
+      role: canonicalName,
+      ...(roleId ? { roleId } : {}),
+      status,
+      backup: saved.backup,
+      contextRevision: saved.contextRevision,
+      roles: readRoles(next),
+      allowedStatuses: [...ROLE_STATUSES],
+      ...(hasReason ? { changelogUpdated: true } : {})
+    };
+  });
+}
+
+export async function upsertRole({ workspace, roleId, name, priority, status, jdPath, internalPath, reason, now }) {
+  const normalizedName = validateSingleLine(name, '岗位名称', 120);
+  if (PLACEHOLDER_ROLE_RE.test(normalizedName)) throw failure('ROLE_INPUT_INVALID', '岗位名称不能使用占位符');
+  const normalizedPriority = validateSingleLine(priority, '优先级', 40);
+  if (!KNOWN_ROLE_STATUSES.includes(status)) {
+    throw failure('ROLE_STATUS_INVALID', '岗位状态仅支持在招、已下架、已关闭、暂停、待核或待梳理');
+  }
+  let normalizedRoleId = null;
+  if (roleId !== undefined && roleId !== null) {
+    if (typeof roleId !== 'string' || !ROLE_ID_PATTERN.test(roleId)) {
+      throw failure('ROLE_INPUT_INVALID', 'roleId 必须为 2–24 位大写字母、数字或连字符，且以字母或数字开头');
+    }
+    normalizedRoleId = roleId;
+  }
+  const hasReason = reason !== undefined && reason !== null;
+  const normalizedReason = hasReason ? validateSingleLine(reason, '变更原因', 300) : null;
+  const date = hasReason ? resolveDateStamp(now) : null;
+  const lastChange = hasReason ? `${date} ${normalizedReason}` : null;
+  const root = await resolveWorkspace(workspace);
+  const normalizedJdPath = validateRelativeWorkspacePath(root, jdPath, '对外 JD 路径');
+  const normalizedInternalPath = validateRelativeWorkspacePath(root, internalPath, '对内档案路径');
+
+  return withContextLock(root, async directory => {
+    const context = await contextFile(root);
+    const revision = contextRevision(context.bytes);
+    const table = readRoleTable(context.text);
+    const parsedLines = parseTableLines(context.text);
+    const { cols } = parsedLines.header;
+
+    const byId = normalizedRoleId ? table.rows.find(row => row.roleId === normalizedRoleId) ?? null : null;
+    const byName = table.rows.find(row => row.name === normalizedName) ?? null;
+    if (byId && byName && byId !== byName) {
+      throw failure('ROLE_CONFLICT', 'role_id 与岗位名称分别指向不同岗位，存在冲突', 409);
+    }
+    const matched = byId ?? byName;
+
+    let next, action, effectiveRoleId, prevStatus = null;
+    if (!matched) {
+      if (cols.roleId >= 0 && !normalizedRoleId) {
+        throw failure('ROLE_INPUT_INVALID', '当前标准岗位表包含 role_id 列，新增岗位必须提供 roleId');
+      }
+      const rowCells = parsedLines.header.names.map((_, index) => {
+        if (index === cols.roleId) return normalizedRoleId ? `\`${normalizedRoleId}\`` : '—';
+        if (index === cols.name) return normalizedName;
+        if (index === cols.priority) return normalizedPriority;
+        if (index === cols.status) return status;
+        if (index === cols.jd) return normalizedJdPath ? `\`${normalizedJdPath}\`` : '—';
+        if (index === cols.internal) return normalizedInternalPath ? `\`${normalizedInternalPath}\`` : '—';
+        if (index === cols.lastChange) return lastChange ?? '—';
+        return '—';
+      });
+      const formattedRow = `| ${rowCells.join(' | ')} |`;
+      const tableEol = parsedLines.dataRows[0]?.eol || parsedLines.separator.eol || parsedLines.header.eol || (context.text.includes('\r\n') ? '\r\n' : '\n');
+      if (parsedLines.dataRows.length > 0 && parsedLines.dataRows.every(row => row.isPlaceholder)) {
+        const first = parsedLines.dataRows[0], last = parsedLines.dataRows.at(-1);
+        next = context.text.slice(0, first.start) + formattedRow + last.eol + context.text.slice(last.end);
+      } else {
+        const anchor = parsedLines.dataRows.length > 0 ? parsedLines.dataRows.at(-1) : parsedLines.separator;
+        next = anchor.eol
+          ? context.text.slice(0, anchor.end) + formattedRow + anchor.eol + context.text.slice(anchor.end)
+          : context.text.slice(0, anchor.end) + tableEol + formattedRow + context.text.slice(anchor.end);
+      }
+      action = 'insert';
+      effectiveRoleId = cols.roleId >= 0 ? normalizedRoleId : null;
+    } else {
+      const rowLine = parsedLines.dataRows.find(row => !row.isPlaceholder && row.name === matched.name);
+      if (!rowLine) throw failure('ROLE_NOT_CONFIGURED', '未定位到当前标准岗位表的对应行', 404);
+      const edits = [];
+      if (matched.name !== normalizedName) edits.push({ cell: rowLine.cells[cols.name], value: normalizedName });
+      if (matched.priority !== normalizedPriority) edits.push({ cell: rowLine.cells[cols.priority], value: normalizedPriority });
+      if (rowLine.cells[cols.status].text.trim() !== status) edits.push({ cell: rowLine.cells[cols.status], value: status });
+      if (cols.roleId >= 0 && normalizedRoleId !== null && matched.roleId !== normalizedRoleId) {
+        edits.push({ cell: rowLine.cells[cols.roleId], value: `\`${normalizedRoleId}\`` });
+      }
+      if (cols.jd >= 0 && normalizedJdPath !== undefined && matched.jdPath !== normalizedJdPath) {
+        edits.push({ cell: rowLine.cells[cols.jd], value: normalizedJdPath ? `\`${normalizedJdPath}\`` : '—' });
+      }
+      if (cols.internal >= 0 && normalizedInternalPath !== undefined && matched.internalPath !== normalizedInternalPath) {
+        edits.push({ cell: rowLine.cells[cols.internal], value: normalizedInternalPath ? `\`${normalizedInternalPath}\`` : '—' });
+      }
+      if (cols.lastChange >= 0 && lastChange !== null && matched.lastChange !== lastChange) {
+        edits.push({ cell: rowLine.cells[cols.lastChange], value: lastChange });
+      }
+      next = edits.length ? applyRowCellEdits(context.text, rowLine.start, edits) : context.text;
+      effectiveRoleId = cols.roleId >= 0 ? (normalizedRoleId ?? matched.roleId ?? null) : null;
+      prevStatus = matched.status;
+      action = next === context.text ? 'noop' : 'update';
+    }
+
+    const nextRoles = readRoles(next);
+    if (next === context.text) {
+      return {
+        changed: false,
+        action: 'noop',
+        role: normalizedName,
+        roleId: effectiveRoleId,
+        status,
+        priority: normalizedPriority,
+        contextRevision: revision,
+        backup: null,
+        roles: nextRoles,
+        ...(hasReason ? { changelogUpdated: false } : {})
+      };
+    }
+
+    const saved = await writeContextWithBackup(root, directory, context, next, revision);
+    if (hasReason) {
+      const changeSummary = action === 'insert'
+        ? `新增：状态 ${status}，优先级 ${normalizedPriority}`
+        : `状态：${prevStatus ?? '无'} -> ${status}，优先级：${normalizedPriority}`;
+      const entry = `- ${date} | ${effectiveRoleId ?? normalizedName}（${normalizedName}）| ${changeSummary} | ${normalizedReason}\n`;
+      await appendChangelog(root, entry, context.info.mode & 0o777);
+    }
+    return {
+      changed: true,
+      action,
+      role: normalizedName,
+      roleId: effectiveRoleId,
+      status,
+      priority: normalizedPriority,
+      contextRevision: saved.contextRevision,
+      backup: saved.backup,
+      roles: nextRoles,
+      ...(hasReason ? { changelogUpdated: true } : {})
+    };
+  });
+}
+
+const CLI_COMMANDS = {
+  list: { required: ['workspace'], optional: [] },
+  'set-status': { required: ['workspace', 'role', 'status'], optional: ['reason', 'revision'] },
+  upsert: { required: ['workspace', 'name', 'priority', 'status'], optional: ['role-id', 'jd', 'internal', 'reason'] }
+};
+
+export async function rolesCLI(argv) {
+  const [command, ...args] = argv;
+  const spec = Object.hasOwn(CLI_COMMANDS, command) ? CLI_COMMANDS[command] : null;
+  if (!spec) {
+    throw failure('ROLE_INPUT_INVALID', '用法：roles.mjs list|set-status|upsert --workspace <目录> ...');
+  }
+  const allowed = new Set([...spec.required, ...spec.optional]);
+  if (args.length % 2 !== 0) throw failure('ROLE_INPUT_INVALID', '命令包含无效、重复或缺失参数');
+  const flags = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index], value = args[index + 1];
+    if (typeof flag !== 'string' || !flag.startsWith('--')) throw failure('ROLE_INPUT_INVALID', '命令包含无效、重复或缺失参数');
+    const key = flag.slice(2);
+    if (!allowed.has(key) || Object.hasOwn(flags, key) || typeof value !== 'string' || !value || value.startsWith('--')) {
+      throw failure('ROLE_INPUT_INVALID', '命令包含无效、重复或缺失参数');
+    }
+    flags[key] = value;
+  }
+  if (spec.required.some(key => !Object.hasOwn(flags, key))) {
+    throw failure('ROLE_INPUT_INVALID', `命令必须提供 ${spec.required.map(key => `--${key}`).join(' ')} 参数`);
+  }
+  if (command === 'list') {
+    const root = await resolveWorkspace(flags.workspace);
+    const context = await contextFile(root);
+    const table = readRoleTable(context.text);
+    return {
+      contextRevision: contextRevision(context.bytes),
+      headers: table.headers,
+      rows: table.rows,
+      allowedStatuses: [...ROLE_STATUSES],
+      knownStatuses: [...KNOWN_ROLE_STATUSES]
+    };
+  }
+  if (command === 'set-status') {
+    let revision = flags.revision;
+    if (revision === undefined) {
+      const root = await resolveWorkspace(flags.workspace);
+      const context = await contextFile(root);
+      revision = contextRevision(context.bytes);
+    }
+    return setRoleStatus({
+      workspace: flags.workspace,
+      role: flags.role,
+      status: flags.status,
+      revision,
+      ...(Object.hasOwn(flags, 'reason') ? { reason: flags.reason } : {})
+    });
+  }
+  return upsertRole({
+    workspace: flags.workspace,
+    name: flags.name,
+    priority: flags.priority,
+    status: flags.status,
+    ...(Object.hasOwn(flags, 'role-id') ? { roleId: flags['role-id'] } : {}),
+    ...(Object.hasOwn(flags, 'jd') ? { jdPath: flags.jd } : {}),
+    ...(Object.hasOwn(flags, 'internal') ? { internalPath: flags.internal } : {}),
+    ...(Object.hasOwn(flags, 'reason') ? { reason: flags.reason } : {})
+  });
+}
+
+function roleError(error) {
+  const safeCode = typeof error?.code === 'string' && /^[A-Z_]+$/.test(error.code) ? error.code : 'ROLE_OPERATION_FAILED';
+  const safeMessage = (error?.status || error?.code?.startsWith('ROLE_') || error?.code?.startsWith('CONTEXT_') || error?.code?.startsWith('CHANGELOG_') || error?.message === '必须显式指定 --workspace' || error?.message === '工作区必须是存在的目录') && error?.errno === undefined && error?.syscall === undefined
+    ? error.message
+    : '岗位配置读取或写入失败，请检查工作区目录、CONTEXT.md 与文件权限';
+  return { error: { code: safeCode, message: safeMessage } };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  try { process.stdout.write(`${JSON.stringify(await rolesCLI(process.argv.slice(2)))}\n`); }
+  catch (error) { process.stderr.write(`${JSON.stringify(roleError(error))}\n`); process.exitCode = 1; }
 }

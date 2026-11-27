@@ -1,6 +1,6 @@
 # 看板配置与资料关联
 
-看板从工作区读取 `CONTEXT.md` 的“在招岗位与优先级”表、`02-sourcing/dedup-ledger.csv` 候选台账与 `runtime/recruit-board/runs/` 任务记录。下列配置均为可选，文件放在用户的招聘工作区中。标准工作区无需添加配置。
+看板从工作区读取 `CONTEXT.md` 的“在招岗位与优先级”表（标准 7 列结构：`role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更`，向后兼容旧版 3–5 列与 `对内笔记` 表头）、`02-sourcing/dedup-ledger.csv` 候选台账与 `runtime/recruit-board/runs/` 任务记录。下列配置均为可选，文件放在用户的招聘工作区中。标准工作区无需添加配置。
 
 ## 兼容旧状态与岗位名称
 
@@ -41,6 +41,8 @@
 ## 岗位范围与个人关注
 
 “在招”只包含 `CONTEXT.md` 中明确标为在招的岗位；未知、待核、暂停、已关闭和已下架都不进入这个范围。“全部”保留所有状态及只出现在台账中的岗位，不为扩大筛选自动改状态。“我的关注”是按工作区隔离的本机集合，不改变 `CONTEXT.md`。
+
+对旧工作区状态单元格中残留的括号附注（如 `在招（2026-11-09 恢复）`、`暂停 (临时冻结)`），`model.mjs` 的 `parseRoleStatus` 会采用宽容读取策略剥离括号提取主状态，避免在招岗位从“在招”范围静默消失；`buildSnapshot` 同时发出 `info` 级别诊断 `ROLE_STATUS_ANNOTATED`，提示运行 `node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"` 规范化为纯枚举状态并把历史说明迁入 `最近变更` 与 `docs/CHANGELOG.md`。
 
 “选择关注”在独立面板编辑名单，候选项来自全部岗位，可跨招聘状态选择，不受外层范围限制。切换范围时保留仍属于新范围的已选岗位；范围外选择清除，回到新范围汇总并提示。岗位列表、阶段和人数使用同一范围。
 
@@ -95,6 +97,27 @@
 保存只修改 `CONTEXT.md` 当前标准岗位表的一格状态，保留其他原文、换行及 UTF-8 或带 BOM 的 UTF-16 编码。原文备份到 `runtime/recruit-board/roles/`。取消不写入，版本或独占锁冲突返回 HTTP 409，需要重新读取后再保存。该操作不修改招聘平台上的岗位。
 
 HTTP 保存限定同源 JSON 与会话令牌。`scripts/actions.mjs` 的 `candidate`、`document`、`open-document`、`role-info`、`role-set` 是保留的共享 CLI，与网页共用资料解析和岗位写入规则；不依赖原生宿主。
+
+### 配套确定性工作区 CLI
+
+除网页服务与 `actions.mjs` 外，工作流统一调用 `skills/recruit-board/scripts/` 下的四个确定性 CLI 读写工作区状态（所有路径均相对用户工作区根目录）：
+
+1. **岗位表维护（`roles.mjs`）**
+   - 查看岗位：`node skills/recruit-board/scripts/roles.mjs list --workspace "<workspace>"`
+   - 切换状态：`node skills/recruit-board/scripts/roles.mjs set-status --workspace "<workspace>" --role "<role_id或岗位名>" --status "<在招|暂停|已关闭|已下架|待核>" --reason "<变更原因>"`
+   - 新增或更新岗位：`node skills/recruit-board/scripts/roles.mjs upsert --workspace "<workspace>" --role-id "<ID>" --name "<岗位名>" --priority "<最高|急岗|常规|低|停>" --status "<在招|待梳理|暂停|已关闭|已下架|待核>" --jd "01-jd/<slug>.md" --internal "01-jd/_internal/<slug>.md" --reason "<原因>"`
+2. **候选台账查重与更新（`ledger.mjs`）**
+   - 列出标准状态：`node skills/recruit-board/scripts/ledger.mjs statuses --workspace "<workspace>"`
+   - 查重查询：`node skills/recruit-board/scripts/ledger.mjs lookup --workspace "<workspace>" --name "<姓名>" [--role "<role_id或岗位名>"]`
+   - 新增或更新：`node skills/recruit-board/scripts/ledger.mjs upsert --workspace "<workspace>" --role "<role_id或岗位名>" --name "<姓名>" --status "<标准状态>" --bg "<现职/背景>" --rating "<评级>" --round "<轮次>" [--resume "<路径>"] [--note "<事实与原因>"] [--dry-run]`
+   - 默认拦截覆盖 `ended`/`joined` 终态（退出码 `3`，除非传 `--force-update`）；保留 9 列 CSV 与原 `rawRole` 以维持 `candidateId` 稳定，并自动跨别名去重。
+3. **单岗渐进上下文提取（`role-context.mjs`）**
+   - `node skills/recruit-board/scripts/role-context.mjs --workspace "<workspace>" --role "<role_id或岗位名>" [--max-rounds 2] [--format markdown|json]`
+   - 仅提取 `CONTEXT.md` 全局规则、目标岗位元数据与目标岗 `_internal` 档案，遇到旧版长关键词表时自动裁至最近 2 轮。
+4. **工作区校验与幂等迁移（`workspace.mjs`）**
+   - 校验契约：`node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`
+   - 预览迁移：`node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>" --dry-run`
+   - 执行迁移：`node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"`
 
 ## 任务记录与缺失数据
 

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildSnapshot, candidateStatus, createRun, LEDGER_COLUMNS, MAX_RUN_RESULTS, readCandidates, readConfig, readRoles, ROLE_SCOPES,
-  runSummary, searchCandidates, selectRole, selectRoles, selectTask, stageForStatus, summarizeRunResults, transitionRun, validateRun
+  buildSnapshot, CANONICAL_LEDGER_STATUSES, candidateStatus, createRun, KNOWN_ROLE_STATUSES, LEDGER_COLUMNS, MAX_RUN_RESULTS,
+  parseRoleStatus, readCandidates, readConfig, readRoles, readRoleTable, ROLE_ID_PATTERN, ROLE_PRIORITIES, ROLE_SCOPES,
+  runSummary, searchCandidates, selectRole, selectRoles, selectTask, stageForStatus, summarizeRunResults,
+  TERMINAL_STAGE_IDS, transitionRun, validateRun
 } from '../skills/recruit-board/model.mjs';
 
 const header = `${LEDGER_COLUMNS.join(',')}\n`;
@@ -591,4 +593,125 @@ test('任务live hold保留原ID包括消失，释放后跟随；空选择仍可
       assert.equal(selectTask([old, latest], view.selection).run.id, 'new-task');
     }
   }
+});
+
+test('parseRoleStatus 支持标准枚举、中英文括号附注、历史未知值与空值', () => {
+  for (const status of KNOWN_ROLE_STATUSES) {
+    assert.deepEqual(parseRoleStatus(`  ${status}  `), { status, rawStatus: status, note: null, annotated: false });
+  }
+  assert.deepEqual(parseRoleStatus('在招（2026-11-09 恢复）'), {
+    status: '在招', rawStatus: '在招（2026-11-09 恢复）', note: '2026-11-09 恢复', annotated: true
+  });
+  assert.deepEqual(parseRoleStatus('暂停 (临时冻结)'), {
+    status: '暂停', rawStatus: '暂停 (临时冻结)', note: '临时冻结', annotated: true
+  });
+  assert.deepEqual(parseRoleStatus('在招(  )'), {
+    status: '在招(  )', rawStatus: '在招(  )', note: null, annotated: false
+  });
+  for (const legacy of ['历史复合岗', '非本项目', '探索线', '历史待核']) {
+    assert.deepEqual(parseRoleStatus(legacy), { status: legacy, rawStatus: legacy, note: null, annotated: false });
+  }
+  for (const empty of ['', '   ', null, undefined]) {
+    assert.deepEqual(parseRoleStatus(empty), { status: null, rawStatus: null, note: null, annotated: false });
+  }
+});
+
+test('readRoles 与 selectRoles 宽容解析带附注状态，快照发出 info 诊断且保持 ok', () => {
+  const input = sources(header + [
+    row('合成甲', '恢复岗位', '已回复'),
+    row('合成乙', '历史复合岗位', '待确认'),
+    row('合成丙', '探索线岗位', '已打招呼')
+  ].join('\n'));
+  input.context.text = '## 四、在招岗位与优先级\n\n| 岗位 | 优先级 | 状态 |\n|---|---|---|\n'
+    + '| 恢复岗位 | 急岗 | 在招（2026-11-09 恢复） |\n'
+    + '| 常规岗位 | 常规 | 在招 |\n'
+    + '| 历史复合岗位 | 低 | 历史复合岗 |\n'
+    + '| 探索线岗位 | 停 | 探索线 |\n'
+    + '| 外部岗位 | 停 | 非本项目 |\n'
+    + '| 待核历史 | 低 | 历史待核 |\n';
+  const roles = readRoles(input.context.text);
+  assert.deepEqual(roles[0], {
+    name: '恢复岗位', priority: '急岗', status: '在招', configured: true,
+    rawStatus: '在招（2026-11-09 恢复）', statusNote: '2026-11-09 恢复'
+  });
+  assert.deepEqual(roles[1], { name: '常规岗位', priority: '常规', status: '在招', configured: true });
+  assert.deepEqual(roles.slice(2).map(r => r.status), ['历史复合岗', '探索线', '非本项目', '历史待核']);
+  assert.ok(roles.slice(1).every(r => !Object.hasOwn(r, 'rawStatus') && !Object.hasOwn(r, 'statusNote') && !Object.hasOwn(r, 'roleId')));
+
+  const snapshot = buildSnapshot(input);
+  assert.equal(snapshot.status, 'ok');
+  const diag = snapshot.diagnostics.find(item => item.code === 'ROLE_STATUS_ANNOTATED');
+  assert.ok(diag);
+  assert.equal(diag.level, 'info');
+  assert.equal(diag.source, 'context');
+  assert.match(diag.message, /1/);
+  assert.match(diag.message, /workspace\.mjs migrate/);
+
+  const active = selectRoles(snapshot, { scope: 'active' });
+  assert.deepEqual(active.roles.map(r => r.name), ['恢复岗位', '常规岗位']);
+  assert.equal(active.total, 1);
+
+  const cleanSnapshot = buildSnapshot(sources());
+  assert.ok(!cleanSnapshot.diagnostics.some(item => item.code === 'ROLE_STATUS_ANNOTATED'));
+});
+
+test('readRoleTable 解析七列表、旧对内笔记表头、链接/反引号路径与占位符', () => {
+  const tableText = '# CONTEXT\n\n## 在招岗位与优先级\n\n'
+    + '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |\n'
+    + '|---|---|---|---|---|---|---|\n'
+    + '| `GAME-CLIENT-01` | 客户端主程 | 最高 | 在招（2026-11-09 恢复） | [JD](01-jd/client.md) | `01-roles/client-internal.md` | 2026-11-09 |\n'
+    + '| — | 美术总监 | 急岗 | 暂停 | - | — | — |\n'
+    + '| （待梳理） | （待填写） | 常规 | 待梳理 | — | — | — |\n';
+  const parsed = readRoleTable(tableText);
+  assert.deepEqual(parsed.headers, ['role_id', '岗位', '优先级', '状态', '对外 JD', '对内档案', '最近变更']);
+  assert.equal(parsed.rows.length, 2);
+  assert.deepEqual(parsed.rows[0], {
+    line: 7,
+    roleId: 'GAME-CLIENT-01',
+    name: '客户端主程',
+    priority: '最高',
+    status: '在招',
+    rawStatus: '在招（2026-11-09 恢复）',
+    statusNote: '2026-11-09 恢复',
+    annotated: true,
+    jdPath: '01-jd/client.md',
+    internalPath: '01-roles/client-internal.md',
+    lastChange: '2026-11-09',
+    cells: ['`GAME-CLIENT-01`', '客户端主程', '最高', '在招（2026-11-09 恢复）', '[JD](01-jd/client.md)', '`01-roles/client-internal.md`', '2026-11-09']
+  });
+  assert.deepEqual(parsed.rows[1], {
+    line: 8,
+    roleId: null,
+    name: '美术总监',
+    priority: '急岗',
+    status: '暂停',
+    rawStatus: '暂停',
+    statusNote: null,
+    annotated: false,
+    jdPath: null,
+    internalPath: null,
+    lastChange: null,
+    cells: ['—', '美术总监', '急岗', '暂停', '-', '—', '—']
+  });
+
+  const legacyHeader = '## 在招岗位与优先级\n| 岗位 | 优先级 | 状态 | 对内笔记 |\n|---|---|---|---|\n| 数值策划 | 常规 | 在招 | [笔记](<01-roles/design (v1).md>) |\n';
+  const legacyParsed = readRoleTable(legacyHeader);
+  assert.equal(legacyParsed.rows[0].internalPath, '01-roles/design (v1).md');
+  assert.equal(legacyParsed.rows[0].roleId, null);
+  assert.equal(legacyParsed.rows[0].jdPath, null);
+  assert.equal(legacyParsed.rows[0].lastChange, null);
+  assert.equal(readRoles(tableText)[0].roleId, 'GAME-CLIENT-01');
+  assert.throws(() => readRoleTable('## 在招岗位与优先级\n| 岗位 | 优先级 | 状态 |\n|---|---|---|\n| 岗位A | P0 |\n'), /岗位配置表列数不一致/);
+  assert.throws(() => readRoleTable('## 在招岗位与优先级\n| 岗位 | 优先级 | 状态 |\n|---|---|---|\n| 岗位A | P0 | 在招 |\n| 岗位A | P1 | 暂停 |\n'), /岗位配置表包含重复岗位/);
+});
+
+test('CANONICAL_LEDGER_STATUSES 与共享常量保持有效且均映射到非未归类阶段', () => {
+  assert.ok(CANONICAL_LEDGER_STATUSES.length > 0);
+  for (const status of CANONICAL_LEDGER_STATUSES) {
+    assert.notEqual(stageForStatus(status), 'unclassified', status);
+  }
+  assert.deepEqual(ROLE_PRIORITIES, ['最高', '急岗', '常规', '低', '停']);
+  assert.deepEqual(TERMINAL_STAGE_IDS, ['ended', 'joined']);
+  assert.equal(ROLE_ID_PATTERN.test('GAME-CLIENT-01'), true);
+  assert.equal(ROLE_ID_PATTERN.test('invalid_id'), false);
 });

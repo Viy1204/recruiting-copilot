@@ -22,14 +22,21 @@ description: >
 
 这是**编排文档**：渠道命令细节走 `boss help` / `liepin help` 与 [`references/channels-and-analysis.md`](references/channels-and-analysis.md)。本文档管顺序、判断、数据可信度、报告结构与安全。
 
-## 铁律：先读事实源，再动手
+## 铁律：渐进读取事实源，再动手
 
-进工作区**先读**（都在工作区根下）：
-- `CONTEXT.md` —— 术语、**在招岗位与命脉**、**初筛硬规则**（年龄/学历/地点线）、薪资带宽。唯一事实源。
-- `01-jd/_internal/<role>.md` —— 各岗**目标公司锚点**（就是你的挖人对标企业地图）、**关键词迭代表**（有效/无效搜索词）、排除信号。**寻源前必读，越搜越准。**
-- `02-sourcing/dedup-ledger.csv` —— 已收录候选人，其中目标公司背景的直接作 mapping 种子，**不重复拉**。
+进工作区**先读**：
+- `CONTEXT.md` —— 热态快照（< 16 KB）：术语、**在招岗位与优先级**、**初筛硬规则**（年龄/学历/地点线）。
+- 对本次盘点的目标岗位，运行单岗上下文工具提取目标岗位元数据、**目标公司锚点**、排除信号与最新搜索词（自动将旧版长表裁至最近 2 轮，不加载无关岗位、不读 `docs/CHANGELOG.md` 与 `logs/`）：
+  ```bash
+  node skills/recruit-board/scripts/role-context.mjs --workspace "<workspace>" --role "<role_id或岗位名>"
+  ```
+- 需要从已有候选人中筛选目标公司种子或补充状态时，优先通过 `ledger.mjs lookup` 查询 `02-sourcing/dedup-ledger.csv`（**不重复拉**）；若需把确认后的代表人选记入或更新台账，走 `ledger.mjs upsert`（保留原 `rawRole`，遵循终态保护）：
+  ```bash
+  node skills/recruit-board/scripts/ledger.mjs lookup --workspace "<workspace>" --name "<姓名>" [--role "<role_id或岗位名>"]
+  node skills/recruit-board/scripts/ledger.mjs upsert --workspace "<workspace>" --role "<role_id或岗位名>" --name "<姓名>" --status "<标准状态>" --bg "<现职/背景>" --rating "<评级>" --round "<轮次>" [--note "<事实与原因>"]
+  ```
 
-命脉定义、目标公司分层、薪资带宽、硬门槛都以 CONTEXT 与对内笔记为准，**本文档不写任何具体数字和公司名**。
+命脉定义、目标公司分层、薪资带宽、硬门槛都以 `CONTEXT.md` 与目标岗对内档案为准，**本文档不写任何具体数字和公司名**。
 
 ## 主流程（按需跳步）
 

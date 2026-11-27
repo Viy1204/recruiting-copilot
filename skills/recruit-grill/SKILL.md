@@ -40,9 +40,9 @@ description: >
 
 ## 产出（AI 整理，每岗四件）
 
-标准已确认且四件产物落盘，才算梳理完成；只出草稿时明确尚缺什么，不把岗位改成“在招”。
+先为本岗分配一个稳定、不可变的 `role_id`（仅允许 ASCII 大写字母、数字与连字符，2–24 位，匹配 `^[A-Z0-9][A-Z0-9-]{1,23}$`，如 `UE-TA`、`AD-MGR`），并确定英文文件名 `<slug>`。标准已确认且四件产物落盘，才算梳理完成；只出草稿时明确尚缺什么，不把岗位改成“在招”。
 
-1. **对外 JD** `01-jd/<role>.md`（可以直接发给候选人/挂平台的版本）。结构：
+1. **对外 JD** `01-jd/<slug>.md`（可以直接发给候选人/挂平台的版本）。结构：
 
    ```
    # 岗位名
@@ -60,18 +60,30 @@ description: >
 
    ⚠️ 对外 JD 里**不写**商业敏感信息和寻源策略。
 
-2. **对内笔记** `01-jd/_internal/<role>.md`——套 `_shared/templates/jd-internal.md`：
-   硬约束一句话锚定、命脉技能与验证方式、目标公司锚点、参考简历信号、排除信号、空的关键词迭代表。
-   写完提醒用户：**这份不外发**。
+2. **对内档案** `01-jd/_internal/<slug>.md` 与寻源冷日志 `01-jd/_internal/logs/<slug>-sourcing-log.md`：
+   - 对内档案套 `_shared/templates/jd-internal.md`（全文控制在 **20 KB 以内**）：硬约束一句话锚定、命脉技能与验证方式、目标公司锚点、参考简历信号、排除信号、紧凑的 `## 当前搜索词卡片`（不超过 ~15 行）。
+   - 初始化冷日志 `01-jd/_internal/logs/<slug>-sourcing-log.md`，准备记录逐轮寻源流水。
+   - 写完提醒用户：**对内档案不外发**。
 
-3. **CONTEXT.md 更新**：
-   - 「初筛硬规则」：本次访谈确认的通用硬门槛（年龄线/学历线/地点坐班/错位处理）。已有内容冲突时向用户确认后更新，并在「已对齐决策」记一条带日期的变更。
-   - 「在招岗位与优先级」：标准已确认且产物齐备后，本岗状态从"待梳理"改为"在招"，补优先级和文件链接。
-   - 「术语表」：本次新沉淀的术语。
+3. **CONTEXT.md 更新与校验**：
+   - 「初筛硬规则」：本次访谈确认的通用硬门槛（年龄线/学历线/地点坐班/错位处理）。已有内容冲突时向用户确认后**原地覆盖**现行规则，不在 `CONTEXT.md` 堆叠带日期的补丁块；变更理由追加写入冷日志 `docs/CHANGELOG.md`。
+   - 「在招岗位与优先级」：禁止手改 Markdown 表格行，统一调用确定性 CLI 写入（`--status` 仅传纯枚举，变更原因经 `--reason` 自动记录到 `最近变更` 与 `docs/CHANGELOG.md`）：
+     ```bash
+     node skills/recruit-board/scripts/roles.mjs upsert --workspace "<workspace>" --role-id "<ID>" --name "<岗位名>" --priority "<最高|急岗|常规|低|停>" --status "<在招|待梳理|暂停|已关闭|已下架|待核>" --jd "01-jd/<slug>.md" --internal "01-jd/_internal/<slug>.md" --reason "<原因>"
+     ```
+     仅调整已有岗位状态时也可用：
+     ```bash
+     node skills/recruit-board/scripts/roles.mjs set-status --workspace "<workspace>" --role "<role_id或岗位名>" --status "<在招|暂停|已关闭|已下架|待核>" --reason "<变更原因>"
+     ```
+   - 「术语表」：写入本次新沉淀的术语；「待定决策清单」只保留未拍板项，已拍板项移除并在 `docs/CHANGELOG.md` 留痕。
+   - 全部落盘后运行校验脚本确认 `CONTEXT.md`（< 16 KB）与岗位表结构有效：
+     ```bash
+     node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"
+     ```
 
-4. **初始搜索关键词**：根据已确认标准拟首轮搜索词，写进对内笔记关键词迭代表的 R1 行，注明“待验证”（日期留空，首轮寻源后回填效果）。
+4. **初始搜索关键词**：根据已确认标准拟首轮搜索词，写入 `01-jd/_internal/<slug>.md` 的 `## 当前搜索词卡片`（标明“R1 待验证假设”），并在 `01-jd/_internal/logs/<slug>-sourcing-log.md` 初始化首行待验证记录（日期留空，首轮寻源后回填效果）。
 
 ## 什么时候重新 grill
 
-- 寻了几轮源发现标准明显不对（全是错的人/池子里根本没这种人）→ 带着台账数据重新走一遍硬门槛和命脉部分；
-- 用人经理改需求 → 增量更新，改动记进「已对齐决策」。
+- 寻了几轮源发现标准明显不对（全是错的人/池子里根本没这种人）→ 用 `role-context.mjs` 与台账数据对照，重新走一遍硬门槛和命脉部分；
+- 用人经理改需求 → 原地覆盖 `CONTEXT.md` / `_internal/<slug>.md` 当前规则（状态改动走 `roles.mjs`），把变更依据追加进 `docs/CHANGELOG.md`，最后运行 `workspace.mjs validate`。

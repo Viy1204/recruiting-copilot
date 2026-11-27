@@ -20,6 +20,11 @@ export const STAGES = Object.freeze([
   { id: 'ended', label: '已结束', statuses: ['初筛不合适', '已拒', '已排除'] },
   { id: 'unclassified', label: '未归类', statuses: [] }
 ].map(stage => Object.freeze({ ...stage, statuses: Object.freeze(stage.statuses) })));
+export const KNOWN_ROLE_STATUSES = Object.freeze(['在招', '已下架', '已关闭', '暂停', '待核', '待梳理']);
+export const ROLE_PRIORITIES = Object.freeze(['最高', '急岗', '常规', '低', '停']);
+export const ROLE_ID_PATTERN = /^[A-Z0-9][A-Z0-9-]{1,23}$/;
+export const CANONICAL_LEDGER_STATUSES = Object.freeze(STAGES.flatMap(stage => stage.statuses));
+export const TERMINAL_STAGE_IDS = Object.freeze(['ended', 'joined']);
 
 export const WORKFLOWS = Object.freeze(Object.fromEntries([
   ['init', '初始化工作区', [['dependencies', '检查依赖'], ['workspace', '建立工作区'], ['register', '注册技能入口'], ['roles', '逐岗梳理'], ['handoff', '交付与待办']]],
@@ -127,7 +132,33 @@ function markdownCell(value) {
   return value.trim().replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '').trim();
 }
 
-export function readRoles(text) {
+const annotatedRoleStatus = /^(在招|已下架|已关闭|暂停|待核|待梳理)\s*[（(](.+)[）)]$/;
+
+export function parseRoleStatus(raw) {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return { status: null, rawStatus: null, note: null, annotated: false };
+  if (KNOWN_ROLE_STATUSES.includes(trimmed)) return { status: trimmed, rawStatus: trimmed, note: null, annotated: false };
+  const match = annotatedRoleStatus.exec(trimmed);
+  if (match && match[2].trim()) return { status: match[1], rawStatus: trimmed, note: match[2].trim(), annotated: true };
+  return { status: trimmed, rawStatus: trimmed, note: null, annotated: false };
+}
+
+function nullableCell(value) {
+  return !value || value === '—' || value === '-' ? null : value;
+}
+
+function extractCellPath(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === '—' || trimmed === '-') return null;
+  const link = /^\[[^\]]*\]\(\s*(?:<([^>]+)>|(.+))\s*\)$/.exec(trimmed);
+  if (link) return nullableCell((link[1] ?? link[2]).trim());
+  const code = /^`([^`]+)`$/.exec(trimmed);
+  if (code) return nullableCell(code[1].trim());
+  return nullableCell(markdownCell(trimmed));
+}
+
+/** @param {string} text @returns {import('./types/index.d.ts').RoleTable} */
+export function readRoleTable(text) {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   let inSection = false;
   for (let i = 0; i < lines.length; i++) {
@@ -140,23 +171,57 @@ export function readRoles(text) {
       continue;
     }
     if (!inSection || !lines[i].trim().startsWith('|')) continue;
-    const cells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(markdownCell);
-    const header = cells(lines[i]);
-    const columns = ['岗位', '优先级', '状态'].map(name => header.indexOf(name));
-    if (columns.some(index => index < 0)) continue;
-    if (!lines[i + 1] || !cells(lines[i + 1]).every(cell => /^:?-{3,}:?$/.test(cell))) continue;
-    const roles = [];
+    const splitCells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    const headers = splitCells(lines[i]).map(markdownCell);
+    const nameCol = headers.indexOf('岗位');
+    const priorityCol = headers.indexOf('优先级');
+    const statusCol = headers.indexOf('状态');
+    if (nameCol < 0 || priorityCol < 0 || statusCol < 0) continue;
+    if (!lines[i + 1] || !splitCells(lines[i + 1]).map(markdownCell).every(cell => /^:?-{3,}:?$/.test(cell))) continue;
+    const roleIdCol = headers.indexOf('role_id');
+    const jdCol = headers.indexOf('对外 JD');
+    const internalArchiveCol = headers.indexOf('对内档案');
+    const internalCol = internalArchiveCol >= 0 ? internalArchiveCol : headers.indexOf('对内笔记');
+    const lastChangeCol = headers.indexOf('最近变更');
+    const rows = [];
     for (let j = i + 2; j < lines.length && lines[j].trim().startsWith('|'); j++) {
-      const values = cells(lines[j]);
-      if (values.length !== header.length) throw new Error('岗位配置表列数不一致');
-      const name = values[columns[0]];
+      const rawValues = splitCells(lines[j]);
+      if (rawValues.length !== headers.length) throw new Error('岗位配置表列数不一致');
+      const values = rawValues.map(markdownCell);
+      const name = values[nameCol];
       if (!name || /^(?:[（(]?(?:待梳理|待填写|岗位名|role)[）)]?|<role>)$/i.test(name)) continue;
-      if (roles.some(role => role.name === name)) throw new Error('岗位配置表包含重复岗位');
-      roles.push({ name, priority: values[columns[1]] || null, status: values[columns[2]] || null, configured: true });
+      if (rows.some(row => row.name === name)) throw new Error('岗位配置表包含重复岗位');
+      const parsedStatus = parseRoleStatus(values[statusCol]);
+      rows.push({
+        line: j + 1,
+        roleId: roleIdCol >= 0 ? nullableCell(values[roleIdCol]) : null,
+        name,
+        priority: values[priorityCol] || null,
+        status: parsedStatus.status,
+        rawStatus: parsedStatus.rawStatus,
+        statusNote: parsedStatus.note,
+        annotated: parsedStatus.annotated,
+        jdPath: jdCol >= 0 ? extractCellPath(rawValues[jdCol]) : null,
+        internalPath: internalCol >= 0 ? extractCellPath(rawValues[internalCol]) : null,
+        lastChange: lastChangeCol >= 0 ? nullableCell(values[lastChangeCol]) : null,
+        cells: rawValues.map(cell => cell.trim())
+      });
     }
-    return roles;
+    return { headers, rows };
   }
   throw new Error('未读取岗位配置：未找到“在招岗位与优先级”的岗位／优先级／状态表');
+}
+
+/** @param {string} text @returns {Role[]} */
+export function readRoles(text) {
+  return readRoleTable(text).rows.map(row => ({
+    name: row.name,
+    priority: row.priority,
+    status: row.status,
+    configured: true,
+    ...(row.roleId ? { roleId: row.roleId } : {}),
+    ...(row.annotated ? { rawStatus: row.rawStatus, statusNote: row.statusNote } : {})
+  }));
 }
 
 export function readConfig(text, roles = []) {
@@ -538,7 +603,15 @@ export function buildSnapshot(input, previous = null) {
     config: { status: configSource.status, updatedAt: null }
   };
   if (input.context.status === 'ok') {
-    try { roles = readRoles(input.context.text); sources.context.updatedAt = input.context.updatedAt ?? null; contextRevision = input.context.revision ?? null; }
+    try {
+      roles = readRoles(input.context.text);
+      sources.context.updatedAt = input.context.updatedAt ?? null;
+      contextRevision = input.context.revision ?? null;
+      const annotatedCount = roles.filter(role => role.rawStatus).length;
+      if (annotatedCount > 0) {
+        diagnostics.push(diagnostic('ROLE_STATUS_ANNOTATED', 'context', `${annotatedCount} 个岗位状态含括号附注，已按主状态解析；建议运行 workspace.mjs migrate 规范化`, 'info'));
+      }
+    }
     catch (error) {
       sources.context.status = 'error';
       diagnostics.push(diagnostic('ROLES_UNCONFIGURED', 'context', error.message));
