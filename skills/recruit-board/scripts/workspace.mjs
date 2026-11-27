@@ -10,7 +10,8 @@ import {
   readRoles,
   readRoleTable,
   ROLE_ID_PATTERN,
-  selectRoles
+  selectRoles,
+  updateFenceState
 } from '../model.mjs';
 import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
 
@@ -170,12 +171,92 @@ export function generateRoleId(name, usedIds = new Set()) {
   throw appError('ROLE_ID_EXHAUSTED', `无法为岗位生成唯一 role_id：${trimmed}`, 500);
 }
 
+const DEFAULT_MAX_CONTEXT_LINES = 260;
+
+const OVERRIDE_LAYER_RE = /(?:以本节为准|以最新(?:规则|口径|版本)?为准|冲突时以|覆[写盖](?:下文|上文|前文|旧规则)|高于(?:下文|前文))/;
+const EXECUTION_LOG_RE = /(?:(?:^|[\s\-*>•])(?:\d{4}-\d{2}-\d{2}\s+|\d{2}:\d{2}\s*)(?:BOSS|猎聘|脉脉|拉勾|牛客)[^\n]{0,60}(?:打招呼|发送|回复|初筛|沟通|通过|淘汰|产出|推进)|批量打招呼|本轮战报|今日战报|执行战报|批次全部.{0,4}成功|[a-zA-Z0-9_.-]+\.(?:bak|orig|tmp)(?:-[a-zA-Z0-9._-]+)?(?=$|[\s`'"）)】，。；,]))/i;
+const DEPRECATED_RULE_RE = /(?:AI\s*\*{0,2}(?:一律)?不(?:再)?执行|待用户确认后删除|[（(【\[]\s*(?:已废弃|已作废|已失效|已废止|待删除|不再执行)\s*[）)】\]])/i;
+const ALIGNED_DECISIONS_HEADING_RE = /^(?:[一二三四五六七八九十\d]+[、.．]\s*)?已对齐决策/;
+const EMPTY_DECISION_PLACEHOLDER_RE = /^(?:[（(]?无[）)]?|—|-|暂无)$/;
+
 /**
- * Validates workspace structure, pointers, sizes, config, ledger, and board parity.
- * @param {string} workspace
- * @param {{ maxContextBytes?: number, maxInternalBytes?: number }} [options]
+ * Inspects CONTEXT.md outside fenced code blocks for section distribution and content hygiene smells.
+ * @param {string} text
  */
-export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024, maxInternalBytes = 20 * 1024 } = {}) {
+export function inspectContextHygiene(text) {
+  const normalized = String(text ?? '').replace(/^\uFEFF/, '');
+  const lines = normalized.split(/\r?\n/);
+  const totalBytes = Buffer.byteLength(normalized, 'utf8');
+
+  const rawSections = [];
+  let currentSection = null;
+  let fence = null;
+  const overrideLines = [];
+  const executionLogLines = [];
+  const deprecatedRuleLines = [];
+  const legacyAlignedDecisionLines = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const nextFence = updateFenceState(line, fence);
+    if (fence || nextFence) {
+      fence = nextFence;
+      if (currentSection) currentSection.lines.push(line);
+      continue;
+    }
+
+    const h2 = /^##\s+(.+)$/.exec(line);
+    if (h2) {
+      if (currentSection) currentSection.endLine = lineNo - 1;
+      currentSection = { title: h2[1].trim(), startLine: lineNo, endLine: lines.length, lines: [line] };
+      rawSections.push(currentSection);
+    } else if (currentSection) {
+      currentSection.lines.push(line);
+    }
+
+    if (OVERRIDE_LAYER_RE.test(line)) overrideLines.push(lineNo);
+    if (EXECUTION_LOG_RE.test(line)) executionLogLines.push(lineNo);
+    if (DEPRECATED_RULE_RE.test(line)) deprecatedRuleLines.push(lineNo);
+
+    if (currentSection && ALIGNED_DECISIONS_HEADING_RE.test(currentSection.title)) {
+      const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+      if (bullet && !EMPTY_DECISION_PLACEHOLDER_RE.test(bullet[1].trim())) {
+        legacyAlignedDecisionLines.push(lineNo);
+      }
+    }
+  }
+
+  const sections = rawSections.map(section => {
+    const sectionBytes = Buffer.byteLength(section.lines.join('\n'), 'utf8');
+    return {
+      title: section.title,
+      startLine: section.startLine,
+      endLine: section.endLine,
+      lines: section.lines.length,
+      bytes: sectionBytes,
+      sharePct: totalBytes > 0 ? Math.round((sectionBytes / totalBytes) * 1000) / 10 : 0
+    };
+  });
+
+  return {
+    sections,
+    overrideLines,
+    executionLogLines,
+    deprecatedRuleLines,
+    legacyAlignedDecisionLines
+  };
+}
+
+/**
+ * Validates workspace structure, pointers, sizes, config, ledger, context hygiene, and board parity.
+ * @param {string} workspace
+ * @param {{ maxContextBytes?: number, maxInternalBytes?: number, maxContextLines?: number }} [options]
+ */
+export async function validateWorkspace(
+  workspace,
+  { maxContextBytes = 16 * 1024, maxInternalBytes = 20 * 1024, maxContextLines = DEFAULT_MAX_CONTEXT_LINES } = {}
+) {
   const root = await resolveWorkspace(workspace);
   const errors = [];
   const warnings = [];
@@ -185,6 +266,7 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
   const stats = {
     contextLines: 0,
     contextBytes: 0,
+    contextSections: [],
     totalRoles: 0,
     activeRoles: 0,
     activeCandidates: 0,
@@ -203,8 +285,26 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
 
   stats.contextBytes = contextRes.bytes.length;
   stats.contextLines = contextRes.text.split(/\r?\n/).length;
+  const hygiene = inspectContextHygiene(contextRes.text);
+  stats.contextSections = hygiene.sections;
+
   if (stats.contextBytes > maxContextBytes) {
     pushWarning('CONTEXT_OVERSIZED', `CONTEXT.md 体积（${stats.contextBytes} 字节）超过阈值 ${maxContextBytes} 字节`, { path: 'CONTEXT.md' });
+  }
+  if (stats.contextLines > maxContextLines) {
+    pushWarning('CONTEXT_LINE_BUDGET', `CONTEXT.md 行数（${stats.contextLines} 行）超过阈值 ${maxContextLines} 行`, { path: 'CONTEXT.md', lines: stats.contextLines, limit: maxContextLines });
+  }
+  if (hygiene.overrideLines.length > 0) {
+    pushWarning('OVERRIDE_LAYER_STACK', `CONTEXT.md 含自然语言覆写表述（L${hygiene.overrideLines.slice(0, 5).join('、L')}），请改为原地覆盖生效条款并把改规原因写入 docs/CHANGELOG.md`, { path: 'CONTEXT.md', lines: hygiene.overrideLines });
+  }
+  if (hygiene.executionLogLines.length > 0) {
+    pushWarning('EXECUTION_LOG_POLLUTION', `CONTEXT.md 疑似混入单次执行战报或备份文件名（L${hygiene.executionLogLines.slice(0, 5).join('、L')}），请移至 runtime/reports/ 或清理`, { path: 'CONTEXT.md', lines: hygiene.executionLogLines });
+  }
+  if (hygiene.deprecatedRuleLines.length > 0) {
+    pushWarning('DEPRECATED_RULE_RESIDUE', `CONTEXT.md 残留已废弃/不执行条款标注（L${hygiene.deprecatedRuleLines.slice(0, 5).join('、L')}），请直接删除并留痕至 docs/CHANGELOG.md`, { path: 'CONTEXT.md', lines: hygiene.deprecatedRuleLines });
+  }
+  if (hygiene.legacyAlignedDecisionLines.length > 0) {
+    pushWarning('LEGACY_ALIGNED_DECISIONS', `CONTEXT.md「已对齐决策」仍有 ${hygiene.legacyAlignedDecisionLines.length} 条历史记录，建议原地合并生效口径并将历史移入 docs/CHANGELOG.md`, { path: 'CONTEXT.md', count: hygiene.legacyAlignedDecisionLines.length, lines: hygiene.legacyAlignedDecisionLines });
   }
 
   let roleTable;
@@ -215,6 +315,19 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
   } catch (error) {
     pushError('CONTEXT_INVALID', error.message, { path: 'CONTEXT.md' });
     return { ok: false, errors, warnings, stats };
+  }
+
+  if (roleTable.fragmentation.truncated) {
+    const { blankSplitLines, nonBlankBreakLines, trailingRows } = roleTable.fragmentation;
+    const detail = nonBlankBreakLines.length > 0
+      ? `第 ${nonBlankBreakLines.join('、')} 行非表格内容打断岗位表（后续 ${trailingRows} 行）`
+      : `第 ${blankSplitLines.join('、')} 行空行打断岗位表（后续 ${trailingRows} 行），可运行 workspace.mjs migrate 合并`;
+    pushError('ROLES_TABLE_TRUNCATED', `岗位配置表存在断行：${detail}`, {
+      path: 'CONTEXT.md',
+      blankSplitLines,
+      nonBlankBreakLines,
+      trailingRows
+    });
   }
 
   stats.totalRoles = roleTable.rows.length;
@@ -357,6 +470,8 @@ function isPlaceholderRoleName(name) {
   return !name || /^(?:[（(]?(?:待梳理|待填写|岗位名|role)[）)]?|<role>)$/i.test(name);
 }
 
+const isTableSeparator = line => line.trim().startsWith('|') && splitTableLine(line).map(markdownCell).every(cell => /^:?-{3,}:?$/.test(cell));
+
 function upgradeRoleTableInContext(text) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = [];
@@ -373,10 +488,19 @@ function upgradeRoleTableInContext(text) {
 
   let inSection = false;
   let headerIdx = -1;
-  let dataEndIdx = -1;
+  let lastTableLineIdx = -1;
   let headers = null;
+  let fence = null;
+  const dataLines = [];
+  const blankSplitLines = [];
+  const nonBlankBreakLines = [];
 
   for (let i = 0; i < lines.length; i++) {
+    const nextFence = updateFenceState(lines[i].line, fence);
+    if (fence || nextFence) {
+      fence = nextFence;
+      continue;
+    }
     const heading = /^(#{1,6})\s+(.+)$/.exec(lines[i].line);
     if (heading) {
       if (inSection) break;
@@ -388,17 +512,64 @@ function upgradeRoleTableInContext(text) {
     if (!inSection || !lines[i].line.trim().startsWith('|')) continue;
     const candidateHeaders = splitTableLine(lines[i].line).map(markdownCell);
     if (!['岗位', '优先级', '状态'].every(col => candidateHeaders.includes(col))) continue;
-    if (!lines[i + 1] || !splitTableLine(lines[i + 1].line).map(markdownCell).every(cell => /^:?-{3,}:?$/.test(cell))) continue;
+    if (!lines[i + 1] || !isTableSeparator(lines[i + 1].line)) continue;
     headerIdx = i;
     headers = candidateHeaders;
-    let j = i + 2;
-    while (j < lines.length && lines[j].line.trim().startsWith('|')) j++;
-    dataEndIdx = j;
+    lastTableLineIdx = i + 1;
+
+    let pendingBlankLines = [];
+    let pendingNonBlankLines = [];
+    let bodyFence = null;
+    for (let j = i + 2; j < lines.length; j++) {
+      const nextBodyFence = updateFenceState(lines[j].line, bodyFence);
+      if (bodyFence || nextBodyFence) {
+        bodyFence = nextBodyFence;
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      if (/^(#{1,6})\s+(.+)$/.test(lines[j].line)) break;
+      const trimmed = lines[j].line.trim();
+      if (!trimmed) {
+        pendingBlankLines.push(j + 1);
+        continue;
+      }
+      if (!trimmed.startsWith('|')) {
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      const hasPendingBreak = pendingBlankLines.length > 0 || pendingNonBlankLines.length > 0;
+      if (!hasPendingBreak) {
+        dataLines.push(lines[j]);
+        lastTableLineIdx = j;
+        continue;
+      }
+      if (lines[j + 1] && isTableSeparator(lines[j + 1].line)) break;
+      if (isTableSeparator(lines[j].line) || splitTableLine(lines[j].line).length !== headers.length) {
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      if (pendingNonBlankLines.length > 0) {
+        nonBlankBreakLines.push(...pendingNonBlankLines);
+      } else {
+        blankSplitLines.push(...pendingBlankLines);
+      }
+      pendingBlankLines = [];
+      pendingNonBlankLines = [];
+      dataLines.push(lines[j]);
+      lastTableLineIdx = j;
+    }
     break;
   }
 
   if (headerIdx < 0) {
     throw appError('ROLE_TABLE_NOT_FOUND', '未找到“在招岗位与优先级”的岗位配置表', 422);
+  }
+  if (nonBlankBreakLines.length > 0) {
+    throw appError(
+      'ROLES_TABLE_TRUNCATED',
+      `岗位配置表在第 ${nonBlankBreakLines.join('、')} 行被非表格内容打断，请先手工移出表内正文后再执行 migrate`,
+      422
+    );
   }
 
   const normalizedHeaders = headers.map(h => (h === '对内笔记' ? '对内档案' : h));
@@ -407,7 +578,6 @@ function upgradeRoleTableInContext(text) {
   const headersMatch = normalizedHeaders.length === targetHeaders.length
     && normalizedHeaders.every((h, idx) => h === targetHeaders[idx]);
 
-  const dataLines = lines.slice(headerIdx + 2, dataEndIdx);
   const usedIds = new Set();
   const parsedRows = dataLines.map(entry => {
     const rawCells = splitTableLine(entry.line);
@@ -470,12 +640,12 @@ function upgradeRoleTableInContext(text) {
     return `| ${orderedCells.join(' | ')} |`;
   });
 
-  const contextChanged = !headersMatch || rowChanged;
+  const contextChanged = !headersMatch || rowChanged || blankSplitLines.length > 0;
   if (!contextChanged) {
-    return { nextText: text, contextChanged: false, addedRoleIds: [], normalizedStatuses: [] };
+    return { nextText: text, contextChanged: false, addedRoleIds: [], normalizedStatuses: [], repairedBlankSplits: [] };
   }
 
-  const lastTableLine = lines[dataEndIdx - 1];
+  const lastTableLine = lines[lastTableLineIdx];
   const tableStartOffset = lines[headerIdx].start;
   const tableEndOffset = lastTableLine.end;
 
@@ -487,7 +657,7 @@ function upgradeRoleTableInContext(text) {
   const rebuiltTable = rebuiltLines.join(eol) + lastTableLine.lineEol;
   const nextText = text.slice(0, tableStartOffset) + rebuiltTable + text.slice(tableEndOffset);
 
-  return { nextText, contextChanged: true, addedRoleIds, normalizedStatuses };
+  return { nextText, contextChanged: true, addedRoleIds, normalizedStatuses, repairedBlankSplits: blankSplitLines };
 }
 
 async function ensureSafeDirectory(root, relativeParts) {
@@ -547,6 +717,7 @@ export async function migrateWorkspace(workspace, { dryRun = false, now } = {}) 
 
     const actions = [];
     if (upgraded.contextChanged) actions.push('upgrade_role_table');
+    if (upgraded.repairedBlankSplits.length > 0) actions.push('repair_role_table_splits');
     if (createChangelog) actions.push('create_changelog');
     if (createLogsDir) actions.push('create_logs_dir');
 
@@ -558,6 +729,7 @@ export async function migrateWorkspace(workspace, { dryRun = false, now } = {}) 
         actions,
         addedRoleIds: upgraded.addedRoleIds,
         normalizedStatuses: upgraded.normalizedStatuses,
+        repairedBlankSplits: upgraded.repairedBlankSplits,
         createChangelog,
         createLogsDir,
         ...(dryRun ? {} : { backup: null })
@@ -629,6 +801,7 @@ export async function migrateWorkspace(workspace, { dryRun = false, now } = {}) 
       actions,
       addedRoleIds: upgraded.addedRoleIds,
       normalizedStatuses: upgraded.normalizedStatuses,
+      repairedBlankSplits: upgraded.repairedBlankSplits,
       createChangelog,
       createLogsDir,
       backup: backupRel
@@ -691,18 +864,19 @@ function parseFlags(args, allowed, booleanFlags = []) {
 export async function workspaceCLI(argv) {
   const [command, ...rest] = argv;
   if (command === 'validate') {
-    const flags = parseFlags(rest, ['workspace', 'max-context-kb', 'max-internal-kb']);
+    const flags = parseFlags(rest, ['workspace', 'max-context-kb', 'max-internal-kb', 'max-context-lines']);
     if (!flags.workspace) throw appError('MISSING_WORKSPACE', '必须显式指定 --workspace', 400);
-    const parseKb = (raw, fallback, name) => {
+    const parsePositiveInt = (raw, fallback, name) => {
       if (raw === undefined) return fallback;
       if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
         throw appError('INVALID_THRESHOLD', `--${name} 必须是正整数`, 400);
       }
-      return Number(raw) * 1024;
+      return Number(raw);
     };
     return validateWorkspace(flags.workspace, {
-      maxContextBytes: parseKb(flags['max-context-kb'], 16 * 1024, 'max-context-kb'),
-      maxInternalBytes: parseKb(flags['max-internal-kb'], 20 * 1024, 'max-internal-kb')
+      maxContextBytes: parsePositiveInt(flags['max-context-kb'], 16, 'max-context-kb') * 1024,
+      maxInternalBytes: parsePositiveInt(flags['max-internal-kb'], 20, 'max-internal-kb') * 1024,
+      maxContextLines: parsePositiveInt(flags['max-context-lines'], DEFAULT_MAX_CONTEXT_LINES, 'max-context-lines')
     });
   }
 

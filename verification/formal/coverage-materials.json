@@ -16,7 +16,7 @@
     },
     {
       "path": "skills/recruit-board/model.mjs",
-      "sha256": "54dbe2f809b01092be8e2727453da907348b49a6b5e8d1f3baaac88d2908b258"
+      "sha256": "17495755c4349868d8ad86c74673094c43a106b9f3407ba7755fc5ef27cb98fa"
     },
     {
       "path": "skills/recruit-board/scripts/reader.mjs",

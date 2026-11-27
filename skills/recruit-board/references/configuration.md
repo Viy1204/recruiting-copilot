@@ -115,9 +115,9 @@ HTTP 保存限定同源 JSON 与会话令牌。`scripts/actions.mjs` 的 `candid
    - `node skills/recruit-board/scripts/role-context.mjs --workspace "<workspace>" --role "<role_id或岗位名>" [--max-rounds 2] [--format markdown|json]`
    - 仅提取 `CONTEXT.md` 全局规则、目标岗位元数据与目标岗 `_internal` 档案，遇到旧版长关键词表时自动裁至最近 2 轮。
 4. **工作区校验与幂等迁移（`workspace.mjs`）**
-   - 校验契约：`node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`
+   - 校验契约：`node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>" [--max-context-kb 16] [--max-context-lines 260] [--max-internal-kb 20]`（除岗位表与指针校验外，检出 `ROLES_TABLE_TRUNCATED` 空行或正文断表、自然语言覆写层、战报污染、废弃条款残留与旧版「已对齐决策」流水，并输出分节字节占比）
    - 预览迁移：`node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>" --dry-run`
-   - 执行迁移：`node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"`
+   - 执行迁移：`node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"`（自动合并岗位表纯空行断行并升级七列表；若表内混入非表格正文则拒绝静默迁移）
 
 ## 任务记录与缺失数据
 

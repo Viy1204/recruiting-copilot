@@ -715,3 +715,88 @@ test('CANONICAL_LEDGER_STATUSES 与共享常量保持有效且均映射到非未
   assert.equal(ROLE_ID_PATTERN.test('GAME-CLIENT-01'), true);
   assert.equal(ROLE_ID_PATTERN.test('invalid_id'), false);
 });
+
+test('readRoleTable 与 buildSnapshot 在空行或非表格断行时恢复后续岗位并发出 ROLES_TABLE_TRUNCATED 告警，不误判第二张独立表与代码块', () => {
+  const blankSplitContext = [
+    '# CONTEXT.md',
+    '',
+    '```markdown',
+    '## 四、在招岗位与优先级',
+    '| 岗位 | 优先级 | 状态 |',
+    '|---|---|---|',
+    '| 代码块假岗位 | 最高 | 在招 |',
+    '```',
+    '',
+    '## 四、在招岗位与优先级',
+    '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |',
+    '|---|---|---|---|---|---|---|',
+    '| ROLE-A | 岗位A | 最高 | 在招 | `01-jd/a.md` | `01-jd/_internal/a.md` | — |',
+    '',
+    '| ROLE-B | 岗位B | 急岗 | 在招 | `01-jd/b.md` | `01-jd/_internal/b.md` | — |',
+    '',
+    '| ROLE-C | 岗位C | 常规 | 暂停 | `01-jd/c.md` | `01-jd/_internal/c.md` | — |',
+    '',
+    '## 五、术语表',
+    '| 术语 | 含义 |',
+    '|---|---|',
+    '| TA | 技术美术 |'
+  ].join('\n');
+
+  const parsedBlank = readRoleTable(blankSplitContext);
+  assert.deepEqual(parsedBlank.rows.map(r => r.name), ['岗位A', '岗位B', '岗位C']);
+  assert.deepEqual(parsedBlank.fragmentation, {
+    truncated: true,
+    blankSplitLines: [14, 16],
+    nonBlankBreakLines: [],
+    trailingRows: 2
+  });
+  assert.deepEqual(readRoles(blankSplitContext).map(r => r.name), ['岗位A', '岗位B', '岗位C']);
+
+  const snapBlank = buildSnapshot({
+    workspace: '/tmp/ws',
+    generatedAt: '2026-11-27T00:00:00.000Z',
+    context: { status: 'ok', text: blankSplitContext, updatedAt: '2026-11-27T00:00:00.000Z', revision: 'rev-1' },
+    ledger: { status: 'ok', text: `${LEDGER_COLUMNS.join(',')}\n`, updatedAt: '2026-11-27T00:00:00.000Z' },
+    runFiles: { status: 'missing', files: [] }
+  });
+  assert.equal(snapBlank.status, 'partial');
+  assert.equal(snapBlank.error, null);
+  assert.deepEqual(snapBlank.roles.map(r => r.name), ['岗位A', '岗位B', '岗位C']);
+  assert.ok(snapBlank.diagnostics.some(d => d.code === 'ROLES_TABLE_TRUNCATED' && d.level === 'warning'));
+
+  const proseSplitContext = [
+    '## 四、在招岗位与优先级',
+    '| 岗位 | 优先级 | 状态 |',
+    '|---|---|---|',
+    '| 岗位A | 最高 | 在招 |',
+    '> 下面是暂缓岗位',
+    '| 岗位B | 常规 | 暂停 |'
+  ].join('\n');
+  const parsedProse = readRoleTable(proseSplitContext);
+  assert.deepEqual(parsedProse.rows.map(r => r.name), ['岗位A', '岗位B']);
+  assert.deepEqual(parsedProse.fragmentation, {
+    truncated: true,
+    blankSplitLines: [],
+    nonBlankBreakLines: [5],
+    trailingRows: 1
+  });
+
+  const secondTableContext = [
+    '## 四、在招岗位与优先级',
+    '| 岗位 | 优先级 | 状态 |',
+    '|---|---|---|',
+    '| 岗位A | 最高 | 在招 |',
+    '',
+    '| 优先级 | 含义 | SLA |',
+    '|---|---|---|',
+    '| 最高 | 核心岗位 | 24h |'
+  ].join('\n');
+  const parsedSecond = readRoleTable(secondTableContext);
+  assert.deepEqual(parsedSecond.rows.map(r => r.name), ['岗位A']);
+  assert.deepEqual(parsedSecond.fragmentation, {
+    truncated: false,
+    blankSplitLines: [],
+    nonBlankBreakLines: [],
+    trailingRows: 0
+  });
+});
