@@ -31,6 +31,50 @@ export type WorkspaceOverview = {
 export type WorkspaceOverviewSummary = Omit<WorkspaceOverview, 'decisions' | 'highlights' | 'candidateActivity'>;
 export type Candidate = { id: string; name: string; role: string; rawRole: string; rating: string | null; rawStatus: string | null; stage: string; conflict: boolean; statuses: string[] };
 export type Role = { name: string; priority: string | null; status: string | null; configured: boolean };
+export type ListingPolicy = 'active' | 'inbound_only' | 'paused' | 'ignore';
+export type RoleRegistryEntry = {
+  id: string;
+  name: string;
+  priority?: string;
+  status?: '在招' | '已下架' | '已关闭' | '暂停' | '待核';
+  owner?: string;
+  atsRequisitionId?: string;
+  aliases?: string[];
+  jdPath?: string;
+  internalPath?: string;
+};
+export type PlatformListing = {
+  platform: string;
+  externalJobId: string;
+  title?: string;
+  roleIds: string[];
+  policy: ListingPolicy;
+  note?: string;
+};
+export type RoleRegistry = {
+  schemaVersion: 1;
+  roles: RoleRegistryEntry[];
+  listings: PlatformListing[];
+  description?: unknown;
+  verifiedAt?: unknown;
+  source?: unknown;
+};
+export type RoleResolution = {
+  matched: boolean;
+  matchKind: 'listing' | 'roleId' | 'name' | 'alias' | 'atsRequisitionId' | null;
+  policy: ListingPolicy | null;
+  roleIds: string[];
+  roles: RoleRegistryEntry[];
+  listing: PlatformListing | null;
+  listings: PlatformListing[];
+};
+export type RoleRegistryDiff = {
+  inSync: boolean;
+  onlyInContext: string[];
+  onlyInRegistry: { id: string; name: string }[];
+  statusMismatch: { id: string; name: string; context: string | null; registry: string | null }[];
+  priorityMismatch: { id: string; name: string; context: string | null; registry: string | null }[];
+};
 export type MaterialCategory = 'resume' | 'archive' | 'brief' | 'other';
 export type CandidateDocument = { id: string; path: string | null; label: string; category: MaterialCategory; kind: 'markdown' | 'text' | 'pdf' | 'png' | 'jpeg' | 'doc' | 'docx' | 'rtf' | 'unsupported'; status: 'ok' | 'missing' | 'blocked' | 'error'; message: string | null; size: number | null; filename: string; mimeType: string; downloadOnly: boolean };
 export type CandidateProgress = { status: 'ok' | 'missing' | 'partial' | 'error'; message: string | null; records: { documentId: string; label: string; currentStatus: string | null; conclusion: string | null; nextAction: string | null; interviews: { round: string | null; time: string | null; format: string | null; interviewers: string | null; status: string | null }[] }[] };
