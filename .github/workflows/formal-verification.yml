@@ -18,6 +18,9 @@ on:
       - 'verification/formal/**'
       - '.github/workflows/formal-verification.yml'
 
+permissions:
+  contents: read
+
 jobs:
   formal:
     runs-on: ubuntu-latest
