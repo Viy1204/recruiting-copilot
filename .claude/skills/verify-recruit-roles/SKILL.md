@@ -9,18 +9,18 @@ description: 修改招聘看板岗位别名、岗位状态、配置 revision 检
 
 损害：旧页面保存会撤销刚完成的岗位归并或重新改写岗位状态，使候选归组和在招范围偏离用户的最新决定。
 
-同步基线 syncCommit：`eb790519332fc30cde6157bcd029ef443f76dddc`。
+同步基线 syncCommit：`c7ba748e12ba9cdf38737441a94bf3937ff58183`。
 覆盖记录：`verification/formal/coverage-roles.json`；总表只引用片段，源码摘要在该片段唯一保存。
 
 ## 函数与模型对应
 
 | 函数或保护 | 代码位置 | 模型或真实合同 |
 | --- | --- | --- |
-| `setRoleAlias` | `skills/recruit-board/scripts/roles.mjs:151` | `158` 的共用锁、`168` 的调用方版本检查、`199-202` 的提交前版本核对、`203` 的单文件 rename |
-| `setRoleStatus` | `skills/recruit-board/scripts/roles.mjs:213` | `219` 的共用锁、`227` 的首次检查、`240` 的最终检查、`241` 的 CONTEXT rename |
-| `readRoleInfo`、`roleConfig`、`contextRevision` | `skills/recruit-board/scripts/roles.mjs:131`、`:86`、`:8` | 合同读取真实文件哈希；别名版本与岗位表版本分别携带，元数据改动也改变配置 revision |
-| `replaceRoleStatus` | `skills/recruit-board/scripts/roles.mjs:27` | 状态合同核对仅状态单元格变化、原文备份及其他文件不变 |
-| `readSnapshot`、`readCandidates` | `skills/recruit-board/scripts/reader.mjs:54`、`skills/recruit-board/model.mjs:88` | 补充合同验证别名变化后原人岗身份和候选数量仍保留 |
+| `setRoleAlias` | `skills/recruit-board/scripts/roles.mjs:290` | `295` 的共用锁、`307` 的调用方版本检查、`338-341` 的提交前版本核对、`342` 的单文件 rename |
+| `setRoleStatus` | `skills/recruit-board/scripts/roles.mjs:439` | `448` 的共用锁、`450` 的首次检查、`471` 调用 `writeContextWithBackup`（`380-384` 最终检查与 CONTEXT rename）；带 `reason` 时 `474` 追加 `docs/CHANGELOG.md` |
+| `readRoleInfo`、`roleConfig`、`contextRevision` | `skills/recruit-board/scripts/roles.mjs:270`、`:225`、`:18` | 合同读取真实文件哈希；别名版本与岗位表版本分别携带，元数据改动也改变配置 revision |
+| `replaceRoleStatus` | `skills/recruit-board/scripts/roles.mjs:184` | 状态合同核对仅状态单元格（及传入 `lastChange` 时的最近变更单元格）变化、原文备份及其他文件不变 |
+| `readSnapshot`、`readCandidates` | `skills/recruit-board/scripts/reader.mjs:54`、`skills/recruit-board/model.mjs:93` | 补充合同验证别名变化后原人岗身份和候选数量仍保留 |
 
 模型 `verification/formal/models/Roles.tla` 分别选择别名配置和岗位表文件运行两请求场景；它们不是同一个文件，也不作为一个原子事务提交。对应 `Roles.cfg`、`Roles.view.mjs`、`verification/formal/roles.test.mjs`。
 
@@ -66,6 +66,7 @@ node --test verification/formal/roles.test.mjs
 - 假设写入者遵守 `context.lock`，文件与目录已通过入口校验，内容哈希不碰撞且本轮无内容回退 ABA。缺配置的创建、非法别名目标、所有编码、文件大小、外部链接和无限重试不是该模型的全称证明范围。
 - 最后读版本和异步 rename 分开建模。共用锁使模型中的合作写入者不能在这两个步骤间改文件；不保证忽略锁的外部程序在此窗口编辑文件时永不丢更新。
 - 只证明单文件同版请求的保护，不证明岗位表与别名配置跨文件原子更新。原人岗身份、原文字节和备份由补充公开入口合同核对，不将其扩张为全部身份或编码空间的形式化证明。
+- v0.9.0 新增的 `upsertRole`（`skills/recruit-board/scripts/roles.mjs:490`）与 `migrateWorkspace`（`skills/recruit-board/scripts/workspace.mjs:691`）同样获取 `context.lock` 并改写 `CONTEXT.md`，其中 `upsertRole` 在锁内现读现写、不接收调用方 `revision`；带 `reason` 的 `setRoleStatus` / `upsertRole` 还会在 `CONTEXT.md` rename 后调用 `appendChangelog`（`roles.mjs:395`）写 `docs/CHANGELOG.md`。这些 CLI 写路径以及 `CONTEXT.md` 与 `docs/CHANGELOG.md` 之间的跨文件原子性不在本单文件旧写模型的证明范围内。
 - 不检查任意平台文件系统的 rename 持久性、进程崩溃恢复、业务授权或前端状态同步。
 
 读图聚合：合并两个请求的对称动作，以及别名配置和岗位表的相同步骤；隐藏具体岗位名、状态值、哈希、备份和 actor 编号。保留首次检查、最终检查、原子替换、拒绝及写锁占用；所有命名动作有中文 step，未额外隐藏动作；实跑图为 8 个阅读节点、9 条箭头。模型保留终态自环，图自动折叠 24 条留在同一可见状态内的步骤。读图中的数字或版本代号不是候选阶段。

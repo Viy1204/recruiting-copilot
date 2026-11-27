@@ -1,6 +1,6 @@
 ---
 name: verify-recruit-board
-description: "Live verification skill for the recruit-board local web workbench and its workspace CLIs (decisions, roles, candidates, runs, events, command palette). Use when proving UI or HTTP/CLI behavior end-to-end against a real running server."
+description: "Live verification skill for the recruit-board local web workbench and its workspace CLIs (decisions, roles, candidates, ledger, role-context, workspace validate/migrate, runs, events, command palette). Use when proving UI or HTTP/CLI behavior end-to-end against a real running server."
 ---
 
 # Verify recruit-board
@@ -27,7 +27,7 @@ Subcommands: `seed`, `launch`, `doctor`, `http`, `cli`, `cleanup`.
 ## Launch
 
 1. Pick an isolated run directory (for example under `os.tmpdir()`, such as `/tmp/verify-rb-$RUN_ID`) and a separate evidence directory (such as `/tmp/verify-rb-evidence-$RUN_ID`) that survives cleanup.
-2. Seed a clean synthetic workspace (creates `CONTEXT.md`, `02-sourcing/dedup-ledger.csv`, `03-interview/合成候选人乙.md`, `runtime/resumes/candidate-b.txt`, run `verify-run-001`, and an open decision whose deterministic `seededDecisionId` is printed in stdout):
+2. Seed a clean synthetic workspace (creates `CONTEXT.md` with the v0.9.0 `在招岗位与优先级` table, JD and internal role docs under `01-jd/`, `docs/CHANGELOG.md`, 9-column `02-sourcing/dedup-ledger.csv`, `03-interview/合成候选人乙.md`, `runtime/resumes/candidate-b.txt`, run `verify-run-001`, and an open decision whose deterministic `seededDecisionId` is printed in stdout):
 
 ```bash
 node .claude/skills/verify-recruit-board/scripts/control-board.mjs seed --workspace <work-dir>

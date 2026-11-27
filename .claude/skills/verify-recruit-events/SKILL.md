@@ -9,11 +9,11 @@ description: 修改约面任务收尾、档案事件关联、事件读取诊断�
 
 ## 覆盖与代码基线
 
-已核对的基线 commit 为 `eb790519332fc30cde6157bcd029ef443f76dddc`。
+已核对的基线 commit 为 `c7ba748e12ba9cdf38737441a94bf3937ff58183`。
 
 - `skills/recruit-board/scripts/progress.mjs`：`recordProgress`（21），约面 summary/整轮 complete 的事件 guard（49–53）、导入重点（54–58）、内存转换和单 run 发布（60、68–74）。
 - `skills/recruit-board/scripts/events.mjs`：`readArchiveEvents`（61）、`recordCandidateEvent`（98），通过真实档案记录与读取事件；稳定 ID 重放及冲突检查（110–115）。
-- `skills/recruit-board/model.mjs`：`transitionRun` 的 highlight（430）、summary（457）与 complete（482）分支。
+- `skills/recruit-board/model.mjs`：`transitionRun` 的 highlight（583）、summary（610）与 complete（635）分支。
 - `skills/recruit-board/scripts/records.mjs`：`readCandidateArchives`（330）、`readCandidateDetail`（354），提供已关联档案及文档身份。
 - 模型与中文视图：`verification/formal/models/Events.{tla,cfg,view.mjs}`；契约：`verification/formal/events.test.mjs`。
 - SHA-256 与删除 guard 的变体：`verification/formal/coverage-events.json`。总入口 `verification/formal/coverage.json` 的 `subsystems.events` 引用此片段，`syncCommit` 统一保存在总表。

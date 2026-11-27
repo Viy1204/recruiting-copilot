@@ -9,9 +9,9 @@ description: 修改招聘任务创建、步骤转换、轮次完成或终态写�
 
 ## 覆盖与代码基线
 
-已核对的基线 commit 为 `eb790519332fc30cde6157bcd029ef443f76dddc`。
+已核对的基线 commit 为 `c7ba748e12ba9cdf38737441a94bf3937ff58183`。
 
-- `skills/recruit-board/model.mjs`：`createRun`（316）、`validateRun`（331，完成状态校验 348）、`transitionRun`（394，终态检查 412、步骤及完成 469–493）。
+- `skills/recruit-board/model.mjs`：`createRun`（469）、`validateRun`（484，完成状态校验 501）、`transitionRun`（547，终态检查 565、步骤及完成 622–646）。
 - `skills/recruit-board/scripts/progress.mjs`：`recordProgress`（21），调用域转换后单个 run 文件发布（47–74）。
 - 模型：`verification/formal/models/Runs.tla`；配置与中文视图为同名 `.cfg`、`.view.mjs`。
 - 真实源码契约：`verification/formal/runs.test.mjs`。

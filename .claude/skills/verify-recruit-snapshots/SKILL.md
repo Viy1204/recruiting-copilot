@@ -9,16 +9,16 @@ description: 修改招聘看板候选台账读取、兼容配置回退、整套�
 
 损害：把读取失败显示为零人会误导招聘决策；只保留旧候选、却套用新岗位或新映射，会把同一批人按另一套口径重新计算。
 
-同步基线 syncCommit：`eb790519332fc30cde6157bcd029ef443f76dddc`。
+同步基线 syncCommit：`c7ba748e12ba9cdf38737441a94bf3937ff58183`。
 覆盖记录：`verification/formal/coverage-snapshots.json`；总表只引用该片段，源码 SHA-256 只保存在片段中。
 
 ## 代码与交付
 
 | 函数或保护 | 代码位置 | 对应验证 |
 | --- | --- | --- |
-| `readCandidates` | `skills/recruit-board/model.mjs:88` | CSV 读取投影；补充合同验证原人岗身份不因别名合并，阶段仅由状态映射得出 |
-| `buildSnapshot` | `skills/recruit-board/model.mjs:529` | 模型的 `ProjectSnapshot`；`557-570` 的已用配置保护、`583-591` 的台账失败回退、`638-640` 的未知人数 |
-| `preserveCandidates` | `skills/recruit-board/model.mjs:559` | 整套保留候选、岗位、未知状态、contextRevision 与来源时间 |
+| `readCandidates` | `skills/recruit-board/model.mjs:93` | CSV 读取投影；补充合同验证原人岗身份不因别名合并，阶段仅由状态映射得出 |
+| `buildSnapshot` | `skills/recruit-board/model.mjs:682` | 模型的 `ProjectSnapshot`；`728-739` 的已用配置保护、`752-761` 的台账失败回退、`808` 的未知人数 |
+| `preserveCandidates` | `skills/recruit-board/model.mjs:728` | 整套保留候选、岗位、未知状态、contextRevision 与来源时间 |
 | `readSnapshot` | `skills/recruit-board/scripts/reader.mjs:54` | 合同直接调用公开文件系统入口；三个来源独立读取后交给纯函数 |
 
 模型、配置和中文读图投影分别为 `verification/formal/models/Snapshots.tla`、`Snapshots.cfg`、`Snapshots.view.mjs`；真实源码合同为 `verification/formal/snapshots.test.mjs`。

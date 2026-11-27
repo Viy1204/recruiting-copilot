@@ -9,7 +9,7 @@ description: 修改招聘事项 expectedRevision、requestId、依据登记或�
 
 ## 覆盖与代码基线
 
-已核对的基线 commit 为 `eb790519332fc30cde6157bcd029ef443f76dddc`。
+已核对的基线 commit 为 `c7ba748e12ba9cdf38737441a94bf3937ff58183`。
 
 - `skills/recruit-board/decisions-domain.mjs`：`applyDecision`（120），请求哈希与回放（123–128）、版本冲突（129）、依据登记（156–158）与历史追加（202–204）。
 - `skills/recruit-board/scripts/decisions.mjs`：`readDecision`（41）、`applyDecisionCommand`（66），在单事项锁内读入当前记录并应用域转换，重放不重写事项 JSON。

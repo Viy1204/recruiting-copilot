@@ -4,7 +4,8 @@ The overview view surfaces cross-round items awaiting human triage and recent ve
 
 ## Sub-features
 
-- `overview-read` loads open decisions and recent highlights without mutating workspace files.
+- `overview-read` loads recent highlights (rendered above the decision queue) and open decisions without mutating workspace files.
+- `all-decisions-toggle` expands and collapses the full decision list via `#workspace-all-decisions` (`aria-expanded` flips and label switches between `全部事项` and `收起全部事项`).
 - `decision-stage` records a human decision via `POST /api/decisions` with CSRF protection and optimistic revision checks.
 - `decision-replay` returns the prior receipt when the same `requestId` and payload are retried.
 - `decision-forbidden-op` rejects non-human operations (`register`, `import`, `action`) over HTTP with `DECISION_OP_FORBIDDEN`.

@@ -22,7 +22,7 @@ Preconditions:
 
 - **Read run results.** Run `node .claude/skills/verify-recruit-board/scripts/control-board.mjs http --state <state-file> --path "/api/runs/results?run=verify-run-001" --out <evidence-dir>/run-results.json`. Status is `200` and `body.run.id` is `verify-run-001`.
 - **Read run highlights.** Run `node .claude/skills/verify-recruit-board/scripts/control-board.mjs http --state <state-file> --path "/api/runs/highlights?run=verify-run-001" --out <evidence-dir>/run-highlights.json`. Status is `200` and `body.run.id` is `verify-run-001`.
-- **Record a new run via CLI.** Run `node .claude/skills/verify-recruit-board/scripts/control-board.mjs cli --workspace <work-dir> -- progress start --run verify-run-002 --workflow review --trigger manual`. It exits `0` and returns the new run JSON with its `steps`.
+- **Record a new run via CLI.** Run `node .claude/skills/verify-recruit-board/scripts/control-board.mjs cli --workspace <work-dir> -- progress start --run verify-run-002 --workflow resume-review --trigger manual`. It exits `0` and returns the new run JSON with its `steps`.
 - **Second read-only view.** Run `node .claude/skills/verify-recruit-board/scripts/control-board.mjs http --state <state-file> --path /api/snapshot --out <evidence-dir>/snapshot-runs.json`. `body.runs` includes both `verify-run-001` and `verify-run-002`.
 
 ## Gotchas

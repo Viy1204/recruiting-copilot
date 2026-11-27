@@ -42,3 +42,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Roles and candidates](./roles-and-candidates.md) covers role scopes, candidate name search, candidate dossier and document preview, and role status saving with backup.
 - [Runs and archive events](./runs-and-events.md) covers execution history, run results and highlights, and interview archive progress logging.
 - [Command palette and layout](./command-palette-and-layout.md) covers `Ctrl+K` / `Mod+K` quick jump, candidate table roving focus, layout reordering, and theme switching.
+- [Workspace CLIs](./workspace-clis.md) covers deterministic v0.9.0 workspace commands (`workspace.mjs validate/migrate`, `roles.mjs list/upsert`, `ledger.mjs lookup/upsert`, and `role-context.mjs`).

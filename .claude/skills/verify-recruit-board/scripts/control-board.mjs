@@ -69,8 +69,10 @@ function pidAlive(pid) {
 
 async function runSeed(workspace) {
   const root = path.resolve(workspace);
+  await fs.mkdir(path.join(root, '01-jd', '_internal', 'logs'), { recursive: true });
   await fs.mkdir(path.join(root, '02-sourcing'), { recursive: true });
   await fs.mkdir(path.join(root, '03-interview'), { recursive: true });
+  await fs.mkdir(path.join(root, 'docs'), { recursive: true });
   await fs.mkdir(path.join(root, 'runtime', 'resumes'), { recursive: true });
   await fs.mkdir(path.join(root, 'runtime', 'recruit-board', 'runs'), { recursive: true });
   await fs.mkdir(path.join(root, 'runtime', 'recruit-board', 'decisions'), { recursive: true });
@@ -80,24 +82,66 @@ async function runSeed(workspace) {
     [
       '# 合成验证工作区',
       '',
-      '## 当前在招岗位',
+      '## 一、招聘纪律',
       '',
-      '| 岗位 | 优先级 | 状态 | 备注 |',
-      '| --- | --- | --- | --- |',
-      '| 后端工程师 | P0 | 在招 | 核心岗位 |',
-      '| 前端工程师 | P1 | 暂停 | 待确认 HC |',
+      '- 对外发送消息或约面前先经用户确认。',
+      '',
+      '## 二、在招岗位与优先级',
+      '',
+      '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |',
+      '| --- | --- | --- | --- | --- | --- | --- |',
+      '| `BE-01` | 后端工程师 | 急岗 | 在招 | `01-jd/be-01.md` | `01-jd/_internal/be-01.md` | 2026-11-20 初始化 |',
+      '| `FE-01` | 前端工程师 | 常规 | 暂停 | `01-jd/fe-01.md` | `01-jd/_internal/fe-01.md` | 2026-11-20 初始化 |',
       '',
     ].join('\n'),
     'utf8',
   );
 
   await fs.writeFile(
+    path.join(root, '01-jd', 'be-01.md'),
+    '# 后端工程师 JD\n\n负责分布式后端系统设计与高并发稳定性建设。\n',
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(root, '01-jd', '_internal', 'be-01.md'),
+    [
+      '# 后端工程师 · 对内档案',
+      '',
+      '## 核心筛选标准',
+      '',
+      '- 5 年以上分布式后端经验。',
+      '',
+      '## 轮次校准记录',
+      '',
+      '### 2026-11-20',
+      '- 优先看真实高并发落地方案。',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(root, '01-jd', 'fe-01.md'),
+    '# 前端工程师 JD\n\n负责招聘工作台与前端工程体系建设。\n',
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(root, '01-jd', '_internal', 'fe-01.md'),
+    '# 前端工程师 · 对内档案\n\n## 核心筛选标准\n\n- 熟悉现代浏览器渲染与交互可访问性。\n',
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(root, 'docs', 'CHANGELOG.md'),
+    '# CHANGELOG — 招聘工作区变更日志\n\n- 2026-11-20 | BE-01（后端工程师）| 初始化岗位 | 合成验证种子\n',
+    'utf8',
+  );
+
+  await fs.writeFile(
     path.join(root, '02-sourcing', 'dedup-ledger.csv'),
     [
-      '姓名,岗位,渠道,初筛评级,状态,更新时间,备注',
-      '合成候选人甲,后端工程师,BOSS,A,待确认,2026-11-20 10:00,系统设计扎实',
-      '合成候选人乙,后端工程师,猎聘,B,已约一面,2026-11-20 11:30,已发日历邀约',
-      '合成候选人丙,前端工程师,BOSS,A,待筛选,2026-11-19 15:00,旧岗位记录',
+      '序号,姓名,应聘岗位,现职/背景,评级,状态,来源轮次,简历路径,备注',
+      '1,合成候选人甲,后端工程师,8年分布式后端,A,待确认,verify-run-001,,系统设计扎实',
+      '2,合成候选人乙,后端工程师,6年高并发服务,B,已约谈,verify-run-001,runtime/resumes/candidate-b.txt,已发日历邀约',
+      '3,合成候选人丙,前端工程师,5年前端架构,A,待初筛,verify-run-001,,旧岗位记录',
       '',
     ].join('\n'),
     'utf8',
@@ -299,7 +343,19 @@ async function runHttp(stateFile, reqPath, method = 'GET', bodyText = null, useC
 }
 
 async function runCli(workspace, scriptName, args) {
-  const allowed = new Set(['actions', 'connect', 'decisions', 'events', 'import-history', 'materials', 'progress', 'roles']);
+  const allowed = new Set([
+    'actions',
+    'connect',
+    'decisions',
+    'events',
+    'import-history',
+    'ledger',
+    'materials',
+    'progress',
+    'role-context',
+    'roles',
+    'workspace',
+  ]);
   const clean = scriptName.replace(/\.mjs$/, '');
   if (!allowed.has(clean)) throw new Error(`Unknown recruit-board CLI script: ${scriptName}`);
   const scriptPath = path.join(boardScripts, `${clean}.mjs`);
