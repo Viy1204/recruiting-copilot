@@ -23,14 +23,25 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const readText = (rel) => readFileSync(path.join(repoRoot, rel), "utf8");
 const readJson = (rel) => JSON.parse(readText(rel));
 
-test("主包与主插件版本号一致", () => {
+test("主包、lockfile 与主插件版本号一致", () => {
   const pkg = readJson("package.json");
+  const pkgLock = readJson("package-lock.json");
   const plugin = readJson(path.join(".claude-plugin", "plugin.json"));
   assert.equal(
     plugin.version,
     pkg.version,
     `plugin.json=${plugin.version} 与 package.json=${pkg.version} 不一致：` +
       "装机用户按 plugin.json 判断版本，不同步就收不到更新提示",
+  );
+  assert.equal(
+    pkgLock.version,
+    pkg.version,
+    `package-lock.json version=${pkgLock.version} 与 package.json=${pkg.version} 不一致`,
+  );
+  assert.equal(
+    pkgLock.packages?.[""]?.version,
+    pkg.version,
+    `package-lock.json packages[""].version=${pkgLock.packages?.[""]?.version} 与 package.json=${pkg.version} 不一致`,
   );
 });
 

@@ -2,7 +2,7 @@
 
 日期：2026-11-04
 
-状态：已接受。用户已批准[信息清晰度与单网页维护方案](../plans/recruit-board-clarity-and-web-only.md)。沿用 [ADR 0001](0001-cross-round-decisions.md) 的跨轮事项、决定与执行分离和聊天决策入口，沿用 [ADR 0002](0002-board-progressive-disclosure.md) 的三个视图、渐进展开与阅读位置保护。
+状态：已接受。用户已批准信息清晰度与单网页维护方案（过程文档已随 #64 清理归档）。沿用 [ADR 0001](0001-cross-round-decisions.md) 的跨轮事项、决定与执行分离和聊天决策入口，沿用 [ADR 0002](0002-board-progressive-disclosure.md) 的三个视图、渐进展开与阅读位置保护。
 
 ## 背景
 

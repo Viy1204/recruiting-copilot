@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -391,7 +392,7 @@ test('符号链接跨工作区保护：拒绝 symlink/junction 读写', async t 
 
   const root = await createWorkspace(t);
   await rm(path.join(root, '02-sourcing'), { recursive: true });
-  await symlink(outside, path.join(root, '02-sourcing'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root, '02-sourcing'));
 
   await assert.rejects(
     lookupCandidates({ workspace: root, name: '甲' }),
@@ -404,7 +405,7 @@ test('符号链接跨工作区保护：拒绝 symlink/junction 读写', async t 
 
   const root2 = await createWorkspace(t);
   await mkdir(path.join(root2, 'runtime/recruit-board'), { recursive: true });
-  await symlink(outside, path.join(root2, 'runtime/recruit-board/backups'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root2, 'runtime/recruit-board/backups'));
   await assert.rejects(
     upsertCandidate({ workspace: root2, role: 'UE-TA', name: '甲', status: '待初筛', bg: '3年' }),
     error => error.code === 'WORKSPACE_PATH_UNSAFE'

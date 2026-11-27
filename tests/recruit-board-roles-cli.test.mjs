@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -304,7 +305,7 @@ test('docs 目录符号链接指向外部时拒绝写入 CHANGELOG', async t => 
   const root = await makeWorkspace(t);
   const outside = await mkdtemp(path.join(tmpdir(), 'recruit-roles-outside-'));
   t.after(() => rm(outside, { recursive: true, force: true }));
-  await symlink(outside, path.join(root, 'docs'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root, 'docs'));
 
   const listed = await rolesCLI(['list', '--workspace', root]);
   await assert.rejects(
