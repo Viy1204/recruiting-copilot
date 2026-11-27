@@ -38,3 +38,20 @@ tests/                         安装与工作区 Skill 注册回归测试
 - 对外不可逆动作（在招聘平台打招呼、点"不合适"、通知候选人、发 offer）默认先经用户确认。
   打招呼的安全规则见 `skills/recruit-daily/SKILL.md`，约面试的确认规则见
   `skills/interview-schedule/SKILL.md`。
+
+## 仓库维护规则与强制检查
+
+提交维护改动前运行 `npm run check`（本地与 `.github/workflows/test.yml` 共用同一入口；仅跑防呆静态检查可用 `npm run lint:guardrails`）。
+
+| 规则 | 强制检查 / 单点实现 |
+|---|---|
+| 模板仓库根目录不得写入用户工作区数据（`CONTEXT.md`、`01-jd/`、`02-sourcing/`、`03-interview/`、`_shared/`、`runtime/`） | `scripts/check-repo-guardrails.mjs`（`template-repo-clean-root`） |
+| 新建或已迁移的 `recruit-board` 脚本不得手写 `lstat`/`realpath`/`readFile`/`TextDecoder`，统一复用 `workspace-io.mjs` | `skills/recruit-board/scripts/workspace-io.mjs` + `scripts/check-repo-guardrails.mjs`（`no-adhoc-workspace-io`） |
+| 禁止私建未登记 `.lock` 文件；工作区写锁共用 `WORKSPACE_LOCK_FILES` 与 `withWorkspaceLock` | `skills/recruit-board/scripts/workspace-io.mjs` + `scripts/check-repo-guardrails.mjs`（`no-rogue-lock-files`） |
+| 测试文件禁止直接调用 `symlink()`，必须使用 `tests/helpers/symlink.mjs`（`linkDir` / `tryLinkFile`）以保证 Windows 无特权通过 | `tests/helpers/symlink.mjs` + `scripts/check-repo-guardrails.mjs`（`no-raw-symlink-in-tests`）+ `.github/workflows/test.yml`（`test-windows`） |
+| 禁止再手写 `CONTEXT.md` 岗位表解析器，禁止引入已否决的 `_shared/roles.json` 双事实源（ADR 0007） | `skills/recruit-board/model.mjs`（`readRoleTable`/`readRoles`）+ `scripts/check-repo-guardrails.mjs`（`no-duplicate-role-table-parser`、`no-rejected-dual-source`） |
+| `docs/adr/` 编号必须从 `0001` 连续递增且不重号；文档与技能内相对 Markdown 链接不得悬空 | `scripts/check-repo-guardrails.mjs`（`adr-sequence-valid`、`markdown-local-links-exist`） |
+| `package.json`、`package-lock.json`、`.claude-plugin/plugin.json`、`README.md`、默认 BOSS CLI 与各宿主技能软链保持同步 | `tests/version-sync.test.mjs` + `tests/register-workspace-skills.test.sh` |
+| 修改形式化验证受控源码后，须按对应 `.claude/skills/verify-recruit-*/SKILL.md` 复核并跑 `node scripts/verify-state-machines.mjs --mutations`，禁止机械刷哈希 | `scripts/check-repo-guardrails.mjs`（`formal-coverage-sha256-sync`）+ `.github/workflows/formal-verification.yml` |
+| 临时例外只能写在违规行，须含原因、到期日与审批人：`// guardrail-allow: <rule> \| reason: <why> \| expires: YYYY-MM-DD \| approved: @<human>` | `scripts/check-repo-guardrails.mjs`（`guardrail-exception-malformed`、`guardrail-exception-expired`） |
+| 对外不可逆动作默认先经用户确认 | 人工确认 + 技能流程门禁（判断类，无静态检查） |
