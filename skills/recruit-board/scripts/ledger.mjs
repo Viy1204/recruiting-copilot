@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -13,7 +12,16 @@ import {
   stageForStatus,
   TERMINAL_STAGE_IDS
 } from '../model.mjs';
-import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
+import { MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
+import {
+  decodeTextWithMeta,
+  decodeUTF8Strict,
+  ensureSafeDirectory as ensureWorkspaceDirectory,
+  readSafeWorkspaceFile,
+  withWorkspaceLock,
+  WORKSPACE_LOCK_FILES,
+  writeAtomicFile
+} from './workspace-io.mjs';
 
 const CONTACTED_STAGES = new Set(['talking', 'decision', 'interview', 'offer', ...TERMINAL_STAGE_IDS]);
 
@@ -44,26 +52,11 @@ function detectCsvFormat(bytes, text) {
   return { bom, eol };
 }
 
-function decodeText(bytes, label = '文件') {
-  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe
-    ? 'utf-16le'
-    : bytes[0] === 0xfe && bytes[1] === 0xff
-      ? 'utf-16be'
-      : 'utf-8';
-  try {
-    return new TextDecoder(encoding, { fatal: true }).decode(bytes);
-  } catch {
-    throw ledgerError('LEDGER_ENCODING_INVALID', `${label}编码无效，请使用有效的 UTF-8 文本`, 422);
-  }
-}
+const decodeText = (bytes, label = '文件') =>
+  decodeTextWithMeta(bytes, { label, code: 'LEDGER_ENCODING_INVALID', status: 422 }).text;
 
-function decodeUTF8(bytes, label = '台账文件') {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw ledgerError('LEDGER_CSV_INVALID', `${label}不是有效的 UTF-8 文本`, 422);
-  }
-}
+const decodeUTF8 = (bytes, label = '台账文件') =>
+  decodeUTF8Strict(bytes, { label, code: 'LEDGER_CSV_INVALID', status: 422 });
 
 async function resolveSafeWorkspace(workspace) {
   if (typeof workspace !== 'string' || !workspace.trim()) {
@@ -76,73 +69,18 @@ async function resolveSafeWorkspace(workspace) {
   }
 }
 
-async function ensureSafeDirectory(root, parts, create = false) {
-  let current = root;
-  for (const part of parts) {
-    const next = path.join(current, part);
-    let info;
-    try {
-      info = await lstat(next);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw ledgerError('WORKSPACE_PATH_UNSAFE', '无法访问工作区子目录', 422);
-      if (!create) return null;
-      try {
-        await mkdir(next);
-      } catch (mkdirError) {
-        if (mkdirError.code !== 'EEXIST') throw ledgerError('WORKSPACE_PATH_UNSAFE', '无法创建工作区子目录', 422);
-      }
-      info = await lstat(next);
-    }
-    if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw ledgerError('WORKSPACE_PATH_UNSAFE', '工作区子目录不能是符号链接或非目录', 422);
-    }
-    const real = await realpath(next);
-    if (!insideWorkspace(root, real)) {
-      throw ledgerError('WORKSPACE_PATH_UNSAFE', '目标目录不能指向工作区外', 422);
-    }
-    current = real;
-  }
-  return current;
-}
+const ensureSafeDirectory = (root, parts, create = false) =>
+  ensureWorkspaceDirectory(root, parts, { create, code: 'WORKSPACE_PATH_UNSAFE', status: 422 });
 
 async function readSafeFile(root, dirParts, filename) {
-  const dir = await ensureSafeDirectory(root, dirParts, false);
-  if (!dir) return null;
-  const file = path.join(dir, filename);
-  let info;
-  try {
-    info = await lstat(file);
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw ledgerError('WORKSPACE_PATH_UNSAFE', '无法检查工作区文件状态', 422);
-  }
-  if (info.isSymbolicLink() || !info.isFile()) {
-    throw ledgerError('WORKSPACE_PATH_UNSAFE', '目标文件必须是工作区内的普通文件且不得为符号链接', 422);
-  }
-  if (info.size > MAX_FILE_BYTES) {
+  const relativePath = [...dirParts, filename].join('/');
+  const res = await readSafeWorkspaceFile(root, relativePath, { label: filename });
+  if (res.status === 'missing') return null;
+  if (res.status === 'ok') return { file: res.file, info: res.info, bytes: res.bytes };
+  if (res.code === 'FILE_TOO_LARGE') {
     throw ledgerError('LEDGER_FILE_TOO_LARGE', '文件超过读取大小上限', 422);
   }
-  const real = await realpath(file);
-  if (!insideWorkspace(root, real)) {
-    throw ledgerError('WORKSPACE_PATH_UNSAFE', '目标文件不能指向工作区外', 422);
-  }
-  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino) {
-      throw ledgerError('WORKSPACE_PATH_UNSAFE', '文件在读取期间发生变化，请重试', 422);
-    }
-    if (opened.size > MAX_FILE_BYTES) {
-      throw ledgerError('LEDGER_FILE_TOO_LARGE', '文件超过读取大小上限', 422);
-    }
-    const bytes = await handle.readFile();
-    if (bytes.length > MAX_FILE_BYTES) {
-      throw ledgerError('LEDGER_FILE_TOO_LARGE', '文件超过读取大小上限', 422);
-    }
-    return { file, info, bytes };
-  } finally {
-    await handle.close();
-  }
+  throw ledgerError('WORKSPACE_PATH_UNSAFE', res.message ?? '目标文件必须是工作区内的普通文件且不得为符号链接', 422);
 }
 
 async function loadRoleIndex(root, { requireContext = true } = {}) {
@@ -380,23 +318,7 @@ export async function upsertCandidate({
   const nextResume = optionalString(resume);
   const nextNote = optionalString(note);
 
-  let lock = null;
-  let lockFile = null;
-  if (!dryRun) {
-    const lockDir = await ensureSafeDirectory(root, ['runtime', 'recruit-board', 'roles'], true);
-    lockFile = path.join(lockDir, 'ledger.lock');
-    try {
-      lock = await open(lockFile, 'wx');
-    } catch (error) {
-      if (error.code === 'EEXIST') {
-        throw ledgerError('LEDGER_LOCKED', '台账正在写入或存在未释放的锁，请稍后重试', 409, 1);
-      }
-      throw ledgerError('WORKSPACE_PATH_UNSAFE', '无法获取台账写入锁', 422);
-    }
-  }
-
-  let tempFile = null;
-  try {
+  const execute = async () => {
     const ledger = await readLedgerRows(root);
     const sameRoleMatches = [];
     const otherRoleMatches = [];
@@ -555,25 +477,22 @@ export async function upsertCandidate({
     }
 
     const targetFile = path.join(sourcingDir, 'dedup-ledger.csv');
-    tempFile = path.join(sourcingDir, `.dedup-ledger-${randomUUID()}.tmp`);
-    const outHandle = await open(tempFile, 'wx', ledger.mode ?? 0o600);
-    try {
-      await outHandle.writeFile(nextBytes);
-      await outHandle.sync();
-    } finally {
-      await outHandle.close();
-    }
-    await rename(tempFile, targetFile);
-    tempFile = null;
+    await writeAtomicFile(targetFile, nextBytes, {
+      mode: ledger.mode ?? 0o600,
+      tempPrefix: '.dedup-ledger'
+    });
 
     return result;
-  } finally {
-    if (tempFile) await rm(tempFile, { force: true });
-    if (lock) {
-      try { await lock.close(); }
-      finally { await rm(lockFile, { force: true }); }
-    }
-  }
+  };
+
+  if (dryRun) return execute();
+  return withWorkspaceLock(root, WORKSPACE_LOCK_FILES.ledger, execute, {
+    lockedCode: 'LEDGER_LOCKED',
+    lockedMessage: '台账正在写入或存在未释放的锁，请稍后重试',
+    unsafeCode: 'WORKSPACE_PATH_UNSAFE',
+    unsafeStatus: 422,
+    exitCode: 1
+  });
 }
 
 const VALUE_FLAGS = {

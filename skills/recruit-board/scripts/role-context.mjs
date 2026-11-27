@@ -1,8 +1,12 @@
-import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readConfig, readRoles, readRoleTable } from '../model.mjs';
-import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
+import { resolveWorkspace } from './reader.mjs';
+import {
+  inspectRelativePath,
+  readSafeWorkspaceFile,
+  sanitizeWorkspaceMessage
+} from './workspace-io.mjs';
 
 const GLOBAL_SECTION_PATTERNS = [
   /公司与业务背景/,
@@ -32,97 +36,20 @@ function appError(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
 }
 
-function sanitizeMessage(message, root) {
-  let out = String(message ?? '未知错误');
-  if (root) {
-    const posixRoot = root.split(path.sep).join('/');
-    for (const candidate of new Set([root, posixRoot])) {
-      if (candidate) out = out.split(candidate).join('<workspace>');
-    }
-  }
-  return out;
-}
-
-function decodeTextBytes(bytes, label = '文件') {
-  let encoding = 'utf8';
-  let body = bytes;
-  if (bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
-    body = bytes.subarray(3);
-  } else if (bytes.subarray(0, 2).equals(Buffer.from([0xff, 0xfe]))) {
-    encoding = 'utf16le';
-    body = bytes.subarray(2);
-  } else if (bytes.subarray(0, 2).equals(Buffer.from([0xfe, 0xff]))) {
-    encoding = 'utf16be';
-    body = bytes.subarray(2);
-  }
-  const codec = encoding === 'utf8' ? 'utf-8' : encoding === 'utf16le' ? 'utf-16le' : 'utf-16be';
-  try {
-    return new TextDecoder(codec, { fatal: true, ignoreBOM: true }).decode(body);
-  } catch {
-    throw appError('TEXT_ENCODING_INVALID', `${label}编码无法安全读取，请使用有效 UTF-8 或 UTF-16 文本`, 422);
-  }
-}
-
-async function assertSafeRelativeSegments(root, relativePath) {
-  const normalized = String(relativePath ?? '').trim();
-  if (!normalized || path.isAbsolute(normalized) || /^[a-zA-Z]:/.test(normalized)) {
-    throw appError('UNSAFE_WORKSPACE_PATH', '路径不能是空值或绝对路径', 403);
-  }
-  const resolved = path.resolve(root, normalized);
-  if (!insideWorkspace(root, resolved)) {
-    throw appError('UNSAFE_WORKSPACE_PATH', '路径越出工作区边界', 403);
-  }
-  const rel = path.relative(root, resolved);
-  const parts = rel ? rel.split(path.sep).filter(Boolean) : [];
-  let cursor = root;
-  for (const part of parts) {
-    cursor = path.join(cursor, part);
-    let info;
-    try {
-      info = await lstat(cursor);
-    } catch (error) {
-      if (error.code === 'ENOENT') return { exists: false, target: resolved };
-      throw error;
-    }
-    if (info.isSymbolicLink()) {
-      throw appError('UNSAFE_WORKSPACE_PATH', '禁止通过符号链接访问工作区路径', 403);
-    }
-  }
-  const realTarget = await realpath(resolved);
-  if (!insideWorkspace(root, realTarget)) {
-    throw appError('UNSAFE_WORKSPACE_PATH', '真实路径越出工作区边界', 403);
-  }
-  return { exists: true, target: realTarget };
-}
-
 async function readSafeWorkspaceText(root, relativePath, { required = false, label = relativePath } = {}) {
-  const check = await assertSafeRelativeSegments(root, relativePath);
-  if (!check.exists) {
+  const res = await readSafeWorkspaceFile(root, relativePath, { label, decode: true });
+  if (res.status === 'missing') {
     if (required) throw appError('FILE_NOT_FOUND', `缺少必需文件：${relativePath}`, 404);
     return { status: 'missing', text: null, bytes: 0 };
   }
-  const info = await lstat(check.target);
-  if (!info.isFile() || info.isSymbolicLink()) {
-    throw appError('UNSAFE_WORKSPACE_PATH', `${label}必须是工作区内的普通文件`, 403);
+  if (res.status === 'unsafe') {
+    throw appError('UNSAFE_WORKSPACE_PATH', res.message, 403);
   }
-  if (info.size > MAX_FILE_BYTES) {
-    throw appError('FILE_TOO_LARGE', `${label}超过大小上限（${MAX_FILE_BYTES} 字节）`, 422);
+  if (res.status !== 'ok') {
+    if (res.code === 'NOT_A_FILE') throw appError('UNSAFE_WORKSPACE_PATH', `${label}必须是工作区内的普通文件`, 403);
+    throw appError(res.code ?? 'FILE_READ_ERROR', res.message ?? `无法读取 ${label}`, 422);
   }
-  const handle = await open(check.target, 'r');
-  let raw;
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > MAX_FILE_BYTES) {
-      throw appError('FILE_TOO_LARGE', `${label}超过大小上限`, 422);
-    }
-    raw = await handle.readFile();
-  } finally {
-    await handle.close();
-  }
-  if (raw.length > MAX_FILE_BYTES) {
-    throw appError('FILE_TOO_LARGE', `${label}超过大小上限`, 422);
-  }
-  return { status: 'ok', text: decodeTextBytes(raw, label), bytes: raw.length };
+  return { status: 'ok', text: res.text, bytes: res.bytes.length };
 }
 
 /**
@@ -409,11 +336,11 @@ export async function buildRoleContext({ workspace, role, maxRounds = 2 }) {
   const sourcingLogPath = resolveSourcingLogRelativePath(targetRow);
   let sourcingLogExists = false;
   if (sourcingLogPath) {
-    const logCheck = await assertSafeRelativeSegments(root, sourcingLogPath);
-    if (logCheck.exists) {
-      const logInfo = await lstat(logCheck.target);
-      sourcingLogExists = logInfo.isFile() && !logInfo.isSymbolicLink();
+    const logCheck = await inspectRelativePath(root, sourcingLogPath);
+    if (logCheck.status === 'unsafe') {
+      throw appError('UNSAFE_WORKSPACE_PATH', logCheck.message, 403);
     }
+    sourcingLogExists = logCheck.status === 'ok' && logCheck.info.isFile() && !logCheck.info.isSymbolicLink();
   }
   const sourcingLog = { path: sourcingLogPath, exists: sourcingLogExists };
 
@@ -498,7 +425,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     }
   } catch (error) {
     const code = error.code ?? 'ROLE_CONTEXT_ERROR';
-    const message = sanitizeMessage(error.message, resolvedRoot);
+    const message = sanitizeWorkspaceMessage(error.message, resolvedRoot);
     process.stderr.write(`${JSON.stringify({ error: { code, message } })}\n`);
     process.exitCode = 1;
   }

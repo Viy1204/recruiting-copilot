@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -13,7 +13,16 @@ import {
   selectRoles,
   updateFenceState
 } from '../model.mjs';
-import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
+import { resolveWorkspace } from './reader.mjs';
+import {
+  ensureSafeDirectory as ensureWorkspaceDirectory,
+  inspectRelativePath,
+  readSafeWorkspaceFile,
+  sanitizeWorkspaceMessage,
+  withWorkspaceLock,
+  WORKSPACE_LOCK_FILES,
+  writeAtomicFile
+} from './workspace-io.mjs';
 
 const CANONICAL_COLUMNS = Object.freeze([
   'role_id', '岗位', '优先级', '状态', '对外 JD', '对内档案', '最近变更'
@@ -25,109 +34,8 @@ function appError(code, message, status = 400) {
   return Object.assign(new Error(message), { code, status });
 }
 
-function sanitizeMessage(message, root) {
-  let out = String(message ?? '未知错误');
-  if (root) {
-    const posixRoot = root.split(path.sep).join('/');
-    for (const candidate of new Set([root, posixRoot])) {
-      if (candidate) out = out.split(candidate).join('<workspace>');
-    }
-  }
-  return out;
-}
-
-function decodeTextWithMeta(bytes, label = '文件') {
-  let encoding = 'utf8';
-  let bom = Buffer.alloc(0);
-  let body = bytes;
-  if (bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
-    bom = bytes.subarray(0, 3);
-    body = bytes.subarray(3);
-  } else if (bytes.subarray(0, 2).equals(Buffer.from([0xff, 0xfe]))) {
-    encoding = 'utf16le';
-    bom = bytes.subarray(0, 2);
-    body = bytes.subarray(2);
-  } else if (bytes.subarray(0, 2).equals(Buffer.from([0xfe, 0xff]))) {
-    encoding = 'utf16be';
-    bom = bytes.subarray(0, 2);
-    body = bytes.subarray(2);
-  }
-  const codec = encoding === 'utf8' ? 'utf-8' : encoding === 'utf16le' ? 'utf-16le' : 'utf-16be';
-  try {
-    const text = new TextDecoder(codec, { fatal: true, ignoreBOM: true }).decode(body);
-    return {
-      text,
-      encode(next) {
-        const output = Buffer.from(next, encoding === 'utf8' ? 'utf8' : 'utf16le');
-        if (encoding === 'utf16be') output.swap16();
-        return Buffer.concat([bom, output]);
-      }
-    };
-  } catch {
-    throw appError('TEXT_ENCODING_INVALID', `${label}编码无法安全保留，请使用有效 UTF-8 或 UTF-16 文本`, 422);
-  }
-}
-
-async function inspectRelativePath(root, relativePath) {
-  const normalized = String(relativePath ?? '').trim();
-  if (!normalized || path.isAbsolute(normalized) || /^[a-zA-Z]:/.test(normalized)) {
-    return { status: 'unsafe', code: 'PATH_TRAVERSAL', message: `路径不能是空值或绝对路径：${relativePath}` };
-  }
-  const resolved = path.resolve(root, normalized);
-  if (!insideWorkspace(root, resolved)) {
-    return { status: 'unsafe', code: 'PATH_TRAVERSAL', message: `路径越出工作区边界：${relativePath}` };
-  }
-  const rel = path.relative(root, resolved);
-  const parts = rel ? rel.split(path.sep).filter(Boolean) : [];
-  let cursor = root;
-  for (const part of parts) {
-    cursor = path.join(cursor, part);
-    let info;
-    try {
-      info = await lstat(cursor);
-    } catch (error) {
-      if (error.code === 'ENOENT') return { status: 'missing', target: resolved };
-      return { status: 'error', code: 'PATH_UNREADABLE', message: `无法访问路径：${relativePath}` };
-    }
-    if (info.isSymbolicLink()) {
-      return { status: 'unsafe', code: 'SYMLINK_ESCAPE', message: `禁止通过符号链接访问路径：${relativePath}` };
-    }
-  }
-  const realTarget = await realpath(resolved);
-  if (!insideWorkspace(root, realTarget)) {
-    return { status: 'unsafe', code: 'SYMLINK_ESCAPE', message: `真实路径越出工作区边界：${relativePath}` };
-  }
-  const info = await lstat(realTarget);
-  return { status: 'ok', target: realTarget, info };
-}
-
-async function readSafeFile(root, relativePath, label = relativePath) {
-  const inspected = await inspectRelativePath(root, relativePath);
-  if (inspected.status === 'missing') return { status: 'missing' };
-  if (inspected.status !== 'ok') return inspected;
-  if (!inspected.info.isFile()) {
-    return { status: 'error', code: 'NOT_A_FILE', message: `${label}必须是普通文件` };
-  }
-  if (inspected.info.size > MAX_FILE_BYTES) {
-    return { status: 'error', code: 'FILE_TOO_LARGE', message: `${label}超过大小上限` };
-  }
-  const handle = await open(inspected.target, 'r');
-  let raw;
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > MAX_FILE_BYTES) {
-      return { status: 'error', code: 'FILE_TOO_LARGE', message: `${label}超过大小上限` };
-    }
-    raw = await handle.readFile();
-  } finally {
-    await handle.close();
-  }
-  if (raw.length > MAX_FILE_BYTES) {
-    return { status: 'error', code: 'FILE_TOO_LARGE', message: `${label}超过大小上限` };
-  }
-  const decoded = decodeTextWithMeta(raw, label);
-  return { status: 'ok', file: inspected.target, info: inspected.info, bytes: raw, ...decoded };
-}
+const readSafeFile = (root, relativePath, label = relativePath) =>
+  readSafeWorkspaceFile(root, relativePath, { label, decode: true });
 
 /**
  * Generates a deterministic role_id matching ROLE_ID_PATTERN and avoiding collisions with usedIds.
@@ -660,28 +568,8 @@ function upgradeRoleTableInContext(text) {
   return { nextText, contextChanged: true, addedRoleIds, normalizedStatuses, repairedBlankSplits: blankSplitLines };
 }
 
-async function ensureSafeDirectory(root, relativeParts) {
-  let cursor = root;
-  for (const part of relativeParts) {
-    cursor = path.join(cursor, part);
-    let exists = true;
-    try {
-      const info = await lstat(cursor);
-      if (info.isSymbolicLink() || !info.isDirectory()) {
-        throw appError('UNSAFE_WORKSPACE_PATH', `目录路径不安全：${relativeParts.join('/')}`, 403);
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      exists = false;
-    }
-    if (!exists) await mkdir(cursor);
-    const real = await realpath(cursor);
-    if (!insideWorkspace(root, real)) {
-      throw appError('UNSAFE_WORKSPACE_PATH', `目录越出工作区边界：${relativeParts.join('/')}`, 403);
-    }
-  }
-  return cursor;
-}
+const ensureSafeDirectory = (root, relativeParts) =>
+  ensureWorkspaceDirectory(root, relativeParts, { create: true, code: 'UNSAFE_WORKSPACE_PATH', status: 403 });
 
 /**
  * Idempotently upgrades a workspace's CONTEXT.md role table and initializes changelog/logs directories.
@@ -759,19 +647,10 @@ export async function migrateWorkspace(workspace, { dryRun = false, now } = {}) 
       }
       backupRel = path.relative(root, backupFile).split(path.sep).join('/');
 
-      const temporary = path.join(root, `.CONTEXT-migrate-${randomUUID()}.tmp`);
-      try {
-        const output = await open(temporary, 'wx', contextRes.info.mode & 0o777);
-        try {
-          await output.writeFile(nextBytes);
-          await output.sync();
-        } finally {
-          await output.close();
-        }
-        await rename(temporary, contextRes.file);
-      } finally {
-        await rm(temporary, { force: true });
-      }
+      await writeAtomicFile(contextRes.file, nextBytes, {
+        mode: contextRes.info.mode & 0o777,
+        tempPrefix: '.CONTEXT-migrate'
+      });
     }
 
     if (createChangelog) {
@@ -812,24 +691,10 @@ export async function migrateWorkspace(workspace, { dryRun = false, now } = {}) 
     return runMigration();
   }
 
-  const rolesDir = await ensureSafeDirectory(root, ['runtime', 'recruit-board', 'roles']);
-  const lockFile = path.join(rolesDir, 'context.lock');
-  let lock;
-  try {
-    lock = await open(lockFile, 'wx');
-  } catch (error) {
-    if (error.code === 'EEXIST') {
-      throw appError('ROLE_LOCKED', '岗位配置正在迁移或仍有写入锁，请确认后重试', 409);
-    }
-    throw error;
-  }
-
-  try {
-    return await runMigration();
-  } finally {
-    await lock.close();
-    await rm(lockFile, { force: true });
-  }
+  return withWorkspaceLock(root, WORKSPACE_LOCK_FILES.context, runMigration, {
+    lockedCode: 'ROLE_LOCKED',
+    lockedMessage: '岗位配置正在迁移或仍有写入锁，请确认后重试'
+  });
 }
 
 function parseFlags(args, allowed, booleanFlags = []) {
@@ -905,7 +770,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     }
   } catch (error) {
     const code = error.code ?? 'WORKSPACE_ERROR';
-    const message = sanitizeMessage(error.message, resolvedRoot);
+    const message = sanitizeWorkspaceMessage(error.message, resolvedRoot);
     process.stderr.write(`${JSON.stringify({ error: { code, message } })}\n`);
     process.exitCode = 1;
   }
