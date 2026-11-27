@@ -51,6 +51,7 @@ Boss 与猎聘的寻源、查未读和读简历必须通过 `boss` / `liepin` CL
    - **没未读**：转主动寻源。
 
 2. **定寻源岗位与优先级**：读 CONTEXT「在招岗位与优先级」（或 `node skills/recruit-board/scripts/roles.mjs list --workspace "<workspace>"`），只对状态为 `在招` 的岗位按优先级分配今天的额度。
+   - 若工作区配置了可选的 `_shared/listings.json`（外部平台职位 M:N 路由表，见 [`../recruit-board/references/listings.md`](../recruit-board/references/listings.md)），开工前用 `node skills/recruit-board/scripts/listings.mjs resolve --workspace "<workspace>" --role-id "<role_id>"` 或 `--platform <p> --external-job-id <id>` 确定性路由外部职位：`policy: "ignore"` 自动跳过、`policy: "inbound_only"` 仅处理主动投递、合并帖（1 帖 → N `role_id`）按关联方向分别评估。
 
 3. **双通道 × 双入口寻源**（每个目标岗都跑），命令与坑见 channels.md：
    - **boss**：人才库 `boss search <词> --job <岗>` + 推荐 `boss recommend <岗>`。

@@ -13,6 +13,7 @@ import {
   selectRoles
 } from '../model.mjs';
 import { insideWorkspace, MAX_FILE_BYTES, resolveWorkspace } from './reader.mjs';
+import { validatePlatformListings } from './listings.mjs';
 
 const CANONICAL_COLUMNS = Object.freeze([
   'role_id', '岗位', '优先级', '状态', '对外 JD', '对内档案', '最近变更'
@@ -309,6 +310,14 @@ export async function validateWorkspace(workspace, { maxContextBytes = 16 * 1024
     if (row.status === '在招' && !row.internalPath) {
       pushWarning('ACTIVE_INTERNAL_MISSING', `在招岗位「${row.name}」尚未配置对内档案`, { role: row.name });
     }
+  }
+
+  const listingsCheck = await validatePlatformListings(root);
+  if (listingsCheck.status !== 'missing') {
+    for (const err of listingsCheck.errors) errors.push(err);
+    for (const warn of listingsCheck.warnings) warnings.push(warn);
+    stats.listingsCount = listingsCheck.count;
+    stats.ignoredListingsCount = listingsCheck.ignoredCount;
   }
 
   const changelogCheck = await inspectRelativePath(root, 'docs/CHANGELOG.md');
