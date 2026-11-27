@@ -555,4 +555,11 @@ test('validateWorkspace 与 migrateWorkspace 处理岗位表空行断表、非�
   for (const code of ['ROLES_TABLE_TRUNCATED', 'OVERRIDE_LAYER_STACK', 'EXECUTION_LOG_POLLUTION', 'DEPRECATED_RULE_RESIDUE', 'LEGACY_ALIGNED_DECISIONS', 'CONTEXT_LINE_BUDGET']) {
     assert.ok(!tplVal.warnings.some(w => w.code === code) && !tplVal.errors.some(e => e.code === code), `模板不应误报 ${code}`);
   }
+
+  const cliLinesRes = await execFileAsync(process.execPath, [
+    workspaceScript, 'validate', '--workspace', ws, '--max-context-lines', '5'
+  ]);
+  const cliLinesJson = JSON.parse(cliLinesRes.stdout);
+  assert.equal(cliLinesJson.ok, true);
+  assert.ok(cliLinesJson.warnings.some(w => w.code === 'CONTEXT_LINE_BUDGET' && w.limit === 5));
 });

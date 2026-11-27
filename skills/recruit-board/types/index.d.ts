@@ -45,7 +45,13 @@ export type RoleTableRow = {
   lastChange: string | null;
   cells: string[];
 };
-export type RoleTable = { headers: string[]; rows: RoleTableRow[] };
+export type RoleTableFragmentation = {
+  truncated: boolean;
+  blankSplitLines: number[];
+  nonBlankBreakLines: number[];
+  trailingRows: number;
+};
+export type RoleTable = { headers: string[]; rows: RoleTableRow[]; fragmentation: RoleTableFragmentation };
 export type MaterialCategory = 'resume' | 'archive' | 'brief' | 'other';
 export type CandidateDocument = { id: string; path: string | null; label: string; category: MaterialCategory; kind: 'markdown' | 'text' | 'pdf' | 'png' | 'jpeg' | 'doc' | 'docx' | 'rtf' | 'unsupported'; status: 'ok' | 'missing' | 'blocked' | 'error'; message: string | null; size: number | null; filename: string; mimeType: string; downloadOnly: boolean };
 export type CandidateProgress = { status: 'ok' | 'missing' | 'partial' | 'error'; message: string | null; records: { documentId: string; label: string; currentStatus: string | null; conclusion: string | null; nextAction: string | null; interviews: { round: string | null; time: string | null; format: string | null; interviewers: string | null; status: string | null }[] }[] };

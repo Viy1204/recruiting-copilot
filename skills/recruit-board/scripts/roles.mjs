@@ -9,7 +9,8 @@ import {
   readConfig,
   readRoleTable,
   readRoles,
-  SCHEMA_VERSION
+  SCHEMA_VERSION,
+  updateFenceState
 } from '../model.mjs';
 import { insideWorkspace, MAX_FILE_BYTES, readSource, resolveWorkspace } from './reader.mjs';
 
@@ -57,63 +58,99 @@ function findRoleRow(table, roleOrId) {
   return table.rows.find(row => row.name === roleOrId || (row.roleId !== null && row.roleId === roleOrId)) ?? null;
 }
 
+function parsePipeCells(line) {
+  const pipes = [...line.matchAll(/\|/g)].map(item => item.index);
+  const hasEnd = line.trimEnd().endsWith('|');
+  const ends = hasEnd ? pipes.slice(1) : [...pipes.slice(1), line.length];
+  return ends.map((end, index) => ({ start: pipes[index] + 1, end, text: line.slice(pipes[index] + 1, end) }));
+}
+
+const isSeparatorCells = cells => cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell.text.trim()));
+
 function parseTableLines(text) {
-  let inSection = false, header = null, separator = null, offset = 0;
-  const dataRows = [];
+  const entries = [];
+  let offset = 0;
   for (const match of text.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g)) {
     const raw = match[0];
     if (!raw) continue;
     const line = raw.replace(/[\r\n]+$/, '');
     const eol = raw.slice(line.length);
+    entries.push({ raw, line, eol, start: offset, end: offset + raw.length });
+    offset += raw.length;
+  }
+
+  let inSection = false, header = null, separator = null, fence = null;
+  let pendingBreak = false;
+  const dataRows = [];
+  for (let i = 0; i < entries.length; i++) {
+    const { raw, line, eol, start, end } = entries[i];
+    const nextFence = updateFenceState(line, fence);
+    if (fence || nextFence) {
+      fence = nextFence;
+      if (header && separator) pendingBreak = true;
+      continue;
+    }
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);
     if (heading) {
       if (inSection) break;
       inSection = /^(?:[一二三四五六七八九十\d]+[、.．]\s*)?在招岗位与优先级$/.test(heading[2].trim());
-    } else if (inSection && line.trim().startsWith('|')) {
-      const pipes = [...line.matchAll(/\|/g)].map(item => item.index);
-      const hasEnd = line.trimEnd().endsWith('|');
-      const ends = hasEnd ? pipes.slice(1) : [...pipes.slice(1), line.length];
-      const cells = ends.map((end, index) => ({ start: pipes[index] + 1, end, text: line.slice(pipes[index] + 1, end) }));
-      if (!header) {
-        const names = cells.map(cell => cellText(cell.text));
-        const nameCol = names.indexOf('岗位');
-        const priorityCol = names.indexOf('优先级');
-        const statusCol = names.indexOf('状态');
-        if (nameCol >= 0 && priorityCol >= 0 && statusCol >= 0) {
-          const internalArchiveCol = names.indexOf('对内档案');
-          header = {
-            start: offset,
-            end: offset + raw.length,
-            line,
-            eol,
-            cells,
-            names,
-            cols: {
-              roleId: names.indexOf('role_id'),
-              name: nameCol,
-              priority: priorityCol,
-              status: statusCol,
-              jd: names.indexOf('对外 JD'),
-              internal: internalArchiveCol >= 0 ? internalArchiveCol : names.indexOf('对内笔记'),
-              lastChange: names.indexOf('最近变更')
-            }
-          };
-        }
-      } else if (!separator) {
-        if (!cells.every(cell => /^:?-{3,}:?$/.test(cell.text.trim()))) {
-          header = null;
-        } else {
-          separator = { start: offset, end: offset + raw.length, line, eol, cells };
-        }
-      } else {
-        const name = cellText(cells[header.cols.name]?.text ?? '');
-        const isPlaceholder = !name || PLACEHOLDER_ROLE_RE.test(name);
-        dataRows.push({ start: offset, end: offset + raw.length, raw, line, eol, cells, name, isPlaceholder });
-      }
-    } else if (header && separator) {
-      break;
+      continue;
     }
-    offset += raw.length;
+    if (!inSection) continue;
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
+      if (header && separator) pendingBreak = true;
+      continue;
+    }
+    const cells = parsePipeCells(line);
+    if (!header) {
+      const names = cells.map(cell => cellText(cell.text));
+      const nameCol = names.indexOf('岗位');
+      const priorityCol = names.indexOf('优先级');
+      const statusCol = names.indexOf('状态');
+      if (nameCol >= 0 && priorityCol >= 0 && statusCol >= 0) {
+        const internalArchiveCol = names.indexOf('对内档案');
+        header = {
+          start,
+          end,
+          line,
+          eol,
+          cells,
+          names,
+          cols: {
+            roleId: names.indexOf('role_id'),
+            name: nameCol,
+            priority: priorityCol,
+            status: statusCol,
+            jd: names.indexOf('对外 JD'),
+            internal: internalArchiveCol >= 0 ? internalArchiveCol : names.indexOf('对内笔记'),
+            lastChange: names.indexOf('最近变更')
+          }
+        };
+      }
+      continue;
+    }
+    if (!separator) {
+      if (!isSeparatorCells(cells)) {
+        header = null;
+      } else {
+        separator = { start, end, line, eol, cells };
+      }
+      continue;
+    }
+    if (pendingBreak) {
+      const nextEntry = entries[i + 1];
+      if (nextEntry && nextEntry.line.trim().startsWith('|') && isSeparatorCells(parsePipeCells(nextEntry.line))) {
+        break;
+      }
+      if (isSeparatorCells(cells) || cells.length !== header.names.length) {
+        continue;
+      }
+      pendingBreak = false;
+    }
+    const name = cellText(cells[header.cols.name]?.text ?? '');
+    const isPlaceholder = !name || PLACEHOLDER_ROLE_RE.test(name);
+    dataRows.push({ start, end, raw, line, eol, cells, name, isPlaceholder });
   }
   if (!header || !separator) throw failure('ROLE_NOT_CONFIGURED', '未定位到当前标准岗位表的状态单元格', 404);
   return { header, separator, dataRows };

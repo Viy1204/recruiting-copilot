@@ -157,11 +157,33 @@ function extractCellPath(raw) {
   return nullableCell(markdownCell(trimmed));
 }
 
+export function updateFenceState(line, fence) {
+  const trimmedStart = line.replace(/^ {0,3}/, '');
+  if (!fence) {
+    const open = /^(`{3,}|~{3,})/.exec(trimmedStart);
+    if (!open) return null;
+    const char = open[1][0];
+    if (char === '`' && trimmedStart.slice(open[1].length).includes('`')) return null;
+    return { char, len: open[1].length };
+  }
+  const close = new RegExp(`^${fence.char === '`' ? '`' : '~'}{${fence.len},}[ \\t]*$`);
+  return close.test(trimmedStart) ? null : fence;
+}
+
+const splitPipeCells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+const isSeparatorLine = line => line.trim().startsWith('|') && splitPipeCells(line).map(markdownCell).every(cell => /^:?-{3,}:?$/.test(cell));
+
 /** @param {string} text @returns {import('./types/index.d.ts').RoleTable} */
 export function readRoleTable(text) {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   let inSection = false;
+  let fence = null;
   for (let i = 0; i < lines.length; i++) {
+    const nextFence = updateFenceState(lines[i], fence);
+    if (fence || nextFence) {
+      fence = nextFence;
+      continue;
+    }
     const heading = /^(#{1,6})\s+(.+)$/.exec(lines[i]);
     if (heading) {
       if (inSection) break;
@@ -171,29 +193,34 @@ export function readRoleTable(text) {
       continue;
     }
     if (!inSection || !lines[i].trim().startsWith('|')) continue;
-    const splitCells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
-    const headers = splitCells(lines[i]).map(markdownCell);
+    const headers = splitPipeCells(lines[i]).map(markdownCell);
     const nameCol = headers.indexOf('岗位');
     const priorityCol = headers.indexOf('优先级');
     const statusCol = headers.indexOf('状态');
     if (nameCol < 0 || priorityCol < 0 || statusCol < 0) continue;
-    if (!lines[i + 1] || !splitCells(lines[i + 1]).map(markdownCell).every(cell => /^:?-{3,}:?$/.test(cell))) continue;
+    if (!lines[i + 1] || !isSeparatorLine(lines[i + 1])) continue;
     const roleIdCol = headers.indexOf('role_id');
     const jdCol = headers.indexOf('对外 JD');
     const internalArchiveCol = headers.indexOf('对内档案');
     const internalCol = internalArchiveCol >= 0 ? internalArchiveCol : headers.indexOf('对内笔记');
     const lastChangeCol = headers.indexOf('最近变更');
     const rows = [];
-    for (let j = i + 2; j < lines.length && lines[j].trim().startsWith('|'); j++) {
-      const rawValues = splitCells(lines[j]);
-      if (rawValues.length !== headers.length) throw new Error('岗位配置表列数不一致');
+    const blankSplitLines = [];
+    const nonBlankBreakLines = [];
+    let pendingBlankLines = [];
+    let pendingNonBlankLines = [];
+    let sawBreak = false;
+    let trailingRows = 0;
+    let bodyFence = null;
+
+    const pushRow = (lineIndex, rawValues) => {
       const values = rawValues.map(markdownCell);
       const name = values[nameCol];
-      if (!name || /^(?:[（(]?(?:待梳理|待填写|岗位名|role)[）)]?|<role>)$/i.test(name)) continue;
+      if (!name || /^(?:[（(]?(?:待梳理|待填写|岗位名|role)[）)]?|<role>)$/i.test(name)) return;
       if (rows.some(row => row.name === name)) throw new Error('岗位配置表包含重复岗位');
       const parsedStatus = parseRoleStatus(values[statusCol]);
       rows.push({
-        line: j + 1,
+        line: lineIndex + 1,
         roleId: roleIdCol >= 0 ? nullableCell(values[roleIdCol]) : null,
         name,
         priority: values[priorityCol] || null,
@@ -206,15 +233,71 @@ export function readRoleTable(text) {
         lastChange: lastChangeCol >= 0 ? nullableCell(values[lastChangeCol]) : null,
         cells: rawValues.map(cell => cell.trim())
       });
+    };
+
+    for (let j = i + 2; j < lines.length; j++) {
+      const nextBodyFence = updateFenceState(lines[j], bodyFence);
+      if (bodyFence || nextBodyFence) {
+        bodyFence = nextBodyFence;
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      if (/^(#{1,6})\s+(.+)$/.test(lines[j])) break;
+      const trimmed = lines[j].trim();
+      if (!trimmed) {
+        pendingBlankLines.push(j + 1);
+        continue;
+      }
+      if (!trimmed.startsWith('|')) {
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      const hasPendingBreak = pendingBlankLines.length > 0 || pendingNonBlankLines.length > 0;
+      if (!hasPendingBreak) {
+        const rawValues = splitPipeCells(lines[j]);
+        if (rawValues.length !== headers.length) throw new Error('岗位配置表列数不一致');
+        pushRow(j, rawValues);
+        if (sawBreak) trailingRows++;
+        continue;
+      }
+      if (lines[j + 1] && isSeparatorLine(lines[j + 1])) break;
+      if (isSeparatorLine(lines[j])) {
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      const rawValues = splitPipeCells(lines[j]);
+      if (rawValues.length !== headers.length) {
+        pendingNonBlankLines.push(j + 1);
+        continue;
+      }
+      if (pendingNonBlankLines.length > 0) {
+        nonBlankBreakLines.push(...pendingNonBlankLines);
+      } else {
+        blankSplitLines.push(...pendingBlankLines);
+      }
+      pendingBlankLines = [];
+      pendingNonBlankLines = [];
+      sawBreak = true;
+      trailingRows++;
+      pushRow(j, rawValues);
     }
-    return { headers, rows };
+
+    return {
+      headers,
+      rows,
+      fragmentation: {
+        truncated: blankSplitLines.length > 0 || nonBlankBreakLines.length > 0,
+        blankSplitLines,
+        nonBlankBreakLines,
+        trailingRows
+      }
+    };
   }
   throw new Error('未读取岗位配置：未找到“在招岗位与优先级”的岗位／优先级／状态表');
 }
 
-/** @param {string} text @returns {Role[]} */
-export function readRoles(text) {
-  return readRoleTable(text).rows.map(row => ({
+function toRoleSummaries(table) {
+  return table.rows.map(row => ({
     name: row.name,
     priority: row.priority,
     status: row.status,
@@ -222,6 +305,11 @@ export function readRoles(text) {
     ...(row.roleId ? { roleId: row.roleId } : {}),
     ...(row.annotated ? { rawStatus: row.rawStatus, statusNote: row.statusNote } : {})
   }));
+}
+
+/** @param {string} text @returns {Role[]} */
+export function readRoles(text) {
+  return toRoleSummaries(readRoleTable(text));
 }
 
 export function readConfig(text, roles = []) {
@@ -604,12 +692,20 @@ export function buildSnapshot(input, previous = null) {
   };
   if (input.context.status === 'ok') {
     try {
-      roles = readRoles(input.context.text);
+      const roleTable = readRoleTable(input.context.text);
+      roles = toRoleSummaries(roleTable);
       sources.context.updatedAt = input.context.updatedAt ?? null;
       contextRevision = input.context.revision ?? null;
       const annotatedCount = roles.filter(role => role.rawStatus).length;
       if (annotatedCount > 0) {
         diagnostics.push(diagnostic('ROLE_STATUS_ANNOTATED', 'context', `${annotatedCount} 个岗位状态含括号附注，已按主状态解析；建议运行 workspace.mjs migrate 规范化`, 'info'));
+      }
+      if (roleTable.fragmentation.truncated) {
+        const { blankSplitLines, nonBlankBreakLines, trailingRows } = roleTable.fragmentation;
+        const detail = nonBlankBreakLines.length > 0
+          ? `第 ${nonBlankBreakLines.join('、')} 行非表格内容打断岗位表（后续 ${trailingRows} 行）`
+          : `第 ${blankSplitLines.join('、')} 行空行打断岗位表（后续 ${trailingRows} 行），建议运行 workspace.mjs migrate 合并`;
+        diagnostics.push(diagnostic('ROLES_TABLE_TRUNCATED', 'context', `岗位配置表存在断行：${detail}`, 'warning'));
       }
     }
     catch (error) {
