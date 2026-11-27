@@ -319,3 +319,45 @@ test('docs 目录符号链接指向外部时拒绝写入 CHANGELOG', async t => 
   );
   assert.deepEqual(await readdir(outside), []);
 });
+
+test('岗位表存在空行断表时 setRoleStatus 与 upsertRole 仍可定位并原地更新空行后的岗位', async t => {
+  const splitContext = [
+    '# CONTEXT',
+    '',
+    '## 四、在招岗位与优先级',
+    '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |',
+    '|---|---|---|---|---|---|---|',
+    '| GAME-CLIENT-01 | 客户端主程 | 最高 | 在招 | `01-jd/client.md` | `01-jd/_internal/client.md` | — |',
+    '',
+    '| GAME-ART-02 | 美术总监 | 急岗 | 暂停 | `01-jd/art.md` | `01-jd/_internal/art.md` | — |',
+    ''
+  ].join('\n');
+  const root = await makeWorkspace(t, splitContext);
+  const listed = await rolesCLI(['list', '--workspace', root]);
+  assert.deepEqual(listed.rows.map(r => r.name), ['客户端主程', '美术总监']);
+
+  const statusRes = await setRoleStatus({
+    workspace: root,
+    role: 'GAME-ART-02',
+    status: '在招',
+    revision: listed.contextRevision,
+    reason: '恢复美术总监招聘',
+    now: '2026-11-27T08:00:00.000Z'
+  });
+  assert.equal(statusRes.changed, true);
+  assert.equal(statusRes.roles.find(r => r.name === '美术总监')?.status, '在招');
+
+  const upsertRes = await upsertRole({
+    workspace: root,
+    roleId: 'GAME-ART-02',
+    name: '美术总监',
+    priority: '最高',
+    status: '在招',
+    reason: '提升优先级',
+    now: '2026-11-27T09:00:00.000Z'
+  });
+  assert.equal(upsertRes.changed, true);
+  assert.equal(upsertRes.action, 'update');
+  const finalText = await readFile(path.join(root, 'CONTEXT.md'), 'utf8');
+  assert.match(finalText, /\| GAME-ART-02 \| 美术总监 \| 最高 \| 在招 \|/);
+});

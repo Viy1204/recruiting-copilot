@@ -457,3 +457,102 @@ test('validateWorkspace 检出未映射历史台账状态（UNMAPPED_LEDGER_STAT
   const resAfter = await validateWorkspace(ws);
   assert.ok(!resAfter.warnings.some(w => w.code === 'LEGACY_AGENTS_MD'));
 });
+
+test('validateWorkspace 与 migrateWorkspace 处理岗位表空行断表、非表格打断拒迁、内容体检与代码围栏隔离', async t => {
+  const ws = await makeTempWorkspace('rc-hygiene-');
+  t.after(() => rm(ws, { recursive: true, force: true }));
+
+  await mkdir(path.join(ws, '01-jd/_internal'), { recursive: true });
+  await mkdir(path.join(ws, 'docs'), { recursive: true });
+  await writeFile(path.join(ws, '01-jd/a.md'), '# A\n', 'utf8');
+  await writeFile(path.join(ws, '01-jd/_internal/a.md'), '# A internal\n', 'utf8');
+  await writeFile(path.join(ws, '01-jd/b.md'), '# B\n', 'utf8');
+  await writeFile(path.join(ws, '01-jd/_internal/b.md'), '# B internal\n', 'utf8');
+  await writeFile(path.join(ws, 'docs/CHANGELOG.md'), '# Changelog\n', 'utf8');
+  await writeFile(path.join(ws, 'AGENTS.md'), 'node skills/recruit-board/scripts/workspace.mjs validate --workspace .\n', 'utf8');
+
+  const pollutedContext = [
+    '# CONTEXT.md',
+    '',
+    '## 一、公司与业务背景',
+    '正常业务描述。',
+    '```markdown',
+    '## 假章节（围栏内不触发告警）',
+    '冲突时以本节为准；2026-11-20 BOSS 批量打招呼 15 人；AI 一律不执行；CONTEXT.bak-001',
+    '```',
+    '',
+    '## 三、初筛硬规则',
+    '- 冲突时以本节为准，覆写下文旧口径。',
+    '- 年龄上限 38（AI 不执行，待用户确认后删除）。',
+    '- 2026-11-26 BOSS 打招呼 12 人，今日战报已归档至 report.bak-20261126。',
+    '',
+    '## 四、在招岗位与优先级',
+    '| 岗位 | 优先级 | 状态 | 对外 JD | 对内笔记 |',
+    '|---|---|---|---|---|',
+    '| 岗位A | 最高 | 在招 | `01-jd/a.md` | `01-jd/_internal/a.md` |',
+    '',
+    '| 岗位B | 急岗 | 在招（2026-11-20 恢复） | `01-jd/b.md` | `01-jd/_internal/b.md` |',
+    '',
+    '## 六、已对齐决策',
+    '- 2026-10-01 决定提高岗位A薪资上限',
+    '- 2026-10-12 决定岗位B优先一线大厂'
+  ].join('\n');
+  await writeFile(path.join(ws, 'CONTEXT.md'), pollutedContext, 'utf8');
+
+  const before = await validateWorkspace(ws, { maxContextLines: 10 });
+  assert.equal(before.ok, false);
+  assert.equal(before.stats.totalRoles, 2);
+  assert.equal(before.stats.activeRoles, 2);
+  assert.ok(Array.isArray(before.stats.contextSections) && before.stats.contextSections.length >= 4);
+  assert.ok(before.errors.some(e => e.code === 'ROLES_TABLE_TRUNCATED' && e.trailingRows === 1 && e.blankSplitLines.length === 1));
+  assert.ok(before.warnings.some(w => w.code === 'OVERRIDE_LAYER_STACK'));
+  assert.ok(before.warnings.some(w => w.code === 'EXECUTION_LOG_POLLUTION'));
+  assert.ok(before.warnings.some(w => w.code === 'DEPRECATED_RULE_RESIDUE'));
+  assert.ok(before.warnings.some(w => w.code === 'LEGACY_ALIGNED_DECISIONS' && w.count === 2));
+  assert.ok(before.warnings.some(w => w.code === 'CONTEXT_LINE_BUDGET'));
+
+  const dry = await migrateWorkspace(ws, { dryRun: true, now: '2026-11-27T00:00:00.000Z' });
+  assert.equal(dry.changed, true);
+  assert.ok(dry.actions.includes('repair_role_table_splits'));
+  assert.equal(dry.repairedBlankSplits.length, 1);
+  assert.equal(dry.addedRoleIds.length, 2);
+  assert.equal(dry.normalizedStatuses.length, 1);
+
+  const migrated = await migrateWorkspace(ws, { now: '2026-11-27T00:00:00.000Z' });
+  assert.equal(migrated.changed, true);
+  assert.equal(migrated.addedRoleIds.length, 2);
+  const migratedSecond = await migrateWorkspace(ws, { now: '2026-11-27T00:05:00.000Z' });
+  assert.equal(migratedSecond.changed, false);
+
+  const after = await validateWorkspace(ws);
+  assert.equal(after.ok, true);
+  assert.equal(after.stats.totalRoles, 2);
+  assert.equal(after.stats.activeRoles, 2);
+  assert.ok(!after.errors.some(e => e.code === 'ROLES_TABLE_TRUNCATED'));
+
+  const proseInterrupted = [
+    '# CONTEXT.md',
+    '## 四、在招岗位与优先级',
+    '| role_id | 岗位 | 优先级 | 状态 | 对外 JD | 对内档案 | 最近变更 |',
+    '|---|---|---|---|---|---|---|',
+    '| ROLE-A | 岗位A | 最高 | 在招 | `01-jd/a.md` | `01-jd/_internal/a.md` | — |',
+    '> 这里夹了一段正文说明',
+    '| ROLE-B | 岗位B | 急岗 | 在招 | `01-jd/b.md` | `01-jd/_internal/b.md` | — |'
+  ].join('\n');
+  await writeFile(path.join(ws, 'CONTEXT.md'), proseInterrupted, 'utf8');
+  const proseVal = await validateWorkspace(ws);
+  assert.equal(proseVal.ok, false);
+  assert.ok(proseVal.errors.some(e => e.code === 'ROLES_TABLE_TRUNCATED' && e.nonBlankBreakLines.length === 1));
+  await assert.rejects(
+    () => migrateWorkspace(ws),
+    err => err.code === 'ROLES_TABLE_TRUNCATED' && err.status === 422
+  );
+
+  const templateText = await readFile(path.join(repoRoot, 'skills/recruit-init/templates/CONTEXT.md'), 'utf8');
+  await writeFile(path.join(ws, 'CONTEXT.md'), templateText, 'utf8');
+  const tplVal = await validateWorkspace(ws);
+  assert.equal(tplVal.ok, true);
+  for (const code of ['ROLES_TABLE_TRUNCATED', 'OVERRIDE_LAYER_STACK', 'EXECUTION_LOG_POLLUTION', 'DEPRECATED_RULE_RESIDUE', 'LEGACY_ALIGNED_DECISIONS', 'CONTEXT_LINE_BUDGET']) {
+    assert.ok(!tplVal.warnings.some(w => w.code === code) && !tplVal.errors.some(e => e.code === code), `模板不应误报 ${code}`);
+  }
+});
