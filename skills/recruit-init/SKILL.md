@@ -61,14 +61,17 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 <workspace>/
 ├── AGENTS.md                 ← 从本 skill 的 templates/AGENTS.md 复制
-├── CONTEXT.md                ← 从 templates/CONTEXT.md 复制
+├── CONTEXT.md                ← 从 templates/CONTEXT.md 复制（热态快照，< 16 KB）
+├── docs/
+│   └── CHANGELOG.md          ← 从 templates/CHANGELOG.md 复制（冷日志，日常不读）
 ├── skills/                   ← 把模板仓库 skills/ 全部拷入（含 recruit-init 与 references/），
 │                                这是所有工具共用的唯一 skill 内容源，工作区从此自足
 ├── .agents/skills/           ← 指向 skills/ 的项目级链接（Codex / Agent Skills 约定）
 ├── .claude/skills/           ← 指向 skills/ 的项目级链接（Claude Code）
 ├── .qoder/skills/            ← 指向 skills/ 的项目级链接（Qoder）
 ├── 01-jd/
-│   ├── _internal/            ← 对内笔记（不外发）
+│   ├── _internal/            ← 对内档案（< 20 KB，不外发）
+│   │   └── logs/             ← 各岗逐轮寻源冷日志（<slug>-sourcing-log.md）
 │   └── _dist/                ← 生成物（PDF/HTML 等）
 ├── 02-sourcing/
 │   ├── dedup-ledger.csv      ← 从 templates/dedup-ledger.csv 复制（只有表头）
@@ -85,9 +88,20 @@ sh skills/recruit-init/scripts/install-dependencies.sh
 ```
 
 要点：
-- `AGENTS.md` / `CONTEXT.md` 原样复制模板，**不要现场即兴改写结构**——两份文件的分区是后续工作流的接口。
+- `AGENTS.md` / `CONTEXT.md` / `docs/CHANGELOG.md` 原样复制模板，**不要现场即兴改写结构**——分区与七列表是后续工作流与校验脚本的接口。
 - `skills/` 是唯一内容源；不要向工具目录重复复制 skill，避免后续版本不一致。
-- 新建工作区时同时创建 `runtime/reports/` 和 `runtime/resumes/`；修复模式只补缺失目录，不动已有附件或索引。
+- 新建工作区时同时创建 `docs/`、`01-jd/_internal/logs/`、`runtime/reports/` 和 `runtime/resumes/`；修复模式只补缺失文件与目录，不动已有附件或索引。
+
+### 老工作区平滑升级
+
+遇到已有工作区需要补齐 `role_id`、七列表、热态卡片与 `docs/CHANGELOG.md` 时，**严禁让 AI 手工改写或摘要压缩长版 `CONTEXT.md`**。按以下顺序执行确定性迁移：
+
+1. 先预览迁移方案，不改任何文件：
+   `node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>" --dry-run`
+2. 把预览结果汇报给用户并确认。
+3. 确认后执行幂等迁移并校验结果：
+   `node skills/recruit-board/scripts/workspace.mjs migrate --workspace "<workspace>"`
+   `node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`
 
 复制完成后，定位本 `SKILL.md` 同目录下的 `scripts/register-workspace-skills.sh`，执行：
 
@@ -109,7 +123,7 @@ sh skills/recruit-init/scripts/register-workspace-skills.sh <workspace>
 
 ## Step 3 逐岗梳理
 
-问用户当前在招几个岗位、分别叫什么，写进 `CONTEXT.md`「在招岗位与优先级」表（状态先标"待梳理"）。
+问用户当前在招几个岗位、分别叫什么，为其分配稳定的 `role_id`（仅限大写字母、数字与连字符，如 `UE-TA`、`AD-MGR`），并通过 `node skills/recruit-board/scripts/roles.mjs upsert --workspace "<workspace>" --role-id "<ID>" --name "<岗位名>" --priority "常规" --status "待梳理" --reason "初始化登记岗位"` 写入 `CONTEXT.md` 七列表（待梳理阶段先不填 `--jd` / `--internal`，等下面梳理产出落盘后再回填指针），再跑 `node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`。
 
 然后**逐个岗位**走 `skills/recruit-grill/SKILL.md` 的流程（一次只梳理一个岗位，梳理完一个再下一个）。
 用户如果说"今天先梳理一个，其他改天"，尊重——CONTEXT 里留着"待梳理"状态即可。

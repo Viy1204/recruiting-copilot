@@ -19,11 +19,16 @@ description: >
 
 ## 标准来源（每次现读，永不缓存）
 
-**评估标准永远从工作区 `CONTEXT.md` 现读**——标准在动态演进，用户说"按新规评"指的就是它的最新版。
-重点读：「初筛硬规则」「招聘底层方法论」+ `01-jd/<岗位>.md`（硬性要求）+ `01-jd/_internal/<岗位>.md`（命脉与排除信号）。
+**评估标准永远从工作区热态文件现读**——标准在动态演进，用户说"按新规评"指的就是最新版。
+优先用单岗上下文工具一次提取「初筛硬规则」「招聘底层方法论」+ 目标岗位元数据与对内档案（不加载无关岗位和 `docs/CHANGELOG.md` 等冷日志）：
 
-**本文档不写任何标准数字。** 用户当场口述新标准可以用，但评完提醒：要不要写回 CONTEXT/JD 沉淀？
-不沉淀，下次评估就还是旧标准。
+```bash
+node skills/recruit-board/scripts/role-context.mjs --workspace "<workspace>" --role "<role_id或岗位名>"
+```
+
+再按需要对照 `01-jd/<slug>.md`（对外硬性要求）。
+
+**本文档不写任何标准数字。** 用户当场口述新标准可以用，但评完提醒：要不要写回 `CONTEXT.md` / 对内档案沉淀？若同意沉淀，原地覆盖现行条款（不在 `CONTEXT.md` 堆叠历史补丁），把修改理由追加进 `docs/CHANGELOG.md` 并运行 `node skills/recruit-board/scripts/workspace.mjs validate --workspace "<workspace>"`。
 
 对应岗位还没梳理过（JD 和硬规则都是空的）→ 先走 `skills/recruit-grill/SKILL.md`，没有标准的评估是白评。
 
@@ -63,8 +68,11 @@ description: >
    - **评级** ⭐~⭐⭐⭐（与台账同一套语义）+ 一句话结论先行 + 建议动作（约面 / 观望 / 婉拒待确认）
 4. **落档案**：单份深评或批量中的"约面"级候选，按 `_shared/templates/interview-record.md` 写入
    `03-interview/<姓名>.md`（已存在则更新对应节，不重建）。本地或平台缓存中的原始文件在身份核实后用 `recruit-board/scripts/materials.mjs` 归档到工作区，保留来源、内容 hash 和原件；邮箱已下载文件可直接复用。将原始简历、面试档案和 brief 分类别明确关联到原人岗 ID，格式与接口见看板 `references/configuration.md`，不把 brief 当简历。
-5. **更新台账** `02-sourcing/dedup-ledger.csv`：增记/更新（去重键=姓名+应聘岗位，来源轮次记
-   `YYYYMMDD猎头` / `YYYYMMDD内推` / `YYYYMMDD猎聘邮件` / `YYYYMMDDBOSS邮件` 等）。简历路径填本地相对路径。台账是唯一事实源。
+5. **更新台账** `02-sourcing/dedup-ledger.csv`：先用 `ledger.mjs lookup` 查重（自动识别岗位别名与既往状态），再用 `ledger.mjs upsert` 增记或更新（禁止手改 CSV 行；标准状态先用 `ledger.mjs statuses` 核对；来源轮次记 `YYYYMMDD猎头` / `YYYYMMDD内推` / `YYYYMMDD猎聘邮件` / `YYYYMMDDBOSS邮件` 等，简历路径填本地相对路径；终态阶段 `ended`/`joined` 默认受保护不被覆盖，除非显式传 `--force-update`）。台账是唯一事实源：
+   ```bash
+   node skills/recruit-board/scripts/ledger.mjs lookup --workspace "<workspace>" --name "<姓名>" [--role "<role_id或岗位名>"]
+   node skills/recruit-board/scripts/ledger.mjs upsert --workspace "<workspace>" --role "<role_id或岗位名>" --name "<姓名>" --status "<标准状态>" --bg "<现职/背景>" --rating "<评级>" --round "<轮次>" [--resume "<路径>"] [--note "<事实与原因>"]
+   ```
 6. **批量场景出汇总**：≥2 份时额外产出一份汇总（按岗位分组，每人一行：姓名｜评级｜一句话结论｜建议动作）。
    有 lark-cli 且已配置 → 飞书云文档并把链接发给用户；没有 → 落 `runtime/reports/resume-review-<日期>.md`。
 7. **邮箱收取汇总**（如适用）：报告时间窗、命中邮件数、新下载/去重复用/跳过/失败数、本地目录与每个跳过原因；不在日报正文暴露候选人联系方式。
@@ -83,7 +91,7 @@ description: >
 
 ## 回查模式
 
-用户问"XX 的评级是啥/我记不清了"：先查 `03-interview/<姓名>.md`，再查台账，直接给评级+当时理由，**不重新评估**。
+用户问"XX 的评级是啥/我记不清了"：先查 `03-interview/<姓名>.md`，再运行 `node skills/recruit-board/scripts/ledger.mjs lookup --workspace "<workspace>" --name "<姓名>" [--role "<role_id或岗位名>"]` 查台账，直接给评级+当时理由，**不重新评估**。
 
 ## 边界
 

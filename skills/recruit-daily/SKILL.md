@@ -21,15 +21,23 @@ description: >
 日报卡片推送见 [`references/daily-card.md`](references/daily-card.md)。
 本文档只管「顺序、判断、跨渠道协同、安全」。
 
-## 铁律：先读事实源，别凭记忆
+## 铁律：渐进加载热态事实源，别背冷日志
 
 开工**先读**（都在工作区根下）：
-- `CONTEXT.md` —— 术语、**初筛硬规则**、**在招岗位与优先级**（唯一事实源，随时可能更新）。
+- `CONTEXT.md` —— 热态快照（< 16 KB）：术语、**初筛硬规则**、**七列岗位表与优先级**。
 - `AGENTS.md` —— 分工与「不可逆动作等确认」红线。
-- `01-jd/_internal/<role>.md` —— 各岗命脉技能 / 排除信号 / **关键词迭代表**（寻源前必读，越搜越准）。
 
-**本文档不写任何硬规则数字**——年龄线、学历线、地点要求全部以 CONTEXT 为准，避免两处打架。
-如果 CONTEXT 硬规则区还是空的（没跑过岗位梳理），停下来先走 `skills/recruit-grill/SKILL.md`。
+针对今天要跑的**每一个目标岗位**，单独提取单岗上下文包（不把无关岗位载入当前会话）：
+
+```bash
+node skills/recruit-board/scripts/role-context.mjs --workspace "<workspace>" --role "<role_id或岗位名>"
+```
+
+若手动读取，只按 `CONTEXT.md` 七列表中的 `对内档案` 路径读取目标岗位的 `01-jd/_internal/<slug>.md`（命脉技能 / 排除信号 / `## 当前搜索词卡片`）。
+**日常跑批禁止读取** `docs/CHANGELOG.md`、无关岗位的对内档案，以及 `01-jd/_internal/logs/` 下的逐轮寻源冷日志。`role-context.mjs` 遇到未迁移的长版关键词表时，会自动截取最近 2 轮（`--max-rounds 2`）。
+
+**本文档不写任何硬规则数字**——年龄线、学历线、地点要求全部以 `CONTEXT.md` 为准，避免两处打架。
+如果 `CONTEXT.md` 硬规则区还是空的（没跑过岗位梳理），停下来先走 `skills/recruit-grill/SKILL.md`。
 
 ## 主流程（按需跳步）
 
@@ -39,26 +47,31 @@ Boss 与猎聘的寻源、查未读和读简历必须通过 `boss` / `liepin` CL
    - `boss list --unread`（角标 > 0 才有）
    - `liepin chatlist --json`，过滤 `unread_count` 非 "0"。
    - **有未读**：逐个按 CONTEXT 硬规则判 → 该回复的回复、该要简历的要、
-     该排除的**先记台账等用户确认**（绝不自动点"不合适"）。
+     该排除的**先通过 `ledger.mjs upsert` 记台账等用户确认**（绝不自动点"不合适"）。
    - **没未读**：转主动寻源。
 
-2. **定寻源岗位与优先级**：读 CONTEXT「在招岗位与优先级」，按优先级分配今天的额度。
+2. **定寻源岗位与优先级**：读 CONTEXT「在招岗位与优先级」（或 `node skills/recruit-board/scripts/roles.mjs list --workspace "<workspace>"`），只对状态为 `在招` 的岗位按优先级分配今天的额度。
 
 3. **双通道 × 双入口寻源**（每个目标岗都跑），命令与坑见 channels.md：
    - **boss**：人才库 `boss search <词> --job <岗>` + 推荐 `boss recommend <岗>`。
      （`boss positions` 当前读不出职位，别拿它拿岗位槽位——岗位名直接用 CONTEXT 里的。）
    - **猎聘**：`liepin joblist --json` 拿 ejobId → `liepin search "<词>" --city <城市> --json` + `liepin recommend --json`。
-   - 搜索词用 `_internal/<role>.md` 关键词迭代表里最新一轮的有效词。
+   - 搜索词取自 `role-context.mjs` 输出或 `_internal/<slug>.md` 的 `## 当前搜索词卡片` 有效词（旧表自动取最近 2 轮）。
    - **完成判据**：每个目标岗，boss 与猎聘各自的 search + recommend 两入口都跑过——漏一个渠道或入口 = 没做完。
      CONTEXT 里若已沉淀"某岗某渠道无效"的结论，可按结论跳过并在日报注明。
 
-4. **硬规则初筛**：严格套 CONTEXT「初筛硬规则」+ 各岗 `_internal` 的**命脉技能**与**排除信号**。
+4. **硬规则初筛**：严格套 CONTEXT「初筛硬规则」+ 目标岗 `_internal` 的**命脉技能**与**排除信号**。
    判定顺序：硬门槛（年龄/学历/地点）→ 命脉对口 → 排除信号 → 评级（⭐~⭐⭐⭐，命脉强 = ⭐⭐⭐）。
 
-5. **打招呼**（对外不可逆——先读下方安全规则）。合适的按渠道打。
+5. **打招呼**（对外不可逆——先读下方安全规则）。打招呼前先运行 `node skills/recruit-board/scripts/ledger.mjs lookup --workspace "<workspace>" --name "<姓名>" [--role "<role_id或岗位名>"]` 查重（自动识别岗位别名与既往状态），确认未重复触达或未进终态后，再按渠道打。
    - **完成判据**：每个过筛人选要么已打招呼、要么记了跳过原因（硬规则/额度/已联系过），逐一回报，无静默遗漏。
 
-6. **补台账** `02-sourcing/dedup-ledger.csv`（去重键 = 姓名+应聘岗位）。格式见 ledger-and-report.md。台账是**唯一事实源**。
+6. **补台账** `02-sourcing/dedup-ledger.csv`（去重键 = 姓名+应聘岗位）。格式与命令见 `references/ledger-and-report.md`。台账是**唯一事实源**。
+   - **严禁手拼或手改 CSV 行**，也**严禁在状态列写自由文本原因**。先用 `ledger.mjs lookup` 确认既往记录，再调用确定性 CLI 写入（可用 `ledger.mjs statuses --workspace "<workspace>"` 查看全部标准状态）：
+     ```bash
+     node skills/recruit-board/scripts/ledger.mjs upsert --workspace "<workspace>" --role "<role_id或岗位名>" --name "<姓名>" --status "<标准状态>" --bg "<现职/背景>" --rating "<评级>" --round "<轮次>" [--resume "<路径>"] [--note "<事实与原因>"] [--dry-run]
+     ```
+   - `ledger.mjs upsert` 会自动跨别名去重、保留原 `rawRole` 以维持 `candidateId` 稳定，并在命中 `ended`/`joined` 等终态阶段时默认拦截（退出码 `3`，除非显式加 `--force-update`）。
    - **完成判据**：本轮接触过的每个候选人在台账里有且仅有一行；无重复序号；按岗位计数与本轮处理人数对得上。
 
 7. **出日报**：
@@ -73,9 +86,10 @@ Boss 与猎聘的寻源、查未读和读简历必须通过 `boss` / `liepin` CL
    - **完成判据**：卡片过 schema 校验**且**过美观度自查（校验通过≠可发），五层结构齐，
      数字与台账一致，`message_id` 与收件人已回给用户。
 
-9. **回填关键词迭代表**：从本轮「初筛通过/强匹配」的真实简历反向提取搜索词，
-   写回 `01-jd/_internal/<role>.md` 的迭代表（有效词/无效词/积极信号/拒绝模式）。下轮先读它。
-   - **完成判据**：今天每个出过「初筛通过」人选的岗位，迭代表都新增了一行。
+9. **回填寻源冷日志与搜索词热卡**：从本轮「初筛通过/强匹配」的真实简历反向提取搜索词。
+   - 每次必做：向冷日志 `01-jd/_internal/logs/<slug>-sourcing-log.md` 追加本轮一行记录（日期、轮次、渠道、有效词、无效词、积极信号、拒绝模式）。
+   - 按需更新：只有当有效词、已证无效词、积极信号或拒绝模式发生实质变化时，才原地更新 `01-jd/_internal/<slug>.md` 中的 `## 当前搜索词卡片`（保持 `_internal` 文件 < 20 KB）。
+   - **完成判据**：今天每个出过「初筛通过」人选的岗位，冷日志都新增了一行；搜索词有变化时热卡已原地更新。
 
 ## 打招呼安全规则（对外不可逆，最重要）
 
