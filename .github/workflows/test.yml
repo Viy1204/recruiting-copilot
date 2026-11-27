@@ -29,6 +29,10 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    env:
+      # Avoid Windows 8.3 short-path %TEMP% (RUNNER~1 vs runneradmin) mismatching fs.realpath().
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -96,6 +96,7 @@ export function decodeUTF8Strict(
  * @param {string} relativePath
  */
 export async function inspectRelativePath(root, relativePath) {
+  const canonicalRoot = await realpath(root);
   const normalized = String(relativePath ?? '').trim();
   if (
     !normalized ||
@@ -106,13 +107,13 @@ export async function inspectRelativePath(root, relativePath) {
   ) {
     return { status: 'unsafe', code: 'PATH_TRAVERSAL', message: `路径不能是空值或绝对路径：${relativePath}` };
   }
-  const resolved = path.resolve(root, normalized);
-  if (!insideWorkspace(root, resolved)) {
+  const resolved = path.resolve(canonicalRoot, normalized);
+  if (!insideWorkspace(canonicalRoot, resolved)) {
     return { status: 'unsafe', code: 'PATH_TRAVERSAL', message: `路径越出工作区边界：${relativePath}` };
   }
-  const rel = path.relative(root, resolved);
+  const rel = path.relative(canonicalRoot, resolved);
   const parts = rel ? rel.split(path.sep).filter(Boolean) : [];
-  let cursor = root;
+  let cursor = canonicalRoot;
   for (const part of parts) {
     cursor = path.join(cursor, part);
     let info;
@@ -127,7 +128,7 @@ export async function inspectRelativePath(root, relativePath) {
     }
   }
   const realTarget = await realpath(resolved);
-  if (!insideWorkspace(root, realTarget)) {
+  if (!insideWorkspace(canonicalRoot, realTarget)) {
     return { status: 'unsafe', code: 'SYMLINK_ESCAPE', message: `真实路径越出工作区边界：${relativePath}` };
   }
   const info = await lstat(realTarget);
@@ -145,7 +146,8 @@ export async function ensureSafeDirectory(
   parts,
   { create = false, code = 'UNSAFE_WORKSPACE_PATH', status = 403 } = {}
 ) {
-  let current = root;
+  const canonicalRoot = await realpath(root);
+  let current = canonicalRoot;
   for (const part of parts) {
     if (typeof part !== 'string' || !part || part === '.' || part === '..' || /[/\\]/.test(part)) {
       throw ioError(code, `目录路径段不合法：${String(part)}`, status);
@@ -168,7 +170,7 @@ export async function ensureSafeDirectory(
       throw ioError(code, `目录路径不安全：${parts.join('/')}`, status);
     }
     const real = await realpath(next);
-    if (!insideWorkspace(root, real)) {
+    if (!insideWorkspace(canonicalRoot, real)) {
       throw ioError(code, `目录越出工作区边界：${parts.join('/')}`, status);
     }
     current = real;
@@ -243,19 +245,25 @@ export async function readWorkspaceInputJSON(
   inputPath,
   { maxBytes = MAX_FILE_BYTES, label = '输入文件', code = 'INPUT_FILE_INVALID' } = {}
 ) {
+  const canonicalRoot = await realpath(root);
   const rawPath = typeof inputPath === 'string' ? inputPath.trim() : '';
   if (!rawPath) {
     throw ioError(code, `${label}路径不能为空`, 400);
   }
-  const resolved = path.resolve(root, rawPath);
-  if (!insideWorkspace(root, resolved)) {
+  const resolvedCanonical = path.resolve(canonicalRoot, rawPath);
+  const resolvedRaw = path.resolve(root, rawPath);
+  const rel = insideWorkspace(canonicalRoot, resolvedCanonical)
+    ? path.relative(canonicalRoot, resolvedCanonical)
+    : insideWorkspace(root, resolvedRaw)
+      ? path.relative(root, resolvedRaw)
+      : null;
+  if (rel === null) {
     throw ioError(code, `${label}必须位于工作区内`, 400);
   }
-  const rel = path.relative(root, resolved);
   if (!rel) {
     throw ioError(code, `${label}必须是工作区内的普通 JSON 文件`, 400);
   }
-  const res = await readSafeWorkspaceFile(root, rel, { maxBytes, label });
+  const res = await readSafeWorkspaceFile(canonicalRoot, rel, { maxBytes, label });
   if (res.status === 'missing') {
     throw ioError(code, `${label}不存在`, 400);
   }
