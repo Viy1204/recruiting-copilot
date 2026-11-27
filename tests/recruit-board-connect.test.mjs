@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -133,7 +134,7 @@ test('connect规范根相同可复用，同名不同工作区不串联且绝不�
   const alias = path.join(parent, 'same-root-alias');
   await mkdir(root, { recursive: true });
   await mkdir(other, { recursive: true });
-  await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(root, alias);
   const url = await board(t, root);
   const ready = await probeBoard({ workspace: root, url });
   assert.equal((await probeBoard({ workspace: alias, url })).workspaceKey, ready.workspaceKey);

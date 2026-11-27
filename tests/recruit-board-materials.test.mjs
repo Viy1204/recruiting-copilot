@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LEDGER_COLUMNS } from '../skills/recruit-board/model.mjs';
@@ -145,7 +146,7 @@ test('待选资料只来自既定目录；不按打码同名自动归属，不�
   const outside = await mkdtemp(path.join(tmpdir(), 'recruit-materials-outside-'));
   t.after(() => rm(outside, { recursive: true, force: true }));
   await writeFile(path.join(outside, '外部.txt'), '禁止读取');
-  await symlink(outside, path.join(root, '03-interview/external'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root, '03-interview/external'));
   const { listCandidateMaterials } = await api();
   const listed = await listCandidateMaterials(root, id);
   assert.deepEqual(listed.options.map(file => file.path).sort(), ['03-interview/李某.md', 'runtime/resumes/可选.png']);
@@ -240,7 +241,7 @@ test('资料目录、配置或控制目录的外部链接不能用于列出或�
     await writeFile(path.join(root, 'runtime/resumes/safe.txt'), '合成材料');
     const initial = await listCandidateMaterials(root, candidateId);
     await rm(path.join(root, target), { force: true, recursive: true });
-    await symlink(outside, path.join(root, target), process.platform === 'win32' ? 'junction' : 'dir');
+    await linkDir(outside, path.join(root, target));
     if (target === '03-interview') {
       const options = await listCandidateMaterials(root, candidateId);
       assert.ok(options.options.every(file => !file.path.startsWith('03-interview/')));

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir, tryLinkFile } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -161,7 +162,7 @@ test('工作区内目录符号链接指向外部时资料不开放', async t => 
   const other = await mkdtemp(path.join(tmpdir(), 'recruit-link-test-'));
   t.after(() => rm(other, { recursive: true, force: true }));
   await writeFile(path.join(other, 'outside.txt'), '禁止读取');
-  await symlink(other, path.join(root, 'runtime/external'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(other, path.join(root, 'runtime/external'));
   await writeFile(path.join(root, '02-sourcing/dedup-ledger.csv'), header + row('合成甲', '合成岗位', 'runtime/external/outside.txt'));
   assert.equal((await readCandidateDetail(root, key())).documents[0].status, 'blocked');
 });
@@ -333,17 +334,10 @@ test('结果目录的每层realpath限制工作区，最终文件拒绝符号链
   const outside = path.join(other, 'outside.json');
   await writeFile(outside, JSON.stringify(run));
   await rm(file);
-  await symlink(other, file, process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(other, file);
   await assert.rejects(readRunResults(root, run.id), error => error.code === 'RUN_PATH_UNSAFE' && error.status === 422);
   await rm(file);
-  let fileLinked = true;
-  try { await symlink(outside, file, 'file'); }
-  catch (error) {
-    if (process.platform !== 'win32' || error.code !== 'EPERM') throw error;
-    fileLinked = false;
-    t.diagnostic('当前 Windows 未授予普通文件 symlink 权限；目录 junction 和各层工作区边界已验证');
-  }
-  if (fileLinked) {
+  if (await tryLinkFile(t, outside, file, '当前 Windows 未授予普通文件 symlink 权限；目录 junction 和各层工作区边界已验证')) {
     await assert.rejects(readRunResults(root, run.id), error => error.code === 'RUN_PATH_UNSAFE' && error.status === 422);
     await rm(file);
   }
@@ -361,7 +355,7 @@ test('结果目录的每层realpath限制工作区，最终文件拒绝符号链
     await mkdir(targetRuns, { recursive: true });
     await writeFile(path.join(targetRuns, `${run.id}.json`), JSON.stringify(run));
     await mkdir(path.dirname(path.join(workspace, item.link)), { recursive: true });
-    await symlink(item.target, path.join(workspace, item.link), process.platform === 'win32' ? 'junction' : 'dir');
+    await linkDir(item.target, path.join(workspace, item.link));
     await assert.rejects(readRunResults(workspace, run.id), error => error.code === 'RUN_PATH_UNSAFE' && error.status === 422 && !error.message.includes(other));
   }
 });

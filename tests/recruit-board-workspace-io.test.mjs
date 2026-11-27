@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir, tryLinkFile } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -23,7 +24,7 @@ async function makeTempDir(t, prefix) {
 test('inspectRelativePath 与 readSafeWorkspaceFile 在父目录为符号链接且子文件缺失时返回 unsafe 而非 missing', async t => {
   const root = await makeTempDir(t, 'rc-wsio-root-');
   const outside = await makeTempDir(t, 'rc-wsio-out-');
-  await symlink(outside, path.join(root, '_shared'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root, '_shared'));
 
   const inspected = await inspectRelativePath(root, '_shared/listings.json');
   assert.equal(inspected.status, 'unsafe');
@@ -36,15 +37,20 @@ test('inspectRelativePath 与 readSafeWorkspaceFile 在父目录为符号链接�
   const root2 = await makeTempDir(t, 'rc-wsio-internal-');
   await mkdir(path.join(root2, 'real-dir'));
   await writeFile(path.join(root2, 'real-dir/listings.json'), '{"ok":true}', 'utf8');
-  await symlink(
-    path.join(root2, 'real-dir'),
-    path.join(root2, '_shared'),
-    process.platform === 'win32' ? 'junction' : 'dir'
-  );
+  await linkDir(path.join(root2, 'real-dir'), path.join(root2, '_shared'));
 
   const internalLink = await readSafeWorkspaceFile(root2, '_shared/listings.json');
   assert.equal(internalLink.status, 'unsafe');
   assert.equal(internalLink.code, 'SYMLINK_ESCAPE');
+
+  const root3 = await makeTempDir(t, 'rc-wsio-filelink-');
+  await mkdir(path.join(root3, '_shared'));
+  await writeFile(path.join(outside, 'escape.json'), '{"bad":true}', 'utf8');
+  if (await tryLinkFile(t, path.join(outside, 'escape.json'), path.join(root3, '_shared/listings.json'))) {
+    const fileLink = await readSafeWorkspaceFile(root3, '_shared/listings.json');
+    assert.equal(fileLink.status, 'unsafe');
+    assert.equal(fileLink.code, 'SYMLINK_ESCAPE');
+  }
 });
 
 test('readWorkspaceInputJSON 按工作区 root 解析相对路径、去 UTF-8 BOM、预检大小并拒绝目录和符号链接', async t => {
@@ -78,7 +84,7 @@ test('readWorkspaceInputJSON 按工作区 root 解析相对路径、去 UTF-8 BO
     error => error.code === 'INPUT_FILE_INVALID' && error.status === 400
   );
 
-  await symlink(outside, path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, path.join(root, 'linked'));
   await assert.rejects(
     readWorkspaceInputJSON(root, 'linked/escape.json'),
     error => error.code === 'INPUT_FILE_INVALID' && error.status === 403

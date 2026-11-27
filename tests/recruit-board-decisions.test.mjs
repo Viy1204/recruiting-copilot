@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { linkDir } from './helpers/symlink.mjs';
 import { tmpdir, hostname } from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
@@ -238,7 +239,7 @@ test('来源、版本、身份、输入文件与路径边界验证，拒绝后�
   assert.notDeepEqual(await readFile(decisionFile(root, item.id)), original);
   const dataDirectory = path.join(root, 'runtime/recruit-board/decisions');
   await rename(dataDirectory, `${dataDirectory}-saved`);
-  await symlink(outside, dataDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+  await linkDir(outside, dataDirectory);
   assert.equal((await readWorkspaceOverview(root)).status, 'error');
   await assert.rejects(register(root), /工作区/);
   assert.deepEqual(await readdir(outside), ['input.json']);

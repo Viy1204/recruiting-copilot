@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { linkDir, tryLinkFile } from './helpers/symlink.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LEDGER_COLUMNS, readConfig } from '../skills/recruit-board/model.mjs';
@@ -247,7 +248,7 @@ test('跨工作区配置、台账或备份目录符号链接不会读取或写�
   for (const link of ['_shared', 'runtime', '02-sourcing']) {
     const root = await fixture(t);
     if (link === '02-sourcing') await rm(path.join(root, link), { recursive: true });
-    await symlink(outside, path.join(root, link), process.platform === 'win32' ? 'junction' : 'dir');
+    await linkDir(outside, path.join(root, link));
     const info = await roles.readRoleInfo(root);
     if (link === '_shared') assert.equal(info.configStatus, 'error');
     if (link === '02-sourcing') {
@@ -260,11 +261,7 @@ test('跨工作区配置、台账或备份目录符号链接不会读取或写�
   }
   const root = await fixture(t, configuration());
   await rm(configPath(root));
-  try {
-    await symlink(path.join(outside, 'recruit-board.config.json'), configPath(root), 'file');
-  } catch (error) {
-    if (process.platform !== 'win32' || error.code !== 'EPERM') throw error;
-    t.diagnostic('当前 Windows 账户无文件 symlink 权限；目录 junction 的跨区保护已验证');
+  if (!await tryLinkFile(t, path.join(outside, 'recruit-board.config.json'), configPath(root), '当前 Windows 账户无文件 symlink 权限；目录 junction 的跨区保护已验证')) {
     return;
   }
   const info = await roles.readRoleInfo(root);
